@@ -1,0 +1,660 @@
+name: flood
+description: "水库下游洪水、道路桥梁、重要设施与避洪转移联动分析领域。面向珊瑚河数据，回答不同洪水情景下哪些道路、桥梁、设施、转移路线和安置对象受影响，以及应采取哪些封控、撤离、绕行和简报建议。"
+tool_preferences:
+  generic_search: fallback_only
+
+objects:
+  River:
+    kind: entity
+    data_source: external_api
+    mutability: read_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: river_id
+    summary: "河流及其分析范围"
+    description: "河流是领域主对象。珊瑚河流域边界图层可作为 River 的空间分析范围，而不是单独的边界对象。"
+    properties:
+      river_id: {type: str, required: true, description: "河流编号，如 shanhu"}
+      name: {type: str, description: "河流名称"}
+      basin_name: {type: str, description: "流域名称"}
+      basin_area_km2: {type: float, description: "流域面积，若数据可得"}
+      crs: {type: str, description: "空间数据原始坐标系"}
+      geometry_type: {type: str, description: "GeoJSON 几何类型"}
+      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
+      data_path: {type: str, description: "对应空间数据路径"}
+
+  County:
+    kind: entity
+    data_source: external_api
+    mutability: read_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: county_id
+    summary: "县级行政区"
+    description: "县界图层表达的是 County 的行政边界，领域分析时以县为行政责任和统计单元。"
+    properties:
+      county_id: {type: str, required: true, description: "县级行政区编码"}
+      river_id: {type: str, description: "关联河流编号，当前用于表达珊瑚河流域涉及的县"}
+      name: {type: str, description: "县名"}
+      adcode: {type: str, description: "行政区划代码"}
+      geometry_type: {type: str, description: "GeoJSON 几何类型"}
+      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
+      data_path: {type: str, description: "县界空间数据路径"}
+
+  Town:
+    kind: entity
+    data_source: external_api
+    mutability: read_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: town_id
+    summary: "乡镇及灾前暴露信息"
+    description: "由灾前信息表、转移单元和安置点中的 OwnerTown 字段共同支撑。人口、GDP、产业和房屋财产暴露信息作为 Town 属性。"
+    properties:
+      town_id: {type: str, required: true, description: "乡镇编码或稳定ID"}
+      name: {type: str, description: "乡镇名称"}
+      county_id: {type: str, description: "所属县编码"}
+      population: {type: int, description: "常住人口"}
+      gdp_10k_cny: {type: float, description: "GDP，万元"}
+      agriculture_10k_cny: {type: float, description: "农林牧渔业产值，万元"}
+      housing_property_10k_cny: {type: float, description: "居民房屋及室内财产，万元"}
+      transport_industry_10k_cny: {type: float, description: "交通运输业产值，万元"}
+      commerce_10k_cny: {type: float, description: "商贸服务业产值，万元"}
+
+  Reservoir:
+    kind: entity
+    data_source: external_api
+    mutability: read_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: reservoir_id
+    summary: "水库工程"
+    description: "水库对象承接下游洪水来源、调度情景和工程台账信息。"
+    properties:
+      reservoir_id: {type: str, required: true, description: "水库编号"}
+      name: {type: str, description: "水库名称"}
+      river_id: {type: str, description: "所在河流编号"}
+      county_id: {type: str, description: "所在县编码"}
+      town_name: {type: str, description: "所在乡镇"}
+      capacity_10k_m3: {type: float, description: "总库容，万立方米"}
+      dam_top_elevation_m: {type: float, description: "坝顶高程"}
+      design_flood_standard_year: {type: float, description: "设计洪水标准，年一遇"}
+      check_flood_standard_year: {type: float, description: "校核洪水标准，年一遇"}
+      max_discharge_m3s: {type: float, description: "最大泄量"}
+      safety_status: {type: str, description: "安全状态或安全类别"}
+      longitude: {type: float, description: "经度"}
+      latitude: {type: float, description: "纬度"}
+      geometry_type: {type: str, description: "GeoJSON 几何类型"}
+      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
+      data_path: {type: str, description: "空间数据路径"}
+
+  Sluice:
+    kind: entity
+    data_source: external_api
+    mutability: read_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: sluice_id
+    summary: "水闸或分洪闸"
+    description: "水闸对象用于表达分洪、泄洪、灌区闸门等工程及后续调度运行状态。"
+    properties:
+      sluice_id: {type: str, required: true, description: "水闸编号"}
+      name: {type: str, description: "水闸名称"}
+      river_id: {type: str, description: "所在河流编号"}
+      county_id: {type: str, description: "所在县编码"}
+      town_name: {type: str, description: "所在乡镇"}
+      sluice_type: {type: str, description: "水闸类型，如分洪闸、节制闸"}
+      gate_count: {type: int, description: "闸孔数"}
+      design_discharge_m3s: {type: float, description: "设计过闸流量或分泄流量"}
+      longitude: {type: float, description: "经度"}
+      latitude: {type: float, description: "纬度"}
+      geometry_type: {type: str, description: "GeoJSON 几何类型"}
+      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
+      data_path: {type: str, description: "空间数据路径"}
+
+  HydraulicStructure:
+    kind: entity
+    data_source: external_api
+    mutability: read_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: structure_id
+    summary: "其他水利工程设施"
+    description: "堤防、泵站、溢流建筑物等暂统一为 HydraulicStructure，后续若业务需要再拆成更细对象。"
+    properties:
+      structure_id: {type: str, required: true, description: "水利工程设施ID"}
+      name: {type: str, description: "设施名称"}
+      structure_type: {type: str, description: "设施类型: levee/pump_station/spillway/other"}
+      river_id: {type: str, description: "所在河流编号，若可识别"}
+      river_name: {type: str, description: "所在河流名称，若可识别"}
+      county_id: {type: str, description: "所属县编码，若可识别"}
+      location: {type: str, description: "位置描述"}
+      length_m: {type: float, description: "长度，适用于堤防等线状工程"}
+      elevation_m: {type: float, description: "高程，若可得"}
+      flow_m3s: {type: float, description: "流量，适用于泵站/泄洪设施"}
+      longitude: {type: float, description: "经度，点状设施或代表点"}
+      latitude: {type: float, description: "纬度，点状设施或代表点"}
+      geometry_type: {type: str, description: "GeoJSON 几何类型"}
+      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
+      data_path: {type: str, description: "空间数据路径"}
+
+
+  Road:
+    kind: entity
+    data_source: external_api
+    mutability: read_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: road_id
+    summary: "道路"
+    description: "道路对象来自路网线图层。道路可按 OSM id 或内部线段编号表达；对用户统一称为道路。"
+    properties:
+      road_id: {type: str, required: true, description: "道路或路段稳定ID"}
+      name: {type: str, description: "道路名称"}
+      ref: {type: str, description: "道路编号，如 G65、G78、G241"}
+      road_class: {type: str, description: "道路等级或 fclass"}
+      one_way: {type: str, description: "单向/双向标记"}
+      bridge_flag: {type: bool, description: "该路段是否标记为桥上路段"}
+      tunnel_flag: {type: bool, description: "该路段是否标记为隧道路段"}
+      length_m: {type: float, description: "道路长度，米"}
+      crs: {type: str, description: "原始坐标系"}
+      geometry_type: {type: str, description: "GeoJSON 几何类型"}
+      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
+      data_path: {type: str, description: "空间数据路径"}
+
+  Bridge:
+    kind: entity
+    data_source: external_api
+    mutability: read_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: bridge_id
+    summary: "桥梁"
+    description: "桥梁对象来自水利工程桥梁点图层。现有台账字段可能缺失，因此风险评估需要标注资料质量。"
+    properties:
+      bridge_id: {type: str, required: true, description: "桥梁稳定ID"}
+      name: {type: str, description: "桥梁名称"}
+      river_id: {type: str, description: "所在河流编号"}
+      road_id: {type: str, description: "关联道路ID，若可识别"}
+      length_m: {type: float, description: "桥长"}
+      width_m: {type: float, description: "桥宽"}
+      deck_elevation_m: {type: float, description: "桥面或梁底高程，若可得"}
+      data_quality: {type: str, description: "台账完整性: complete/partial/missing"}
+      longitude: {type: float, description: "经度"}
+      latitude: {type: float, description: "纬度"}
+      geometry_type: {type: str, description: "GeoJSON 几何类型"}
+      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
+      data_path: {type: str, description: "空间数据路径"}
+
+  Facility:
+    kind: entity
+    data_source: external_api
+    mutability: read_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: facility_id
+    summary: "重要设施"
+    description: "医院、学校、政府等重要设施统一建模为 Facility，通过 facility_type 区分。"
+    properties:
+      facility_id: {type: str, required: true, description: "设施ID"}
+      name: {type: str, description: "设施名称"}
+      facility_type: {type: str, description: "设施类型: hospital/school/government/other"}
+      subtype: {type: str, description: "细分类型，如卫生院、小学、政府机构"}
+      address: {type: str, description: "地址"}
+      town_name: {type: str, description: "所在乡镇，若可推断"}
+      county_id: {type: str, description: "所属县编码"}
+      longitude: {type: float, description: "经度"}
+      latitude: {type: float, description: "纬度"}
+      geometry_type: {type: str, description: "GeoJSON 几何类型"}
+      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
+      data_path: {type: str, description: "空间数据路径"}
+
+  Place:
+    kind: entity
+    data_source: external_api
+    mutability: read_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: place_id
+    summary: "安置或应急地点"
+    description: "安置点、就地安置点、集合点、物资点等统一为 Place，通过 place_type 区分。"
+    properties:
+      place_id: {type: str, required: true, description: "地点ID"}
+      name: {type: str, description: "地点名称"}
+      place_type: {type: str, description: "地点类型: shelter/in_place/assembly/warehouse/medical"}
+      town_id: {type: str, description: "所属乡镇编码"}
+      town_name: {type: str, description: "所属乡镇名称"}
+      county_id: {type: str, description: "所属县编码"}
+      area_m2: {type: float, description: "面积，平方米"}
+      capacity_person: {type: int, description: "可容纳人数"}
+      longitude: {type: float, description: "经度"}
+      latitude: {type: float, description: "纬度"}
+      geometry_type: {type: str, description: "GeoJSON 几何类型"}
+      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
+      data_path: {type: str, description: "空间数据路径"}
+
+  Transfer:
+    kind: entity
+    data_source: external_api
+    mutability: read_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: transfer_id
+    summary: "避洪转移安排"
+    description: "转移对象、转移人口、所属乡镇和预估受影响/到达时间的业务表达。"
+    properties:
+      transfer_id: {type: str, required: true, description: "转移安排ID"}
+      name: {type: str, description: "转移对象名称，如村名"}
+      population: {type: int, description: "转移人口数"}
+      town_id: {type: str, description: "所属乡镇编码"}
+      town_name: {type: str, description: "所属乡镇名称"}
+      county_id: {type: str, description: "所属县编码"}
+      arrive_time_window: {type: str, description: "洪水到达或转移窗口，如 0-12、12-24"}
+      route_id: {type: str, description: "推荐转移路线ID"}
+      place_id: {type: str, description: "目标安置地点ID"}
+      longitude: {type: float, description: "经度"}
+      latitude: {type: float, description: "纬度"}
+      geometry_type: {type: str, description: "GeoJSON 几何类型"}
+      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
+      data_path: {type: str, description: "空间数据路径"}
+
+  Route:
+    kind: entity
+    data_source: external_api
+    mutability: read_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: route_id
+    summary: "路线"
+    description: "转移路线、救援路线、绕行路线统一为 Route，通过 route_type 区分。"
+    properties:
+      route_id: {type: str, required: true, description: "路线ID"}
+      name: {type: str, description: "路线名称"}
+      route_type: {type: str, description: "路线类型: transfer/rescue/detour/supply"}
+      road_detail: {type: str, description: "路线道路描述"}
+      transfer_id: {type: str, description: "关联转移安排ID，若为转移路线"}
+      place_id: {type: str, description: "目标地点ID"}
+      population: {type: int, description: "服务或转移人口"}
+      length_m: {type: float, description: "路线长度，米"}
+      geometry_type: {type: str, description: "GeoJSON 几何类型"}
+      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
+      data_path: {type: str, description: "空间数据路径"}
+
+  Scenario:
+    kind: entity
+    data_source: external_api
+    mutability: read_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: scenario_id
+    summary: "洪水情景"
+    description: "5年、10年、20年、50年、100年一遇等洪水方案。"
+    properties:
+      scenario_id: {type: str, required: true, description: "方案编码，如 45050092hsfx0001"}
+      river_id: {type: str, description: "对应河流编号"}
+      name: {type: str, description: "方案名称，如 SHH_5a"}
+      return_period_year: {type: int, description: "重现期，年"}
+      summary: {type: str, description: "方案概要"}
+      description: {type: str, description: "方案说明"}
+      data_path: {type: str, description: "淹没图层路径"}
+
+  Cell:
+    kind: entity
+    data_source: external_api
+    mutability: read_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: cell_id
+    summary: "洪水计算单元"
+    description: "Cell 是方案下的淹没空间计算单元，承载水深、流速、到达时间、退水时间等物理量。"
+    properties:
+      cell_id: {type: str, required: true, description: "计算单元ID"}
+      scenario_id: {type: str, description: "所属洪水情景ID"}
+      x: {type: float, description: "计算单元代表点 X 坐标"}
+      y: {type: float, description: "计算单元代表点 Y 坐标"}
+      ground_elevation_m: {type: float, description: "地面高程，对应 Z"}
+      water_level_m: {type: float, description: "洪水水位，对应 Eta"}
+      depth_m: {type: float, description: "淹没水深，对应 YMSS"}
+      velocity_mps: {type: float, description: "流速，对应 HSLS"}
+      arrival_time_h: {type: float, description: "洪水到达时间，对应 DDSJ"}
+      recession_time_h: {type: float, description: "退水或消退时间，对应 XTSJ"}
+      area_m2: {type: float, description: "单元面积，对应 WGMJ 或几何面积"}
+      crs: {type: str, description: "原始坐标系"}
+      geometry_type: {type: str, description: "GeoJSON 几何类型"}
+      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
+      data_path: {type: str, description: "空间数据路径"}
+
+  Hydrology:
+    kind: entity
+    data_source: external_api
+    mutability: read_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: hydrology_id
+    summary: "水文成果"
+    description: "设计暴雨、设计洪水、洪峰流量和泄量等成果。"
+    properties:
+      hydrology_id: {type: str, required: true, description: "水文成果ID"}
+      river_id: {type: str, description: "对应河流编号"}
+      scenario_id: {type: str, description: "关联方案ID，若可对应"}
+      return_period_year: {type: int, description: "重现期，年"}
+      duration_h: {type: float, description: "设计暴雨历时，小时"}
+      design_rainfall_mm: {type: float, description: "设计暴雨，毫米"}
+      peak_inflow_m3s: {type: float, description: "入库洪峰流量"}
+      max_discharge_m3s: {type: float, description: "最大泄量"}
+      source: {type: str, description: "资料来源"}
+
+  Impact:
+    kind: entity
+    data_source: external_api
+    mutability: read_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: impact_id
+    summary: "方案级影响汇总"
+    description: "某个洪水情景下的总体淹没、人口、GDP、房屋、耕地、公路和直接经济损失。"
+    properties:
+      impact_id: {type: str, required: true, description: "影响汇总ID"}
+      scenario_id: {type: str, description: "洪水情景ID"}
+      inundated_area_km2: {type: float, description: "淹没总面积，平方千米"}
+      inundated_building_10k_m2: {type: float, description: "淹没房屋，万平方米"}
+      inundated_farmland_ha: {type: float, description: "淹没耕地，公顷"}
+      inundated_road_km: {type: float, description: "淹没公路，公里"}
+      affected_population_10k: {type: float, description: "受影响人口，万人"}
+      affected_gdp_10k_cny: {type: float, description: "受影响GDP，万元"}
+      direct_loss_10k_cny: {type: float, description: "直接经济损失，万元"}
+
+  Risk:
+    kind: entity
+    data_source: agent_generated
+    mutability: append_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: risk_id
+    summary: "对象级风险评估"
+    description: "统一表达某个洪水情景下道路、桥梁、设施、路线、乡镇、安置地点等目标对象的风险。"
+    properties:
+      risk_id: {type: str, required: true, description: "风险评估ID"}
+      scenario_id: {type: str, description: "洪水情景ID"}
+      target_type: {type: str, description: "目标对象类型: Road/Bridge/Facility/Route/Town/Place/Transfer"}
+      target_id: {type: str, description: "目标对象ID"}
+      risk_type: {type: str, description: "风险类型: inundation/interruption/overtopping/scour/isolation/evacuation_blocked/capacity_shortage"}
+      risk_level: {type: str, description: "风险等级: low/medium/high/critical/unknown"}
+      max_depth_m: {type: float, description: "最大淹没水深"}
+      max_velocity_mps: {type: float, description: "最大流速"}
+      first_arrival_time_h: {type: float, description: "最早受影响时间"}
+      affected_length_m: {type: float, description: "受影响长度，适用于道路或路线"}
+      affected_population: {type: int, description: "受影响人口"}
+      evidence: {type: str, description: "风险判断依据"}
+      data_quality: {type: str, description: "证据质量: model_overlay/table_record/manual/insufficient"}
+      recommended_action: {type: str, description: "建议动作摘要"}
+
+  Recommendation:
+    kind: entity
+    data_source: agent_generated
+    mutability: append_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: recommendation_id
+    summary: "应急处置建议"
+    description: "封路、封桥、撤离、绕行、队伍派遣、物资前置、持续监测等建议。"
+    properties:
+      recommendation_id: {type: str, required: true, description: "建议ID"}
+      scenario_id: {type: str, description: "洪水情景ID"}
+      risk_id: {type: str, description: "关联风险ID"}
+      action_type: {type: str, description: "动作类型: close_road/close_bridge/evacuate/detour/dispatch/preposition/monitor"}
+      priority: {type: str, description: "优先级: immediate/within_1h/within_3h/monitor"}
+      target_type: {type: str, description: "处置目标对象类型"}
+      target_id: {type: str, description: "处置目标对象ID"}
+      message: {type: str, description: "建议正文"}
+      basis: {type: str, description: "依据数据和规则"}
+      requires_human_approval: {type: bool, description: "是否需要人工审核后执行"}
+
+  Brief:
+    kind: entity
+    data_source: agent_generated
+    mutability: append_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: brief_id
+    summary: "指挥简报"
+    description: "面向指挥中心、会商和预警发布的文字摘要。"
+    properties:
+      brief_id: {type: str, required: true, description: "简报ID"}
+      scenario_id: {type: str, description: "洪水情景ID"}
+      title: {type: str, description: "简报标题"}
+      audience: {type: str, description: "受众: command_center/public/traffic/rescue"}
+      content: {type: str, description: "简报正文"}
+      key_risks: {type: str, description: "关键风险摘要"}
+      key_actions: {type: str, description: "关键动作摘要"}
+      created_at: {type: str, description: "生成时间"}
+
+links:
+  river_counties:
+    source: River
+    target: County
+    join: {source_key: river_id, target_key: river_id}
+    description: "河流流域涉及的县级行政区，当前可由空间叠加或配置生成"
+    link_type: contains
+    cardinality: 1..n
+
+  county_towns:
+    source: County
+    target: Town
+    join: {source_key: county_id, target_key: county_id}
+    description: "县包含乡镇"
+    link_type: contains
+    cardinality: 1..n
+
+  river_reservoirs:
+    source: River
+    target: Reservoir
+    join: {source_key: river_id, target_key: river_id}
+    description: "河流关联水库"
+    link_type: relates
+    cardinality: 1..n
+
+  river_sluices:
+    source: River
+    target: Sluice
+    join: {source_key: river_id, target_key: river_id}
+    description: "河流关联水闸"
+    link_type: relates
+    cardinality: 1..n
+
+  river_hydraulic_structures:
+    source: River
+    target: HydraulicStructure
+    join: {source_key: river_id, target_key: river_id}
+    description: "河流关联的堤防、泵站、溢流建筑物等水利工程设施"
+    link_type: relates
+    cardinality: 1..n
+
+  river_scenarios:
+    source: River
+    target: Scenario
+    join: {source_key: river_id, target_key: river_id}
+    description: "河流对应的洪水情景"
+    link_type: contains
+    cardinality: 1..n
+
+  scenario_cells:
+    source: Scenario
+    target: Cell
+    join: {source_key: scenario_id, target_key: scenario_id}
+    description: "情景包含的洪水计算单元"
+    link_type: contains
+    cardinality: 1..n
+
+  scenario_hydrology:
+    source: Scenario
+    target: Hydrology
+    join: {source_key: scenario_id, target_key: scenario_id}
+    description: "情景对应的水文成果"
+    link_type: causal
+    cardinality: 1..n
+
+  scenario_impact:
+    source: Scenario
+    target: Impact
+    join: {source_key: scenario_id, target_key: scenario_id}
+    description: "情景对应的总体影响汇总"
+    link_type: causal
+    cardinality: 1..1
+
+  transfer_route:
+    source: Transfer
+    target: Route
+    join: {source_key: route_id, target_key: route_id}
+    description: "转移安排使用的路线"
+    link_type: enables
+    cardinality: n..1
+
+  transfer_place:
+    source: Transfer
+    target: Place
+    join: {source_key: place_id, target_key: place_id}
+    description: "转移安排对应的安置地点"
+    link_type: enables
+    cardinality: n..1
+
+  route_place:
+    source: Route
+    target: Place
+    join: {source_key: place_id, target_key: place_id}
+    description: "路线通向的目标地点"
+    link_type: enables
+    cardinality: n..1
+
+  scenario_risks:
+    source: Scenario
+    target: Risk
+    join: {source_key: scenario_id, target_key: scenario_id}
+    description: "情景下生成的对象级风险"
+    link_type: causal
+    cardinality: 1..n
+
+  risk_recommendations:
+    source: Risk
+    target: Recommendation
+    join: {source_key: risk_id, target_key: risk_id}
+    description: "风险触发的处置建议"
+    link_type: enables
+    cardinality: 1..n
+
+  scenario_briefs:
+    source: Scenario
+    target: Brief
+    join: {source_key: scenario_id, target_key: scenario_id}
+    description: "情景生成的指挥简报"
+    link_type: relates
+    cardinality: 1..n
+
+rules:
+  road_passability_by_depth:
+    description: "按水深判断道路通行风险的基础阈值。阈值应结合本地标准和车辆类型校核。"
+    rule_type: threshold
+    applies_to: [Risk]
+    result_field: risk_level
+    source: "原型规则: depth>=0.5m critical, depth>=0.3m high, depth>=0.15m medium"
+    conditions:
+      - {field: max_depth_m, operator: gte, value: 0.5, result: critical}
+      - {field: max_depth_m, operator: gte, value: 0.3, result: high}
+      - {field: max_depth_m, operator: gte, value: 0.15, result: medium}
+
+  evacuation_route_blocked:
+    description: "转移路线存在较深积水或高流速时判为转移受阻。"
+    rule_type: threshold
+    applies_to: [Risk]
+    result_field: risk_level
+    source: "原型规则: transfer route depth>=0.3m 或 velocity>=1.0m/s 为 high/critical"
+    conditions:
+      - {field: max_depth_m, operator: gte, value: 0.5, result: critical}
+      - {field: max_velocity_mps, operator: gte, value: 1.0, result: high}
+      - {field: max_depth_m, operator: gte, value: 0.3, result: high}
+
+functions:
+  list_scenarios:
+    summary: "列出珊瑚河洪水情景"
+    description: "返回 5、10、20、50、100 年一遇等方案编号、名称、说明和数据路径。"
+    function_type: lookup
+    involves_objects: [Scenario]
+    params: {}
+
+  get_scenario_summary:
+    summary: "查看洪水情景的水文和影响汇总"
+    description: "按 scenario_id 或重现期查询情景说明、淹没面积、损失、人口、GDP 和水文成果。"
+    function_type: lookup
+    involves_objects: [Scenario, Impact, Hydrology]
+    params:
+      scenario_id: {type: str, description: "方案编码，可选", default: ""}
+      return_period_year: {type: int, description: "重现期，年，可选", default: 0}
+
+  analyze_risks:
+    summary: "分析某情景下道路、桥梁、设施、路线等对象风险"
+    description: "对指定目标类型执行空间叠加或缓存查询，生成统一 Risk 结果。"
+    usage_prompt: "当用户问哪些道路会中断、哪些桥梁风险高、哪些设施受淹、哪些转移路线不可用时调用。target_type 可传 Road、Bridge、Facility、Route、Transfer、Place 或 all。"
+    function_type: lookup
+    involves_objects: [Scenario, Cell, Road, Bridge, Facility, Route, Transfer, Place, Risk]
+    params:
+      scenario_id: {type: str, description: "方案编码"}
+      target_type: {type: str, description: "分析目标类型: Road/Bridge/Facility/Route/Transfer/Place/all", default: "all"}
+      min_risk_level: {type: str, description: "最低风险等级过滤: low/medium/high/critical", default: "medium"}
+
+  list_mappable_objects:
+    summary: "列出可用于前端 GIS 绘制的领域对象类型"
+    description: "返回哪些领域对象带有地理信息、对象数量、几何类型和推荐样式。前端应按对象类型绘制，而不是依赖领域模型中的图层对象。"
+    function_type: lookup
+    involves_objects: [River, County, Road, Reservoir, Sluice, HydraulicStructure, Bridge, Facility, Place, Transfer, Route, Cell]
+    params:
+      object_type: {type: str, description: "可选，按领域对象类型过滤", default: ""}
+
+  export_objects_geojson:
+    summary: "按领域对象导出前端地图可加载的 GeoJSON"
+    description: "从领域对象数据导出 EPSG:4326 GeoJSON。点、线、面几何来自对象自身的 geometry 字段；大型 Cell 对象可直接从对应情景源数据导出并可简化。"
+    usage_prompt: "当前端需要绘制学校、医院、桥梁、路线、道路、某个洪水情景等对象时调用。传 object_type 而不是图层名；绘制洪水情景时 object_type=Cell 并传 scenario_id。"
+    function_type: lookup
+    involves_objects: [River, County, Road, Reservoir, Sluice, HydraulicStructure, Bridge, Facility, Place, Transfer, Route, Cell]
+    params:
+      object_type: {type: str, description: "领域对象类型，如 Facility、Bridge、Route、Cell"}
+      filters: {type: dict, description: "对象过滤条件；Cell 可用 scenario_id", default: {}}
+      simplify_tolerance: {type: float, description: "可选简化容差，单位为源坐标系单位；0 表示不简化", default: 0}
+      force: {type: bool, description: "是否强制重新导出", default: false}
+
+  plan_response:
+    summary: "生成封控、转移、绕行和监测建议"
+    description: "根据风险结果和转移安置关系生成 Recommendation。"
+    usage_prompt: "当用户问当前应该先封哪座桥、撤哪片区域、救援车辆走哪条路线或如何排序处置时调用。"
+    function_type: lookup
+    involves_objects: [Scenario, Risk, Recommendation, Transfer, Route, Place]
+    params:
+      scenario_id: {type: str, description: "方案编码"}
+      focus: {type: str, description: "关注方向: evacuation/traffic/facility/all", default: "all"}
+
+  generate_brief:
+    summary: "生成应急指挥简报"
+    description: "面向指挥中心或专项部门输出风险排序、关键时刻、建议动作和依据数据。"
+    function_type: lookup
+    involves_objects: [Scenario, Impact, Risk, Recommendation, Brief]
+    params:
+      scenario_id: {type: str, description: "方案编码"}
+      audience: {type: str, description: "受众: command_center/public/traffic/rescue", default: "command_center"}

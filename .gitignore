@@ -1,0 +1,21 @@
+.env
+.env.*
+__pycache__/
+*.py[cod]
+agent/.venv/
+.oag_data/
+
+# Domain/runtime generated outputs
+domains/flood/data/generated/
+
+# Local domain tool secrets
+domains/tools/.env
+
+# Local planning notes
+水库下游洪水-交通基础设施联动应急预警智能体.md
+
+# Local source data
+珊瑚河数据/
+
+# Local reference repos
+mypalantir/
