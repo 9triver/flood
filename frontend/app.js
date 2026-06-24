@@ -2,6 +2,9 @@ const state = {
   map: null,
   layerGroups: new Map(),
   layerMeta: new Map(),
+  featureIndex: new Map(),
+  focusedLayer: null,
+  focusedOriginalStyle: null,
   selected: null,
   bootstrap: null,
   baseBounds: null,
@@ -11,7 +14,9 @@ const state = {
 };
 
 const OBJECT_CONFIG = {
-  River: { label: "珊瑚河流域", color: "#1f2937", swatch: "fill" },
+  River: { label: "珊瑚河", color: "#0e7490", swatch: "line" },
+  Watershed: { label: "珊瑚河流域", color: "#1f2937", swatch: "fill" },
+  Waterway: { label: "河道水系", color: "#0e7490", swatch: "line" },
   County: { label: "行政边界", color: "#7b8794", swatch: "line" },
   Road: { label: "道路", color: "#5f6772", swatch: "line" },
   Reservoir: { label: "水库", color: "#2f80c9", swatch: "point" },
@@ -27,6 +32,8 @@ const OBJECT_CONFIG = {
 
 const ID_FIELDS = {
   River: "river_id",
+  Watershed: "watershed_id",
+  Waterway: "waterway_id",
   County: "county_id",
   Road: "road_id",
   Reservoir: "reservoir_id",
@@ -44,7 +51,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   initMap();
   bindEvents();
   await bootstrap();
-  await loadObject("River", {}, { fit: true });
+  await loadObject("Watershed", {}, { fit: true });
   await loadObject("County", {}, { fit: false });
   addMessage("agent", "基础对象已加载。");
   renderIcons();
@@ -72,7 +79,7 @@ async function bootstrap() {
 
 function renderObjectList(items) {
   const list = document.getElementById("objectList");
-  const visible = ["River", "County", "Road", "Reservoir", "Sluice", "Bridge", "HydraulicStructure", "Place", "Route"];
+  const visible = ["Watershed", "Waterway", "County", "Road", "Reservoir", "Sluice", "Bridge", "HydraulicStructure", "Place", "Route"];
   list.innerHTML = "";
 
   visible.forEach((objectType) => {
@@ -134,6 +141,7 @@ async function loadObject(objectType, filters = {}, options = {}) {
     style: (feature) => featureStyle(objectType, feature),
     pointToLayer: (feature, latlng) => L.circleMarker(latlng, pointStyle(objectType, feature)),
     onEachFeature: (feature, layerItem) => {
+      indexFeature(objectType, feature, layerItem);
       layerItem.on("click", () => selectFeature(objectType, feature, layerItem));
       layerItem.bindPopup(popupHtml(objectType, feature));
     },
@@ -142,7 +150,7 @@ async function loadObject(objectType, filters = {}, options = {}) {
   state.layerGroups.set(key, layer);
   state.layerMeta.set(key, { objectType, filters, label: options.label || OBJECT_CONFIG[objectType]?.label || objectType });
   setObjectButtonActive(objectType, true);
-  if (objectType === "River") state.baseBounds = layer.getBounds();
+  if (objectType === "Watershed") state.baseBounds = layer.getBounds();
   if (options.fit) fitLayer(layer);
   return layer;
 }
@@ -150,6 +158,7 @@ async function loadObject(objectType, filters = {}, options = {}) {
 function removeLayer(key) {
   const layer = state.layerGroups.get(key);
   const meta = state.layerMeta.get(key);
+  if (meta) unindexLayer(meta.objectType, layer);
   if (layer) state.map.removeLayer(layer);
   state.layerGroups.delete(key);
   state.layerMeta.delete(key);
@@ -157,9 +166,10 @@ function removeLayer(key) {
 }
 
 function resetMap() {
+  clearFocus();
   for (const key of Array.from(state.layerGroups.keys())) {
     const meta = state.layerMeta.get(key);
-    if (!["River", "County"].includes(meta?.objectType)) {
+    if (!["Watershed", "County"].includes(meta?.objectType)) {
       removeLayer(key);
     }
   }
@@ -185,13 +195,35 @@ function fitLayer(layer) {
   if (bounds?.isValid()) state.map.fitBounds(bounds.pad(0.08));
 }
 
+function fitFeatureLayer(layer) {
+  const bounds = layer.getBounds?.();
+  if (bounds?.isValid()) {
+    state.map.flyToBounds(bounds.pad(0.35), {
+      animate: true,
+      duration: 0.85,
+      easeLinearity: 0.22,
+      maxZoom: 16,
+    });
+    return;
+  }
+  const latlng = layer.getLatLng?.();
+  if (latlng) {
+    state.map.flyTo(latlng, Math.max(state.map.getZoom(), 15), {
+      animate: true,
+      duration: 0.85,
+      easeLinearity: 0.22,
+    });
+  }
+}
+
 function featureStyle(objectType, feature) {
   if (objectType === "Cell") {
     const depth = Number(feature.properties?.depth_m || feature.properties?.YMSS || 0);
     const color = depth > 1 ? "#14539a" : depth > 0.5 ? "#2f80c9" : "#7ab6df";
     return { color, weight: 0.5, fillColor: color, fillOpacity: 0.34 };
   }
-  if (objectType === "River") return { color: "#1f2937", weight: 1.3, fillColor: "#9bc4df", fillOpacity: 0.1 };
+  if (objectType === "Watershed") return { color: "#1f2937", weight: 1.3, fillColor: "#9bc4df", fillOpacity: 0.1 };
+  if (objectType === "Waterway") return { color: "#0e7490", weight: 2.4, opacity: 0.9 };
   if (objectType === "County") return { color: "#7b8794", weight: 1.2, fillOpacity: 0 };
   if (objectType === "Road") return { color: "#5f6772", weight: 2, opacity: 0.82 };
   if (objectType === "Route") return { color: "#d44a3a", weight: 3, opacity: 0.92 };
@@ -235,7 +267,78 @@ function selectFeature(objectType, feature, layerItem) {
     name: props.name || props[idField],
   };
   document.getElementById("selectedObject").innerHTML = detailHtml(objectType, props);
+  applyFocus(layerItem, objectType);
   layerItem.openPopup();
+}
+
+function indexFeature(objectType, feature, layerItem) {
+  const idField = ID_FIELDS[objectType];
+  const objectId = feature.properties?.[idField];
+  if (!objectId) return;
+  state.featureIndex.set(featureIndexKey(objectType, objectId), { objectType, objectId, feature, layer: layerItem });
+}
+
+function unindexLayer(objectType, group) {
+  if (!group) return;
+  group.eachLayer?.((layerItem) => {
+    const idField = ID_FIELDS[objectType];
+    const objectId = layerItem.feature?.properties?.[idField];
+    if (objectId) state.featureIndex.delete(featureIndexKey(objectType, objectId));
+    if (state.focusedLayer === layerItem) clearFocus();
+  });
+}
+
+async function focusObject(action = {}) {
+  const selected = state.selected || {};
+  const objectType = action.object_type || selected.object_type;
+  const objectId = action.object_id || action.id || selected.id;
+  if (!objectType || !objectId) {
+    fitAll();
+    return false;
+  }
+
+  await loadObject(objectType, action.filters || {}, { fit: false, label: action.label });
+  let entry = state.featureIndex.get(featureIndexKey(objectType, objectId));
+  if (!entry) {
+    for (const [key, value] of state.featureIndex.entries()) {
+      if (key.startsWith(`${objectType}:`) && String(value.feature?.properties?.name || "") === String(objectId)) {
+        entry = value;
+        break;
+      }
+    }
+  }
+  if (!entry) {
+    addTrace("MISS", "未找到对象", `${objectType} ${objectId}`);
+    return false;
+  }
+
+  selectFeature(objectType, entry.feature, entry.layer);
+  fitFeatureLayer(entry.layer);
+  return true;
+}
+
+function applyFocus(layerItem, objectType) {
+  clearFocus();
+  state.focusedLayer = layerItem;
+  const isPoint = Boolean(layerItem.setRadius);
+  const style = isPoint
+    ? { radius: 8, color: "#f8fafc", weight: 3, fillColor: "#f59e0b", fillOpacity: 1 }
+    : { color: "#f59e0b", weight: 4, fillColor: "#f59e0b", fillOpacity: 0.28 };
+  layerItem.setStyle?.(style);
+  layerItem.bringToFront?.();
+  state.focusedOriginalStyle = { objectType };
+}
+
+function clearFocus() {
+  if (!state.focusedLayer) return;
+  const objectType = state.focusedOriginalStyle?.objectType;
+  const feature = state.focusedLayer.feature || {};
+  if (state.focusedLayer.setStyle && objectType) {
+    if (state.focusedLayer.setRadius) state.focusedLayer.setRadius(pointStyle(objectType, feature).radius);
+    state.focusedLayer.setStyle(state.focusedLayer.setRadius ? pointStyle(objectType, feature) : featureStyle(objectType, feature));
+  }
+  state.focusedLayer = null;
+  state.focusedOriginalStyle = null;
 }
 
 function detailHtml(objectType, props) {
@@ -369,8 +472,11 @@ async function executeActions(actions) {
         simplify_tolerance: action.simplify_tolerance,
       });
     }
+    if (action.type === "focus_object") {
+      await focusObject(action);
+    }
     if (action.type === "focus_selected") {
-      fitAll();
+      await focusObject(action);
     }
   }
 }
@@ -476,9 +582,13 @@ function readableTool(name, args) {
     analyze_risks: "分析风险",
     list_mappable_objects: "列出可绘制对象",
     export_objects_geojson: "导出对象 GeoJSON",
+    ui_show_objects: "地图显示",
+    ui_clear_map: "清空地图",
+    ui_focus_object: "地图定位",
   };
   const parts = [];
   if (args.object_type) parts.push(args.object_type);
+  if (Array.isArray(args.objects)) parts.push(args.objects.map((item) => item.object_type).filter(Boolean).join(", "));
   if (args.scenario_id) parts.push(args.scenario_id);
   if (args.return_period_year) parts.push(`${args.return_period_year}年一遇`);
   return `${labels[name] || name}${parts.length ? ` (${parts.join(", ")})` : ""}`;
@@ -555,6 +665,10 @@ function hasObjectType(objectType) {
 
 function layerKey(objectType, filters) {
   return `${objectType}:${JSON.stringify(filters || {})}`;
+}
+
+function featureIndexKey(objectType, objectId) {
+  return `${objectType}:${String(objectId)}`;
 }
 
 function escapeHtml(value) {

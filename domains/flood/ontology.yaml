@@ -12,17 +12,62 @@ objects:
       type: resolver
       resolver: flood_repository
       id_field: river_id
-    summary: "河流及其分析范围"
-    description: "河流是领域主对象。珊瑚河流域边界图层可作为 River 的空间分析范围，而不是单独的边界对象。"
+    summary: "河流主体"
+    description: "River 表达珊瑚河这个河流主体，是水文、洪水情景、水利工程和流域对象的关联中心；River 自身不必携带地图几何。流域范围由 Watershed 表达，河道线由 Waterway 表达。"
     properties:
       river_id: {type: str, required: true, description: "河流编号，如 shanhu"}
       name: {type: str, description: "河流名称"}
-      basin_name: {type: str, description: "流域名称"}
-      basin_area_km2: {type: float, description: "流域面积，若数据可得"}
+      watershed_id: {type: str, description: "默认关联的流域编号"}
+      watershed_name: {type: str, description: "默认关联的流域名称"}
+      data_note: {type: str, description: "关于河流数据来源或缺失情况的说明"}
+
+  Watershed:
+    kind: entity
+    data_source: external_api
+    mutability: read_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: watershed_id
+    summary: "河流流域范围"
+    description: "Watershed 表达珊瑚河流域边界面，是 GIS 基础范围对象；它不是河流主体，也不是河道线。"
+    properties:
+      watershed_id: {type: str, required: true, description: "流域编号，如 shanhu_watershed"}
+      river_id: {type: str, description: "所属河流编号"}
+      name: {type: str, description: "流域名称"}
+      area_km2: {type: float, description: "流域面积，若数据可得"}
       crs: {type: str, description: "空间数据原始坐标系"}
       geometry_type: {type: str, description: "GeoJSON 几何类型"}
       geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
       data_path: {type: str, description: "对应空间数据路径"}
+
+  Waterway:
+    kind: entity
+    data_source: external_api
+    mutability: read_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: waterway_id
+    summary: "河道或水系线"
+    description: "Waterway 表达可在 GIS 中绘制的河道、水系线段。当前 OSM 未检索到命名为珊瑚河/Shanhu River 的水系主体，因此以流域内相交的 OSM waterway way 作为候选河道对象，并保留候选状态。"
+    properties:
+      waterway_id: {type: str, required: true, description: "水系线对象ID，如 osm_way_258641158"}
+      river_id: {type: str, description: "所属河流编号"}
+      watershed_id: {type: str, description: "所属流域编号"}
+      name: {type: str, description: "OSM 名称，未命名则为空"}
+      waterway_type: {type: str, description: "OSM waterway 类型，如 river/stream"}
+      osm_type: {type: str, description: "OSM 元素类型"}
+      osm_id: {type: str, description: "OSM way ID"}
+      source: {type: str, description: "数据来源"}
+      osm_source: {type: str, description: "OSM 标签中的 source"}
+      length_m: {type: float, description: "线对象长度，米"}
+      inside_basin_length_m: {type: float, description: "估算位于流域内的线段长度，米"}
+      inside_basin_ratio: {type: float, description: "估算位于流域内的长度占比"}
+      candidate_status: {type: str, description: "候选状态，如 osm_unnamed_candidate/osm_named_neighbor"}
+      geometry_type: {type: str, description: "GeoJSON 几何类型"}
+      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
+      data_path: {type: str, description: "缓存的 OSM 原始响应路径"}
 
   County:
     kind: entity
@@ -88,6 +133,19 @@ objects:
       safety_status: {type: str, description: "安全状态或安全类别"}
       longitude: {type: float, description: "经度"}
       latitude: {type: float, description: "纬度"}
+      geometry_source: {type: str, description: "当前 geometry 来源: local_inventory/osm_reservoir_area/hydrolakes_reservoir_area/esa_worldcover_water_area/local_inventory_with_osm_dam_match"}
+      osm_match_status: {type: str, description: "OSM 匹配状态: unmatched/matched_by_osm_id/matched_by_name/matched_by_distance"}
+      osm_ref: {type: str, description: "匹配到的 OSM 元素引用，如 relation/11580522"}
+      osm_name: {type: str, description: "OSM 名称"}
+      osm_water_feature: {type: str, description: "OSM 特征类型: reservoir_area/dam"}
+      osm_distance_m: {type: float, description: "本地水库点与 OSM 元素中心距离"}
+      osm_tags: {type: str, description: "保留的 OSM 标签 JSON 字符串"}
+      osm_data_path: {type: str, description: "缓存的 OSM 原始响应路径"}
+      external_geometry_source: {type: str, description: "外部几何来源，如 HydroLAKES"}
+      external_geometry_ref: {type: str, description: "外部几何引用，如 Hylak_id/1385651"}
+      external_geometry_distance_m: {type: float, description: "本地水库点到外部几何边界的距离"}
+      external_geometry_confidence: {type: str, description: "外部几何匹配置信度"}
+      external_geometry_area_km2: {type: float, description: "外部水体面积，平方千米"}
       geometry_type: {type: str, description: "GeoJSON 几何类型"}
       geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
       data_path: {type: str, description: "空间数据路径"}
@@ -113,6 +171,14 @@ objects:
       design_discharge_m3s: {type: float, description: "设计过闸流量或分泄流量"}
       longitude: {type: float, description: "经度"}
       latitude: {type: float, description: "纬度"}
+      geometry_source: {type: str, description: "当前 geometry 来源或 OSM 补充状态"}
+      osm_match_status: {type: str, description: "OSM 匹配状态: unmatched/matched_by_osm_id/matched_by_name/matched_by_distance"}
+      osm_ref: {type: str, description: "匹配到的 OSM 元素引用"}
+      osm_name: {type: str, description: "OSM 名称"}
+      osm_feature: {type: str, description: "OSM 特征类型"}
+      osm_distance_m: {type: float, description: "本地对象与 OSM 元素中心距离"}
+      osm_tags: {type: str, description: "保留的 OSM 标签 JSON 字符串"}
+      osm_data_path: {type: str, description: "缓存的 OSM 原始响应路径"}
       geometry_type: {type: str, description: "GeoJSON 几何类型"}
       geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
       data_path: {type: str, description: "空间数据路径"}
@@ -140,6 +206,14 @@ objects:
       flow_m3s: {type: float, description: "流量，适用于泵站/泄洪设施"}
       longitude: {type: float, description: "经度，点状设施或代表点"}
       latitude: {type: float, description: "纬度，点状设施或代表点"}
+      geometry_source: {type: str, description: "当前 geometry 来源或 OSM 补充状态"}
+      osm_match_status: {type: str, description: "OSM 匹配状态: unmatched/matched_by_osm_id/matched_by_name/matched_by_distance"}
+      osm_ref: {type: str, description: "匹配到的 OSM 元素引用"}
+      osm_name: {type: str, description: "OSM 名称"}
+      osm_feature: {type: str, description: "OSM 特征类型"}
+      osm_distance_m: {type: float, description: "本地对象与 OSM 元素中心距离"}
+      osm_tags: {type: str, description: "保留的 OSM 标签 JSON 字符串"}
+      osm_data_path: {type: str, description: "缓存的 OSM 原始响应路径"}
       geometry_type: {type: str, description: "GeoJSON 几何类型"}
       geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
       data_path: {type: str, description: "空间数据路径"}
@@ -165,6 +239,14 @@ objects:
       tunnel_flag: {type: bool, description: "该路段是否标记为隧道路段"}
       length_m: {type: float, description: "道路长度，米"}
       crs: {type: str, description: "原始坐标系"}
+      geometry_source: {type: str, description: "当前 geometry 来源或 OSM 补充状态"}
+      osm_match_status: {type: str, description: "OSM 匹配状态: unmatched/matched_by_osm_id/matched_by_name/matched_by_distance"}
+      osm_ref: {type: str, description: "匹配到的 OSM 元素引用"}
+      osm_name: {type: str, description: "OSM 名称"}
+      osm_feature: {type: str, description: "OSM 特征类型"}
+      osm_distance_m: {type: float, description: "本地对象与 OSM 元素中心距离"}
+      osm_tags: {type: str, description: "保留的 OSM 标签 JSON 字符串"}
+      osm_data_path: {type: str, description: "缓存的 OSM 原始响应路径"}
       geometry_type: {type: str, description: "GeoJSON 几何类型"}
       geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
       data_path: {type: str, description: "空间数据路径"}
@@ -190,6 +272,14 @@ objects:
       data_quality: {type: str, description: "台账完整性: complete/partial/missing"}
       longitude: {type: float, description: "经度"}
       latitude: {type: float, description: "纬度"}
+      geometry_source: {type: str, description: "当前 geometry 来源或 OSM 补充状态"}
+      osm_match_status: {type: str, description: "OSM 匹配状态: unmatched/matched_by_osm_id/matched_by_name/matched_by_distance"}
+      osm_ref: {type: str, description: "匹配到的 OSM 元素引用"}
+      osm_name: {type: str, description: "OSM 名称"}
+      osm_feature: {type: str, description: "OSM 特征类型"}
+      osm_distance_m: {type: float, description: "本地对象与 OSM 元素中心距离"}
+      osm_tags: {type: str, description: "保留的 OSM 标签 JSON 字符串"}
+      osm_data_path: {type: str, description: "缓存的 OSM 原始响应路径"}
       geometry_type: {type: str, description: "GeoJSON 几何类型"}
       geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
       data_path: {type: str, description: "空间数据路径"}
@@ -214,6 +304,14 @@ objects:
       county_id: {type: str, description: "所属县编码"}
       longitude: {type: float, description: "经度"}
       latitude: {type: float, description: "纬度"}
+      geometry_source: {type: str, description: "当前 geometry 来源或 OSM 补充状态"}
+      osm_match_status: {type: str, description: "OSM 匹配状态: unmatched/matched_by_osm_id/matched_by_name/matched_by_distance"}
+      osm_ref: {type: str, description: "匹配到的 OSM 元素引用"}
+      osm_name: {type: str, description: "OSM 名称"}
+      osm_feature: {type: str, description: "OSM 特征类型"}
+      osm_distance_m: {type: float, description: "本地对象与 OSM 元素中心距离"}
+      osm_tags: {type: str, description: "保留的 OSM 标签 JSON 字符串"}
+      osm_data_path: {type: str, description: "缓存的 OSM 原始响应路径"}
       geometry_type: {type: str, description: "GeoJSON 几何类型"}
       geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
       data_path: {type: str, description: "空间数据路径"}
@@ -449,11 +547,27 @@ objects:
       created_at: {type: str, description: "生成时间"}
 
 links:
-  river_counties:
+  river_watersheds:
     source: River
+    target: Watershed
+    join: {source_key: river_id, target_key: river_id}
+    description: "河流关联的流域范围"
+    link_type: contains
+    cardinality: 1..n
+
+  river_counties:
+    source: Watershed
     target: County
     join: {source_key: river_id, target_key: river_id}
-    description: "河流流域涉及的县级行政区，当前可由空间叠加或配置生成"
+    description: "流域涉及的县级行政区，当前可由空间叠加或配置生成"
+    link_type: contains
+    cardinality: 1..n
+
+  watershed_waterways:
+    source: Watershed
+    target: Waterway
+    join: {source_key: watershed_id, target_key: watershed_id}
+    description: "流域内可绘制河道或水系线候选"
     link_type: contains
     cardinality: 1..n
 
@@ -624,7 +738,7 @@ functions:
     summary: "列出可用于前端 GIS 绘制的领域对象类型"
     description: "返回哪些领域对象带有地理信息、对象数量、几何类型和推荐样式。前端应按对象类型绘制，而不是依赖领域模型中的图层对象。"
     function_type: lookup
-    involves_objects: [River, County, Road, Reservoir, Sluice, HydraulicStructure, Bridge, Facility, Place, Transfer, Route, Cell]
+    involves_objects: [Watershed, Waterway, County, Road, Reservoir, Sluice, HydraulicStructure, Bridge, Facility, Place, Transfer, Route, Cell]
     params:
       object_type: {type: str, description: "可选，按领域对象类型过滤", default: ""}
 
@@ -633,7 +747,7 @@ functions:
     description: "从领域对象数据导出 EPSG:4326 GeoJSON。点、线、面几何来自对象自身的 geometry 字段；大型 Cell 对象可直接从对应情景源数据导出并可简化。"
     usage_prompt: "当前端需要绘制学校、医院、桥梁、路线、道路、某个洪水情景等对象时调用。传 object_type 而不是图层名；绘制洪水情景时 object_type=Cell 并传 scenario_id。"
     function_type: lookup
-    involves_objects: [River, County, Road, Reservoir, Sluice, HydraulicStructure, Bridge, Facility, Place, Transfer, Route, Cell]
+    involves_objects: [Watershed, Waterway, County, Road, Reservoir, Sluice, HydraulicStructure, Bridge, Facility, Place, Transfer, Route, Cell]
     params:
       object_type: {type: str, description: "领域对象类型，如 Facility、Bridge、Route、Cell"}
       filters: {type: dict, description: "对象过滤条件；Cell 可用 scenario_id", default: {}}

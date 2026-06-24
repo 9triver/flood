@@ -7,7 +7,9 @@ from typing import Any
 
 
 OBJECT_LABELS = {
-    "River": "珊瑚河流域",
+    "River": "珊瑚河",
+    "Watershed": "珊瑚河流域",
+    "Waterway": "河道水系",
     "County": "行政边界",
     "Road": "道路",
     "Reservoir": "水库",
@@ -21,6 +23,37 @@ OBJECT_LABELS = {
     "Cell": "淹没范围",
 }
 
+ID_FIELDS = {
+    "Watershed": "watershed_id",
+    "Waterway": "waterway_id",
+    "County": "county_id",
+    "Road": "road_id",
+    "Reservoir": "reservoir_id",
+    "Sluice": "sluice_id",
+    "Bridge": "bridge_id",
+    "Facility": "facility_id",
+    "HydraulicStructure": "structure_id",
+    "Place": "place_id",
+    "Transfer": "transfer_id",
+    "Route": "route_id",
+    "Cell": "cell_id",
+}
+
+OBJECT_KEYWORDS = {
+    "Reservoir": ["水库"],
+    "Sluice": ["水闸", "闸门", "分洪闸"],
+    "HydraulicStructure": ["堤防", "泵站", "溢流", "水利工程", "水利设施"],
+    "Bridge": ["桥", "桥梁"],
+    "Road": ["道路", "公路", "路段"],
+    "Facility": ["学校", "医院", "政府", "设施"],
+    "Place": ["安置点", "安置地点"],
+    "Route": ["路线", "转移路线"],
+    "Transfer": ["转移对象", "转移单元"],
+    "Waterway": ["河道", "水系", "河网"],
+    "Watershed": ["流域"],
+    "County": ["行政边界", "县界", "县"],
+}
+
 
 @dataclass
 class DisplayIntent:
@@ -30,11 +63,14 @@ class DisplayIntent:
     return_period_year: int = 0
     show_flood: bool = False
     show_traffic: bool = False
+    show_waterway: bool = False
     water_objects: list[str] = field(default_factory=list)
     facility_type: str = ""
     facility_label: str = ""
     show_evacuation: bool = False
     focus_selected: bool = False
+    focus_object_type: str = ""
+    focus_object_id: str = ""
 
 
 @dataclass
@@ -83,9 +119,23 @@ class MapActionPlanner:
 
         intent.return_period_year = self._extract_period(text)
         intent.show_flood = any(word in text for word in ["洪水", "淹没", "受淹", "水深", "风险", "影响", "最不利"])
+        intent.show_waterway = any(word in text for word in ["河道", "水系", "河流线", "河网"]) or (
+            any(word in text for word in ["河流", "珊瑚河"]) and any(word in text for word in ["显示", "打开", "绘制", "画"])
+        )
         intent.show_traffic = any(word in text for word in ["道路", "公路", "交通", "封控", "中断", "桥", "桥梁"])
         intent.show_evacuation = any(word in text for word in ["转移", "安置", "避洪", "路线", "撤离"])
-        intent.focus_selected = bool(selected.get("object_type")) and any(word in text for word in ["这个", "这条", "该", "它"])
+        focus_requested = any(word in text for word in ["聚焦", "定位", "缩放到", "高亮", "查看"])
+        intent.focus_selected = bool(selected.get("object_type")) and (
+            any(word in text for word in ["这个", "这条", "该", "它"]) or focus_requested
+        )
+        if intent.focus_selected:
+            intent.focus_object_type = selected.get("object_type", "")
+            intent.focus_object_id = selected.get("id", "")
+        elif focus_requested:
+            target = self._resolve_focus_target(message)
+            if target:
+                intent.focus_object_type = target["object_type"]
+                intent.focus_object_id = target["object_id"]
         intent.water_objects = self._water_objects_for_text(text)
 
         if not intent.water_objects and any(word in text for word in ["学校", "医院", "政府", "设施"]):
@@ -117,7 +167,11 @@ class MapActionPlanner:
 
         if intent.focus_selected:
             cards.append(self._selected_card(selected))
-            actions.append({"type": "focus_selected"})
+            actions.append({
+                "type": "focus_object",
+                "object_type": intent.focus_object_type,
+                "object_id": intent.focus_object_id,
+            })
             notes.append(self._selected_note(selected))
 
         if intent.show_flood:
@@ -140,6 +194,21 @@ class MapActionPlanner:
                     "detail": f"受影响人口 {impact.get('affected_population_10k', 0):.2f} 万人，公路 {impact.get('inundated_road_km', 0):.2f} km，直接损失 {impact.get('direct_loss_10k_cny', 0):.2f} 万元",
                 })
                 notes.append(f"已按 {scenario['return_period_year']} 年一遇情景展示淹没范围。")
+
+        if intent.show_waterway:
+            actions.append({
+                "type": "load_object",
+                "object_type": "Waterway",
+                "label": "河道水系",
+                "filters": {},
+                "fit": False,
+            })
+            cards.append({
+                "title": "河道水系",
+                "value": str(self.resolver.count("Waterway")),
+                "detail": "OSM 未命名为珊瑚河的 waterway 候选线，按与流域相交关系纳入对象库",
+            })
+            notes.append("已打开河道水系候选对象。")
 
         if intent.show_traffic:
             actions.extend([
@@ -185,13 +254,27 @@ class MapActionPlanner:
             ])
             notes.append("已打开转移对象、安置地点和转移路线。")
 
+        if intent.focus_object_type and intent.focus_object_id and not intent.focus_selected:
+            context = "对象定位 · 珊瑚河流域"
+            actions.append({
+                "type": "focus_object",
+                "object_type": intent.focus_object_type,
+                "object_id": intent.focus_object_id,
+            })
+            cards.append({
+                "title": OBJECT_LABELS.get(intent.focus_object_type, intent.focus_object_type),
+                "value": intent.focus_object_id,
+                "detail": "已定位并高亮该对象",
+            })
+            notes.append("已定位到指定对象。")
+
         if not actions:
             actions.extend([
-                {"type": "load_object", "object_type": "River", "label": "珊瑚河流域", "filters": {}, "fit": True},
+                {"type": "load_object", "object_type": "Watershed", "label": "珊瑚河流域", "filters": {}, "fit": True},
                 {"type": "load_object", "object_type": "County", "label": "行政边界", "filters": {}, "fit": False},
             ])
             cards.extend([
-                {"title": "流域", "value": str(self.resolver.count("River")), "detail": "珊瑚河流域范围"},
+                {"title": "流域", "value": str(self.resolver.count("Watershed")), "detail": "珊瑚河流域范围"},
                 {"title": "行政边界", "value": str(self.resolver.count("County")), "detail": "县级行政区边界"},
             ])
             notes.append("已打开珊瑚河流域和行政边界。")
@@ -213,6 +296,35 @@ class MapActionPlanner:
         if not period:
             return None
         return next((row for row in self.scenarios if row.get("return_period_year") == period), None)
+
+    def _resolve_focus_target(self, message: str) -> dict[str, str] | None:
+        object_types = self._object_types_for_text(message) or list(ID_FIELDS)
+        for object_type in object_types:
+            id_field = ID_FIELDS.get(object_type)
+            if not id_field:
+                continue
+            for row in self.resolver.query(object_type):
+                object_id = str(row.get(id_field) or "")
+                if object_id and object_id in message:
+                    return {"object_type": object_type, "object_id": object_id}
+        for object_type in object_types:
+            id_field = ID_FIELDS.get(object_type)
+            if not id_field:
+                continue
+            for row in self.resolver.query(object_type):
+                name = str(row.get("name") or "")
+                object_id = str(row.get(id_field) or "")
+                if name and name in message and object_id:
+                    return {"object_type": object_type, "object_id": object_id}
+        return None
+
+    @staticmethod
+    def _object_types_for_text(message: str) -> list[str]:
+        result = []
+        for object_type, keywords in OBJECT_KEYWORDS.items():
+            if any(keyword in message for keyword in keywords):
+                result.append(object_type)
+        return result
 
     @staticmethod
     def _water_objects_for_text(text: str) -> list[str]:

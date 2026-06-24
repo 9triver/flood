@@ -1,0 +1,5000 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API 0.7.62.11 87bfad18",
+  "osm3s": {
+    "timestamp_osm_base": "2026-06-23T13:13:55Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+  },
+  "elements": [
+
+{
+  "type": "way",
+  "id": 286720755,
+  "bounds": {
+    "minlat": 24.2591751,
+    "minlon": 111.2183849,
+    "maxlat": 24.2593532,
+    "maxlon": 111.2190461
+  },
+  "geometry": [
+    { "lat": 24.2591751, "lon": 111.2183849 },
+    { "lat": 24.2593532, "lon": 111.2190461 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "primary",
+    "layer": "1",
+    "source": "GPS"
+  }
+},
+{
+  "type": "way",
+  "id": 520404421,
+  "bounds": {
+    "minlat": 24.3519023,
+    "minlon": 111.0981822,
+    "maxlat": 24.3525923,
+    "maxlon": 111.0990393
+  },
+  "geometry": [
+    { "lat": 24.3525923, "lon": 111.0990393 },
+    { "lat": 24.3522869, "lon": 111.0986477 },
+    { "lat": 24.3519023, "lon": 111.0981822 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "trunk",
+    "ref": "G241;S207",
+    "source": "ESRI"
+  }
+},
+{
+  "type": "way",
+  "id": 530630350,
+  "bounds": {
+    "minlat": 24.4680866,
+    "minlon": 111.1437974,
+    "maxlat": 24.4680954,
+    "maxlon": 111.1446279
+  },
+  "geometry": [
+    { "lat": 24.4680954, "lon": 111.1437974 },
+    { "lat": 24.4680866, "lon": 111.1446279 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "trunk",
+    "layer": "1",
+    "ref": "G323",
+    "source": "digitalGlobe"
+  }
+},
+{
+  "type": "way",
+  "id": 530630355,
+  "bounds": {
+    "minlat": 24.5198077,
+    "minlon": 111.1409498,
+    "maxlat": 24.5203616,
+    "maxlon": 111.1417223
+  },
+  "geometry": [
+    { "lat": 24.5203616, "lon": 111.1417223 },
+    { "lat": 24.5198077, "lon": 111.1409498 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "secondary",
+    "layer": "1",
+    "ref": "X707",
+    "source": "digitalGlobe"
+  }
+},
+{
+  "type": "way",
+  "id": 530630401,
+  "bounds": {
+    "minlat": 24.5376529,
+    "minlon": 111.1573455,
+    "maxlat": 24.5380486,
+    "maxlon": 111.1580210
+  },
+  "geometry": [
+    { "lat": 24.5380486, "lon": 111.1573455 },
+    { "lat": 24.5376529, "lon": 111.1580210 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "tertiary",
+    "layer": "1",
+    "source": "digitalGlobe"
+  }
+},
+{
+  "type": "way",
+  "id": 551176705,
+  "bounds": {
+    "minlat": 24.5272312,
+    "minlon": 111.3182714,
+    "maxlat": 24.5294586,
+    "maxlon": 111.3183004
+  },
+  "geometry": [
+    { "lat": 24.5272312, "lon": 111.3182714 },
+    { "lat": 24.5283576, "lon": 111.3182943 },
+    { "lat": 24.5294586, "lon": 111.3183004 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "primary",
+    "layer": "1",
+    "name": "富江大桥",
+    "oneway": "yes",
+    "ref": "S201"
+  }
+},
+{
+  "type": "way",
+  "id": 551176707,
+  "bounds": {
+    "minlat": 24.5272483,
+    "minlon": 111.3181959,
+    "maxlat": 24.5294390,
+    "maxlon": 111.3182113
+  },
+  "geometry": [
+    { "lat": 24.5294390, "lon": 111.3182113 },
+    { "lat": 24.5272483, "lon": 111.3181959 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "primary",
+    "layer": "1",
+    "name": "富江大桥",
+    "oneway": "yes",
+    "ref": "S201"
+  }
+},
+{
+  "type": "way",
+  "id": 551176710,
+  "bounds": {
+    "minlat": 24.4015951,
+    "minlon": 111.2629944,
+    "maxlat": 24.4020454,
+    "maxlon": 111.2631295
+  },
+  "geometry": [
+    { "lat": 24.4015951, "lon": 111.2629944 },
+    { "lat": 24.4020454, "lon": 111.2631295 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway_link",
+    "lanes": "2",
+    "layer": "1",
+    "maxspeed": "120",
+    "oneway": "yes",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 551176712,
+  "bounds": {
+    "minlat": 24.4015939,
+    "minlon": 111.2629288,
+    "maxlat": 24.4020418,
+    "maxlon": 111.2630678
+  },
+  "geometry": [
+    { "lat": 24.4020418, "lon": 111.2630678 },
+    { "lat": 24.4015939, "lon": 111.2629288 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway_link",
+    "lanes": "2",
+    "layer": "1",
+    "maxspeed": "120",
+    "oneway": "yes",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 552790794,
+  "bounds": {
+    "minlat": 24.2788741,
+    "minlon": 111.2233114,
+    "maxlat": 24.2795610,
+    "maxlon": 111.2237160
+  },
+  "geometry": [
+    { "lat": 24.2795610, "lon": 111.2233114 },
+    { "lat": 24.2788741, "lon": 111.2237160 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "包茂高速",
+    "name:en": "Baomao Expressway",
+    "name:zh": "包茂高速",
+    "oneway": "yes",
+    "ref": "G65",
+    "source": "GPS",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 552790795,
+  "bounds": {
+    "minlat": 24.2789330,
+    "minlon": 111.2234119,
+    "maxlat": 24.2796179,
+    "maxlon": 111.2238154
+  },
+  "geometry": [
+    { "lat": 24.2789330, "lon": 111.2238154 },
+    { "lat": 24.2796179, "lon": 111.2234119 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "包茂高速",
+    "name:en": "Baomao Expressway",
+    "name:zh": "包茂高速",
+    "oneway": "yes",
+    "ref": "G65",
+    "source": "GPS",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 552790798,
+  "bounds": {
+    "minlat": 24.2982607,
+    "minlon": 111.2198411,
+    "maxlat": 24.2991184,
+    "maxlon": 111.2198907
+  },
+  "geometry": [
+    { "lat": 24.2991184, "lon": 111.2198907 },
+    { "lat": 24.2982607, "lon": 111.2198411 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "包茂高速",
+    "name:en": "Baomao Expressway",
+    "name:zh": "包茂高速",
+    "oneway": "yes",
+    "ref": "G65",
+    "source": "GPS",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 552790799,
+  "bounds": {
+    "minlat": 24.2980972,
+    "minlon": 111.2199488,
+    "maxlat": 24.2990890,
+    "maxlon": 111.2200084
+  },
+  "geometry": [
+    { "lat": 24.2980972, "lon": 111.2199488 },
+    { "lat": 24.2990890, "lon": 111.2200084 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "包茂高速",
+    "name:en": "Baomao Expressway",
+    "name:zh": "包茂高速",
+    "oneway": "yes",
+    "ref": "G65",
+    "source": "GPS",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 552790819,
+  "bounds": {
+    "minlat": 24.3503785,
+    "minlon": 111.2265642,
+    "maxlat": 24.3514079,
+    "maxlon": 111.2268887
+  },
+  "geometry": [
+    { "lat": 24.3514079, "lon": 111.2268887 },
+    { "lat": 24.3503785, "lon": 111.2265642 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "包茂高速",
+    "name:en": "Baomao Expressway",
+    "name:zh": "包茂高速",
+    "oneway": "yes",
+    "ref": "G65",
+    "source": "GPS",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 552790823,
+  "bounds": {
+    "minlat": 24.3503488,
+    "minlon": 111.2266777,
+    "maxlat": 24.3513779,
+    "maxlon": 111.2270021
+  },
+  "geometry": [
+    { "lat": 24.3503488, "lon": 111.2266777 },
+    { "lat": 24.3513779, "lon": 111.2270021 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "包茂高速",
+    "name:en": "Baomao Expressway",
+    "name:zh": "包茂高速",
+    "oneway": "yes",
+    "ref": "G65",
+    "source": "GPS",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 552790845,
+  "bounds": {
+    "minlat": 24.3839711,
+    "minlon": 111.2005851,
+    "maxlat": 24.3844841,
+    "maxlon": 111.2009793
+  },
+  "geometry": [
+    { "lat": 24.3844841, "lon": 111.2009793 },
+    { "lat": 24.3843155, "lon": 111.2007889 },
+    { "lat": 24.3841665, "lon": 111.2006789 },
+    { "lat": 24.3839711, "lon": 111.2005851 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway_link",
+    "layer": "1",
+    "oneway": "yes"
+  }
+},
+{
+  "type": "way",
+  "id": 552790858,
+  "bounds": {
+    "minlat": 24.3810932,
+    "minlon": 111.2039834,
+    "maxlat": 24.3816307,
+    "maxlon": 111.2045145
+  },
+  "geometry": [
+    { "lat": 24.3816307, "lon": 111.2039834 },
+    { "lat": 24.3810932, "lon": 111.2045145 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "包茂高速",
+    "name:en": "Baomao Expressway",
+    "name:zh": "包茂高速",
+    "oneway": "yes",
+    "ref": "G65",
+    "source": "GPS",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 552790875,
+  "bounds": {
+    "minlat": 24.3833432,
+    "minlon": 111.2003705,
+    "maxlat": 24.3839076,
+    "maxlon": 111.2017947
+  },
+  "geometry": [
+    { "lat": 24.3833701, "lon": 111.2003705 },
+    { "lat": 24.3833432, "lon": 111.2006333 },
+    { "lat": 24.3833579, "lon": 111.2008452 },
+    { "lat": 24.3834287, "lon": 111.2011215 },
+    { "lat": 24.3835778, "lon": 111.2014058 },
+    { "lat": 24.3836999, "lon": 111.2015828 },
+    { "lat": 24.3839076, "lon": 111.2017947 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "oneway": "yes",
+    "ref": "G78",
+    "source": "GPS"
+  }
+},
+{
+  "type": "way",
+  "id": 552790890,
+  "bounds": {
+    "minlat": 24.3811676,
+    "minlon": 111.2040712,
+    "maxlat": 24.3817109,
+    "maxlon": 111.2046061
+  },
+  "geometry": [
+    { "lat": 24.3811676, "lon": 111.2046061 },
+    { "lat": 24.3817109, "lon": 111.2040712 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "包茂高速",
+    "name:en": "Baomao Expressway",
+    "name:zh": "包茂高速",
+    "oneway": "yes",
+    "ref": "G65",
+    "source": "GPS",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 622846449,
+  "bounds": {
+    "minlat": 24.4008065,
+    "minlon": 111.2537283,
+    "maxlat": 24.4008851,
+    "maxlon": 111.2541776
+  },
+  "geometry": [
+    { "lat": 24.4008065, "lon": 111.2537283 },
+    { "lat": 24.4008851, "lon": 111.2541776 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "汕昆高速",
+    "name:en": "Shantou-Kunming Expressway",
+    "name:zh": "汕昆高速",
+    "oneway": "yes",
+    "ref": "G78",
+    "source": "GPS"
+  }
+},
+{
+  "type": "way",
+  "id": 622846451,
+  "bounds": {
+    "minlat": 24.4009123,
+    "minlon": 111.2536986,
+    "maxlat": 24.4009978,
+    "maxlon": 111.2541669
+  },
+  "geometry": [
+    { "lat": 24.4009978, "lon": 111.2541669 },
+    { "lat": 24.4009123, "lon": 111.2536986 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "汕昆高速",
+    "name:en": "Shantou-Kunming Expressway",
+    "name:zh": "汕昆高速",
+    "oneway": "yes",
+    "ref": "G78",
+    "source": "GPS"
+  }
+},
+{
+  "type": "way",
+  "id": 622848584,
+  "bounds": {
+    "minlat": 24.4023896,
+    "minlon": 111.2570150,
+    "maxlat": 24.4025853,
+    "maxlon": 111.2572789
+  },
+  "geometry": [
+    { "lat": 24.4023896, "lon": 111.2572789 },
+    { "lat": 24.4025853, "lon": 111.2570150 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway_link",
+    "lanes": "2",
+    "layer": "1",
+    "maxspeed": "120",
+    "oneway": "yes",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 622848587,
+  "bounds": {
+    "minlat": 24.4019633,
+    "minlon": 111.2558281,
+    "maxlat": 24.4021809,
+    "maxlon": 111.2559473
+  },
+  "geometry": [
+    { "lat": 24.4021809, "lon": 111.2559473 },
+    { "lat": 24.4019633, "lon": 111.2558281 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway_link",
+    "layer": "1",
+    "oneway": "yes",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 622848590,
+  "bounds": {
+    "minlat": 24.4009643,
+    "minlon": 111.2536861,
+    "maxlat": 24.4010620,
+    "maxlon": 111.2541488
+  },
+  "geometry": [
+    { "lat": 24.4010620, "lon": 111.2541488 },
+    { "lat": 24.4009643, "lon": 111.2536861 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway_link",
+    "lanes": "2",
+    "layer": "1",
+    "maxspeed": "120",
+    "oneway": "yes",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 622848592,
+  "bounds": {
+    "minlat": 24.4007042,
+    "minlon": 111.2537532,
+    "maxlat": 24.4007213,
+    "maxlon": 111.2542105
+  },
+  "geometry": [
+    { "lat": 24.4007042, "lon": 111.2537532 },
+    { "lat": 24.4007213, "lon": 111.2540066 },
+    { "lat": 24.4007213, "lon": 111.2542105 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway_link",
+    "lanes": "2",
+    "layer": "1",
+    "maxspeed": "120",
+    "oneway": "yes",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 622865299,
+  "bounds": {
+    "minlat": 24.4022728,
+    "minlon": 111.2567213,
+    "maxlat": 24.4025117,
+    "maxlon": 111.2569031
+  },
+  "geometry": [
+    { "lat": 24.4022728, "lon": 111.2569031 },
+    { "lat": 24.4025117, "lon": 111.2567213 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway_link",
+    "lanes": "2",
+    "layer": "1",
+    "maxspeed": "120",
+    "oneway": "yes",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 622865303,
+  "bounds": {
+    "minlat": 24.4012179,
+    "minlon": 111.2572860,
+    "maxlat": 24.4018010,
+    "maxlon": 111.2576706
+  },
+  "geometry": [
+    { "lat": 24.4012179, "lon": 111.2576706 },
+    { "lat": 24.4018010, "lon": 111.2572860 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway_link",
+    "lanes": "2",
+    "layer": "1",
+    "maxspeed": "120",
+    "oneway": "yes",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 622865305,
+  "bounds": {
+    "minlat": 24.4011937,
+    "minlon": 111.2571900,
+    "maxlat": 24.4017702,
+    "maxlon": 111.2575804
+  },
+  "geometry": [
+    { "lat": 24.4017702, "lon": 111.2571900 },
+    { "lat": 24.4011937, "lon": 111.2575804 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway_link",
+    "lanes": "2",
+    "layer": "1",
+    "maxspeed": "120",
+    "oneway": "yes",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 622865313,
+  "bounds": {
+    "minlat": 24.4022365,
+    "minlon": 111.2566395,
+    "maxlat": 24.4024726,
+    "maxlon": 111.2568184
+  },
+  "geometry": [
+    { "lat": 24.4024726, "lon": 111.2566395 },
+    { "lat": 24.4022365, "lon": 111.2568184 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway_link",
+    "lanes": "2",
+    "layer": "1",
+    "maxspeed": "120",
+    "oneway": "yes",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 622900079,
+  "bounds": {
+    "minlat": 24.5241871,
+    "minlon": 111.2675807,
+    "maxlat": 24.5247309,
+    "maxlon": 111.2676376
+  },
+  "geometry": [
+    { "lat": 24.5241871, "lon": 111.2676376 },
+    { "lat": 24.5247309, "lon": 111.2675807 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "maxspeed": "120",
+    "name": "富钟高速",
+    "name:zh-Hant": "富鐘高速",
+    "oneway": "yes",
+    "ref": "S13",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 622900080,
+  "bounds": {
+    "minlat": 24.5241602,
+    "minlon": 111.2674472,
+    "maxlat": 24.5247166,
+    "maxlon": 111.2675089
+  },
+  "geometry": [
+    { "lat": 24.5247166, "lon": 111.2674472 },
+    { "lat": 24.5241602, "lon": 111.2675089 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "maxspeed": "120",
+    "name": "富钟高速",
+    "name:zh-Hant": "富鐘高速",
+    "oneway": "yes",
+    "ref": "S13",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 622900086,
+  "bounds": {
+    "minlat": 24.4561864,
+    "minlon": 111.2661191,
+    "maxlat": 24.4564048,
+    "maxlon": 111.2661529
+  },
+  "geometry": [
+    { "lat": 24.4561864, "lon": 111.2661529 },
+    { "lat": 24.4564048, "lon": 111.2661191 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "maxspeed": "120",
+    "name": "富钟高速",
+    "name:zh-Hant": "富鐘高速",
+    "oneway": "yes",
+    "ref": "S13",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 622900090,
+  "bounds": {
+    "minlat": 24.4452742,
+    "minlon": 111.2642225,
+    "maxlat": 24.4457587,
+    "maxlon": 111.2643587
+  },
+  "geometry": [
+    { "lat": 24.4452742, "lon": 111.2642225 },
+    { "lat": 24.4457587, "lon": 111.2643587 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "maxspeed": "120",
+    "name": "富钟高速",
+    "name:zh-Hant": "富鐘高速",
+    "oneway": "yes",
+    "ref": "S13",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 622900096,
+  "bounds": {
+    "minlat": 24.4090918,
+    "minlon": 111.2547703,
+    "maxlat": 24.4092740,
+    "maxlon": 111.2548065
+  },
+  "geometry": [
+    { "lat": 24.4090918, "lon": 111.2548065 },
+    { "lat": 24.4092740, "lon": 111.2547703 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "layer": "1",
+    "name": "富钟高速",
+    "name:zh-Hant": "富鐘高速",
+    "oneway": "yes",
+    "ref": "S13",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 622902143,
+  "bounds": {
+    "minlat": 24.5307048,
+    "minlon": 111.2681486,
+    "maxlat": 24.5308635,
+    "maxlon": 111.2682418
+  },
+  "geometry": [
+    { "lat": 24.5308635, "lon": 111.2682418 },
+    { "lat": 24.5307048, "lon": 111.2681486 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway_link",
+    "lanes": "2",
+    "layer": "1",
+    "maxspeed": "120",
+    "name": "道贺高速",
+    "oneway": "yes",
+    "ref": "S13",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 622902153,
+  "bounds": {
+    "minlat": 24.5306260,
+    "minlon": 111.2683688,
+    "maxlat": 24.5307867,
+    "maxlon": 111.2684377
+  },
+  "geometry": [
+    { "lat": 24.5307867, "lon": 111.2684377 },
+    { "lat": 24.5306260, "lon": 111.2683688 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "maxspeed": "120",
+    "name": "富钟高速",
+    "name:zh-Hant": "富鐘高速",
+    "oneway": "yes",
+    "ref": "S13",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 622902154,
+  "bounds": {
+    "minlat": 24.5305723,
+    "minlon": 111.2684762,
+    "maxlat": 24.5307487,
+    "maxlon": 111.2685415
+  },
+  "geometry": [
+    { "lat": 24.5305723, "lon": 111.2684762 },
+    { "lat": 24.5307487, "lon": 111.2685415 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "maxspeed": "120",
+    "name": "富钟高速",
+    "name:zh-Hant": "富鐘高速",
+    "oneway": "yes",
+    "ref": "S13",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 622902157,
+  "bounds": {
+    "minlat": 24.5292909,
+    "minlon": 111.2679012,
+    "maxlat": 24.5297906,
+    "maxlon": 111.2680545
+  },
+  "geometry": [
+    { "lat": 24.5297906, "lon": 111.2680545 },
+    { "lat": 24.5292909, "lon": 111.2679012 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "maxspeed": "120",
+    "name": "富钟高速",
+    "name:zh-Hant": "富鐘高速",
+    "oneway": "yes",
+    "ref": "S13",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 622902158,
+  "bounds": {
+    "minlat": 24.5292523,
+    "minlon": 111.2680200,
+    "maxlat": 24.5297589,
+    "maxlon": 111.2681704
+  },
+  "geometry": [
+    { "lat": 24.5292523, "lon": 111.2680200 },
+    { "lat": 24.5297589, "lon": 111.2681704 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "maxspeed": "120",
+    "name": "富钟高速",
+    "name:zh-Hant": "富鐘高速",
+    "oneway": "yes",
+    "ref": "S13",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 622902990,
+  "bounds": {
+    "minlat": 24.4452755,
+    "minlon": 111.2641224,
+    "maxlat": 24.4457184,
+    "maxlon": 111.2642345
+  },
+  "geometry": [
+    { "lat": 24.4457184, "lon": 111.2642345 },
+    { "lat": 24.4452755, "lon": 111.2641224 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "maxspeed": "120",
+    "name": "富钟高速",
+    "name:zh-Hant": "富鐘高速",
+    "oneway": "yes",
+    "ref": "S13",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 622903267,
+  "bounds": {
+    "minlat": 24.4090773,
+    "minlon": 111.2546602,
+    "maxlat": 24.4092646,
+    "maxlon": 111.2546919
+  },
+  "geometry": [
+    { "lat": 24.4092646, "lon": 111.2546602 },
+    { "lat": 24.4090773, "lon": 111.2546919 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "layer": "1",
+    "name": "富钟高速",
+    "name:zh-Hant": "富鐘高速",
+    "oneway": "yes",
+    "ref": "S13",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 784479758,
+  "bounds": {
+    "minlat": 24.3659305,
+    "minlon": 111.1312479,
+    "maxlat": 24.3660087,
+    "maxlon": 111.1316334
+  },
+  "geometry": [
+    { "lat": 24.3659305, "lon": 111.1312479 },
+    { "lat": 24.3660087, "lon": 111.1316334 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "tertiary",
+    "layer": "1",
+    "ref": "Y002"
+  }
+},
+{
+  "type": "way",
+  "id": 784492020,
+  "bounds": {
+    "minlat": 24.4383818,
+    "minlon": 111.2904338,
+    "maxlat": 24.4389265,
+    "maxlon": 111.2911611
+  },
+  "geometry": [
+    { "lat": 24.4389265, "lon": 111.2911611 },
+    { "lat": 24.4389032, "lon": 111.2911303 },
+    { "lat": 24.4383818, "lon": 111.2904338 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "primary",
+    "layer": "1",
+    "name": "迎宾大道",
+    "name:en": "Yingbin Avenue",
+    "name:zh": "迎宾大道",
+    "oneway": "yes",
+    "ref": "S201"
+  }
+},
+{
+  "type": "way",
+  "id": 784492023,
+  "bounds": {
+    "minlat": 24.4383376,
+    "minlon": 111.2904703,
+    "maxlat": 24.4388791,
+    "maxlon": 111.2912022
+  },
+  "geometry": [
+    { "lat": 24.4383376, "lon": 111.2904703 },
+    { "lat": 24.4387372, "lon": 111.2910104 },
+    { "lat": 24.4388791, "lon": 111.2912022 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "primary",
+    "layer": "1",
+    "name": "迎宾大道",
+    "name:en": "Yingbin Avenue",
+    "name:zh": "迎宾大道",
+    "oneway": "yes",
+    "ref": "S201"
+  }
+},
+{
+  "type": "way",
+  "id": 784492025,
+  "bounds": {
+    "minlat": 24.4354096,
+    "minlon": 111.2876524,
+    "maxlat": 24.4356351,
+    "maxlon": 111.2877755
+  },
+  "geometry": [
+    { "lat": 24.4356351, "lon": 111.2877755 },
+    { "lat": 24.4354096, "lon": 111.2876524 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "primary",
+    "layer": "1",
+    "name": "迎宾大道",
+    "name:en": "Yingbin Avenue",
+    "name:zh": "迎宾大道",
+    "oneway": "yes",
+    "ref": "S201"
+  }
+},
+{
+  "type": "way",
+  "id": 784492027,
+  "bounds": {
+    "minlat": 24.4353942,
+    "minlon": 111.2877236,
+    "maxlat": 24.4356141,
+    "maxlon": 111.2878413
+  },
+  "geometry": [
+    { "lat": 24.4353942, "lon": 111.2877236 },
+    { "lat": 24.4355042, "lon": 111.2877825 },
+    { "lat": 24.4356141, "lon": 111.2878413 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "primary",
+    "layer": "1",
+    "name": "迎宾大道",
+    "name:en": "Yingbin Avenue",
+    "name:zh": "迎宾大道",
+    "oneway": "yes",
+    "ref": "S201"
+  }
+},
+{
+  "type": "way",
+  "id": 784492036,
+  "bounds": {
+    "minlat": 24.3988472,
+    "minlon": 111.2465958,
+    "maxlat": 24.3989429,
+    "maxlon": 111.2468611
+  },
+  "geometry": [
+    { "lat": 24.3989429, "lon": 111.2468611 },
+    { "lat": 24.3988472, "lon": 111.2465958 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "汕昆高速",
+    "name:en": "Shantou-Kunming Expressway",
+    "name:zh": "汕昆高速",
+    "oneway": "yes",
+    "ref": "G78",
+    "source": "GPS"
+  }
+},
+{
+  "type": "way",
+  "id": 784492039,
+  "bounds": {
+    "minlat": 24.3987755,
+    "minlon": 111.2466715,
+    "maxlat": 24.3988841,
+    "maxlon": 111.2469666
+  },
+  "geometry": [
+    { "lat": 24.3987755, "lon": 111.2466715 },
+    { "lat": 24.3988841, "lon": 111.2469666 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "汕昆高速",
+    "name:en": "Shantou-Kunming Expressway",
+    "name:zh": "汕昆高速",
+    "oneway": "yes",
+    "ref": "G78",
+    "source": "GPS"
+  }
+},
+{
+  "type": "way",
+  "id": 784492041,
+  "bounds": {
+    "minlat": 24.3928021,
+    "minlon": 111.2339567,
+    "maxlat": 24.3930628,
+    "maxlon": 111.2345333
+  },
+  "geometry": [
+    { "lat": 24.3930628, "lon": 111.2345333 },
+    { "lat": 24.3928021, "lon": 111.2339567 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "汕昆高速",
+    "name:en": "Shantou-Kunming Expressway",
+    "name:zh": "汕昆高速",
+    "oneway": "yes",
+    "ref": "G78",
+    "source": "GPS"
+  }
+},
+{
+  "type": "way",
+  "id": 784492043,
+  "bounds": {
+    "minlat": 24.3926940,
+    "minlon": 111.2339531,
+    "maxlat": 24.3929645,
+    "maxlon": 111.2345382
+  },
+  "geometry": [
+    { "lat": 24.3926940, "lon": 111.2339531 },
+    { "lat": 24.3929645, "lon": 111.2345382 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "汕昆高速",
+    "name:en": "Shantou-Kunming Expressway",
+    "name:zh": "汕昆高速",
+    "oneway": "yes",
+    "ref": "G78",
+    "source": "GPS"
+  }
+},
+{
+  "type": "way",
+  "id": 784492046,
+  "bounds": {
+    "minlat": 24.3915933,
+    "minlon": 111.2289268,
+    "maxlat": 24.3916385,
+    "maxlon": 111.2292769
+  },
+  "geometry": [
+    { "lat": 24.3916385, "lon": 111.2292769 },
+    { "lat": 24.3915933, "lon": 111.2289268 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "汕昆高速",
+    "name:en": "Shantou-Kunming Expressway",
+    "name:zh": "汕昆高速",
+    "oneway": "yes",
+    "ref": "G78",
+    "source": "GPS"
+  }
+},
+{
+  "type": "way",
+  "id": 784492047,
+  "bounds": {
+    "minlat": 24.3915066,
+    "minlon": 111.2290188,
+    "maxlat": 24.3915432,
+    "maxlon": 111.2293408
+  },
+  "geometry": [
+    { "lat": 24.3915066, "lon": 111.2290188 },
+    { "lat": 24.3915432, "lon": 111.2293408 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "汕昆高速",
+    "name:en": "Shantou-Kunming Expressway",
+    "name:zh": "汕昆高速",
+    "oneway": "yes",
+    "ref": "G78",
+    "source": "GPS"
+  }
+},
+{
+  "type": "way",
+  "id": 784492050,
+  "bounds": {
+    "minlat": 24.3906291,
+    "minlon": 111.2208138,
+    "maxlat": 24.3906619,
+    "maxlon": 111.2211057
+  },
+  "geometry": [
+    { "lat": 24.3906291, "lon": 111.2208138 },
+    { "lat": 24.3906619, "lon": 111.2211057 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "汕昆高速",
+    "name:en": "Shantou-Kunming Expressway",
+    "name:zh": "汕昆高速",
+    "oneway": "yes",
+    "ref": "G78",
+    "source": "GPS"
+  }
+},
+{
+  "type": "way",
+  "id": 784492053,
+  "bounds": {
+    "minlat": 24.3907586,
+    "minlon": 111.2208493,
+    "maxlat": 24.3907927,
+    "maxlon": 111.2211637
+  },
+  "geometry": [
+    { "lat": 24.3907927, "lon": 111.2211637 },
+    { "lat": 24.3907586, "lon": 111.2208493 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "汕昆高速",
+    "name:en": "Shantou-Kunming Expressway",
+    "name:zh": "汕昆高速",
+    "oneway": "yes",
+    "ref": "G78",
+    "source": "GPS"
+  }
+},
+{
+  "type": "way",
+  "id": 784492056,
+  "bounds": {
+    "minlat": 24.3635086,
+    "minlon": 111.2226563,
+    "maxlat": 24.3638021,
+    "maxlon": 111.2230745
+  },
+  "geometry": [
+    { "lat": 24.3638021, "lon": 111.2226563 },
+    { "lat": 24.3635086, "lon": 111.2230745 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "包茂高速",
+    "name:en": "Baomao Expressway",
+    "name:zh": "包茂高速",
+    "oneway": "yes",
+    "ref": "G65",
+    "source": "GPS",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 784492057,
+  "bounds": {
+    "minlat": 24.3637308,
+    "minlon": 111.2225827,
+    "maxlat": 24.3639896,
+    "maxlon": 111.2229515
+  },
+  "geometry": [
+    { "lat": 24.3637308, "lon": 111.2229515 },
+    { "lat": 24.3639896, "lon": 111.2225827 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "包茂高速",
+    "name:en": "Baomao Expressway",
+    "name:zh": "包茂高速",
+    "oneway": "yes",
+    "ref": "G65",
+    "source": "GPS",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 784498958,
+  "bounds": {
+    "minlat": 24.3586983,
+    "minlon": 111.2274381,
+    "maxlat": 24.3589902,
+    "maxlon": 111.2275523
+  },
+  "geometry": [
+    { "lat": 24.3589902, "lon": 111.2274381 },
+    { "lat": 24.3588434, "lon": 111.2275023 },
+    { "lat": 24.3586983, "lon": 111.2275523 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "包茂高速",
+    "name:en": "Baomao Expressway",
+    "name:zh": "包茂高速",
+    "oneway": "yes",
+    "ref": "G65",
+    "source": "GPS",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 784498961,
+  "bounds": {
+    "minlat": 24.3586704,
+    "minlon": 111.2275911,
+    "maxlat": 24.3589311,
+    "maxlon": 111.2276857
+  },
+  "geometry": [
+    { "lat": 24.3586704, "lon": 111.2276857 },
+    { "lat": 24.3588794, "lon": 111.2276137 },
+    { "lat": 24.3589311, "lon": 111.2275911 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "包茂高速",
+    "name:en": "Baomao Expressway",
+    "name:zh": "包茂高速",
+    "oneway": "yes",
+    "ref": "G65",
+    "source": "GPS",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 784498964,
+  "bounds": {
+    "minlat": 24.3636783,
+    "minlon": 111.2216377,
+    "maxlat": 24.3638004,
+    "maxlon": 111.2219462
+  },
+  "geometry": [
+    { "lat": 24.3638004, "lon": 111.2219462 },
+    { "lat": 24.3636783, "lon": 111.2216377 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "tertiary",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 784499999,
+  "bounds": {
+    "minlat": 24.3598226,
+    "minlon": 111.2174964,
+    "maxlat": 24.3600450,
+    "maxlon": 111.2175929
+  },
+  "geometry": [
+    { "lat": 24.3600450, "lon": 111.2174964 },
+    { "lat": 24.3598226, "lon": 111.2175929 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "tertiary",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 784612393,
+  "bounds": {
+    "minlat": 24.2610923,
+    "minlon": 111.2246541,
+    "maxlat": 24.2615919,
+    "maxlon": 111.2255132
+  },
+  "geometry": [
+    { "lat": 24.2610923, "lon": 111.2246541 },
+    { "lat": 24.2612188, "lon": 111.2249133 },
+    { "lat": 24.2613204, "lon": 111.2250974 },
+    { "lat": 24.2614666, "lon": 111.2253379 },
+    { "lat": 24.2615919, "lon": 111.2255132 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "secondary",
+    "layer": "1",
+    "name": "回龙 - 黄姚",
+    "ref": "X713",
+    "source": "GPS"
+  }
+},
+{
+  "type": "way",
+  "id": 784612396,
+  "bounds": {
+    "minlat": 24.2496432,
+    "minlon": 111.1988257,
+    "maxlat": 24.2496739,
+    "maxlon": 111.1989467
+  },
+  "geometry": [
+    { "lat": 24.2496739, "lon": 111.1989467 },
+    { "lat": 24.2496432, "lon": 111.1988257 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "footway",
+    "layer": "1",
+    "source": "GPS"
+  }
+},
+{
+  "type": "way",
+  "id": 784618179,
+  "bounds": {
+    "minlat": 24.2689482,
+    "minlon": 111.2254057,
+    "maxlat": 24.2690192,
+    "maxlon": 111.2254095
+  },
+  "geometry": [
+    { "lat": 24.2689482, "lon": 111.2254057 },
+    { "lat": 24.2690192, "lon": 111.2254095 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "secondary",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 784618185,
+  "bounds": {
+    "minlat": 24.2858506,
+    "minlon": 111.2252041,
+    "maxlat": 24.2860022,
+    "maxlon": 111.2253221
+  },
+  "geometry": [
+    { "lat": 24.2858506, "lon": 111.2253221 },
+    { "lat": 24.2860022, "lon": 111.2252041 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "secondary",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 784618187,
+  "bounds": {
+    "minlat": 24.2987881,
+    "minlon": 111.2195299,
+    "maxlat": 24.2988883,
+    "maxlon": 111.2195862
+  },
+  "geometry": [
+    { "lat": 24.2987881, "lon": 111.2195862 },
+    { "lat": 24.2988883, "lon": 111.2195299 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "secondary",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 784618189,
+  "bounds": {
+    "minlat": 24.3044350,
+    "minlon": 111.2165848,
+    "maxlat": 24.3045328,
+    "maxlon": 111.2166197
+  },
+  "geometry": [
+    { "lat": 24.3044350, "lon": 111.2166197 },
+    { "lat": 24.3045328, "lon": 111.2165848 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "secondary",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 784623782,
+  "bounds": {
+    "minlat": 24.3246222,
+    "minlon": 111.1803991,
+    "maxlat": 24.3246239,
+    "maxlon": 111.1805027
+  },
+  "geometry": [
+    { "lat": 24.3246222, "lon": 111.1805027 },
+    { "lat": 24.3246239, "lon": 111.1803991 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "secondary",
+    "layer": "1",
+    "source": "GPS"
+  }
+},
+{
+  "type": "way",
+  "id": 784623784,
+  "bounds": {
+    "minlat": 24.2842109,
+    "minlon": 111.1522733,
+    "maxlat": 24.2842542,
+    "maxlon": 111.1523093
+  },
+  "geometry": [
+    { "lat": 24.2842542, "lon": 111.1522733 },
+    { "lat": 24.2842109, "lon": 111.1523093 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "secondary",
+    "layer": "1",
+    "source": "GPS"
+  }
+},
+{
+  "type": "way",
+  "id": 784623786,
+  "bounds": {
+    "minlat": 24.2943481,
+    "minlon": 111.1501433,
+    "maxlat": 24.2944516,
+    "maxlon": 111.1501452
+  },
+  "geometry": [
+    { "lat": 24.2944516, "lon": 111.1501433 },
+    { "lat": 24.2943481, "lon": 111.1501452 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "secondary",
+    "layer": "1",
+    "source": "GPS"
+  }
+},
+{
+  "type": "way",
+  "id": 784623788,
+  "bounds": {
+    "minlat": 24.3023147,
+    "minlon": 111.1516322,
+    "maxlat": 24.3027553,
+    "maxlon": 111.1518322
+  },
+  "geometry": [
+    { "lat": 24.3027553, "lon": 111.1518322 },
+    { "lat": 24.3023147, "lon": 111.1516322 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "secondary",
+    "layer": "1",
+    "source": "GPS"
+  }
+},
+{
+  "type": "way",
+  "id": 784626946,
+  "bounds": {
+    "minlat": 24.3313791,
+    "minlon": 111.1548273,
+    "maxlat": 24.3316039,
+    "maxlon": 111.1549560
+  },
+  "geometry": [
+    { "lat": 24.3313791, "lon": 111.1549560 },
+    { "lat": 24.3316039, "lon": 111.1548273 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "secondary",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 784626949,
+  "bounds": {
+    "minlat": 24.3558787,
+    "minlon": 111.1404131,
+    "maxlat": 24.3560644,
+    "maxlon": 111.1410622
+  },
+  "geometry": [
+    { "lat": 24.3558787, "lon": 111.1410622 },
+    { "lat": 24.3560644, "lon": 111.1404131 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "secondary",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 784626951,
+  "bounds": {
+    "minlat": 24.3582391,
+    "minlon": 111.1378811,
+    "maxlat": 24.3587767,
+    "maxlon": 111.1382405
+  },
+  "geometry": [
+    { "lat": 24.3582391, "lon": 111.1382405 },
+    { "lat": 24.3587767, "lon": 111.1378811 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "secondary",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 784626954,
+  "bounds": {
+    "minlat": 24.3760305,
+    "minlon": 111.1794044,
+    "maxlat": 24.3760445,
+    "maxlon": 111.1794969
+  },
+  "geometry": [
+    { "lat": 24.3760445, "lon": 111.1794044 },
+    { "lat": 24.3760305, "lon": 111.1794969 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "tertiary",
+    "layer": "1",
+    "ref": "Y002"
+  }
+},
+{
+  "type": "way",
+  "id": 784627488,
+  "bounds": {
+    "minlat": 24.3792822,
+    "minlon": 111.2041022,
+    "maxlat": 24.3793097,
+    "maxlon": 111.2043543
+  },
+  "geometry": [
+    { "lat": 24.3793097, "lon": 111.2041022 },
+    { "lat": 24.3792822, "lon": 111.2043543 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "tertiary",
+    "layer": "1",
+    "ref": "Y002"
+  }
+},
+{
+  "type": "way",
+  "id": 844023356,
+  "bounds": {
+    "minlat": 24.3772772,
+    "minlon": 111.3624966,
+    "maxlat": 24.3774157,
+    "maxlon": 111.3626951
+  },
+  "geometry": [
+    { "lat": 24.3772772, "lon": 111.3624966 },
+    { "lat": 24.3774157, "lon": 111.3626951 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "tertiary",
+    "layer": "1",
+    "source": "maxar Premium"
+  }
+},
+{
+  "type": "way",
+  "id": 844023369,
+  "bounds": {
+    "minlat": 24.3786795,
+    "minlon": 111.3660425,
+    "maxlat": 24.3793196,
+    "maxlon": 111.3660800
+  },
+  "geometry": [
+    { "lat": 24.3786795, "lon": 111.3660800 },
+    { "lat": 24.3793196, "lon": 111.3660425 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "tertiary",
+    "layer": "1",
+    "source": "maxar Premium"
+  }
+},
+{
+  "type": "way",
+  "id": 844023371,
+  "bounds": {
+    "minlat": 24.3806636,
+    "minlon": 111.3666589,
+    "maxlat": 24.3807685,
+    "maxlon": 111.3667426
+  },
+  "geometry": [
+    { "lat": 24.3806636, "lon": 111.3666589 },
+    { "lat": 24.3807685, "lon": 111.3667426 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "tertiary",
+    "layer": "1",
+    "source": "maxar Premium"
+  }
+},
+{
+  "type": "way",
+  "id": 844023384,
+  "bounds": {
+    "minlat": 24.3788017,
+    "minlon": 111.3612467,
+    "maxlat": 24.3788261,
+    "maxlon": 111.3619226
+  },
+  "geometry": [
+    { "lat": 24.3788261, "lon": 111.3619226 },
+    { "lat": 24.3788017, "lon": 111.3612467 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "汕昆高速",
+    "name:en": "Shantou-Kunming Expressway",
+    "name:zh": "汕昆高速",
+    "oneway": "yes",
+    "ref": "G78",
+    "source": "maxar Premium",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 844023385,
+  "bounds": {
+    "minlat": 24.3786991,
+    "minlon": 111.3613325,
+    "maxlat": 24.3787333,
+    "maxlon": 111.3619977
+  },
+  "geometry": [
+    { "lat": 24.3786991, "lon": 111.3613325 },
+    { "lat": 24.3787333, "lon": 111.3619977 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "汕昆高速",
+    "name:en": "Shantou-Kunming Expressway",
+    "name:zh": "汕昆高速",
+    "oneway": "yes",
+    "ref": "G78",
+    "source": "maxar Premium",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 844023387,
+  "bounds": {
+    "minlat": 24.3786758,
+    "minlon": 111.3585767,
+    "maxlat": 24.3787137,
+    "maxlon": 111.3592511
+  },
+  "geometry": [
+    { "lat": 24.3787137, "lon": 111.3592511 },
+    { "lat": 24.3786758, "lon": 111.3585767 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "汕昆高速",
+    "name:en": "Shantou-Kunming Expressway",
+    "name:zh": "汕昆高速",
+    "oneway": "yes",
+    "ref": "G78",
+    "source": "maxar Premium"
+  }
+},
+{
+  "type": "way",
+  "id": 844023389,
+  "bounds": {
+    "minlat": 24.3785867,
+    "minlon": 111.3585806,
+    "maxlat": 24.3785972,
+    "maxlon": 111.3592797
+  },
+  "geometry": [
+    { "lat": 24.3785867, "lon": 111.3585806 },
+    { "lat": 24.3785972, "lon": 111.3592797 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "汕昆高速",
+    "name:en": "Shantou-Kunming Expressway",
+    "name:zh": "汕昆高速",
+    "oneway": "yes",
+    "ref": "G78",
+    "source": "maxar Premium"
+  }
+},
+{
+  "type": "way",
+  "id": 844029522,
+  "bounds": {
+    "minlat": 24.4153787,
+    "minlon": 111.3179237,
+    "maxlat": 24.4157890,
+    "maxlon": 111.3179880
+  },
+  "geometry": [
+    { "lat": 24.4157890, "lon": 111.3179237 },
+    { "lat": 24.4153787, "lon": 111.3179880 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "secondary",
+    "layer": "1",
+    "ref": "X706",
+    "source": "maxar Premium"
+  }
+},
+{
+  "type": "way",
+  "id": 844039384,
+  "bounds": {
+    "minlat": 24.3519396,
+    "minlon": 111.0964052,
+    "maxlat": 24.3523749,
+    "maxlon": 111.1012226
+  },
+  "geometry": [
+    { "lat": 24.3519396, "lon": 111.0964052 },
+    { "lat": 24.3519906, "lon": 111.0982553 },
+    { "lat": 24.3520193, "lon": 111.0986618 },
+    { "lat": 24.3520555, "lon": 111.0990675 },
+    { "lat": 24.3520991, "lon": 111.0994723 },
+    { "lat": 24.3521500, "lon": 111.0998761 },
+    { "lat": 24.3522158, "lon": 111.1003268 },
+    { "lat": 24.3522907, "lon": 111.1007756 },
+    { "lat": 24.3523749, "lon": 111.1012226 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "layer": "2",
+    "name": "贺巴高速",
+    "name:en": "Heba Expressway",
+    "name:zh": "贺巴高速",
+    "oneway": "yes",
+    "ref": "S30",
+    "source": "Sentinel - s2cloudless-2019_3857"
+  }
+},
+{
+  "type": "way",
+  "id": 844155737,
+  "bounds": {
+    "minlat": 24.4024157,
+    "minlon": 111.1728752,
+    "maxlat": 24.4033813,
+    "maxlon": 111.1733029
+  },
+  "geometry": [
+    { "lat": 24.4024157, "lon": 111.1733029 },
+    { "lat": 24.4033813, "lon": 111.1728752 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "包茂高速",
+    "name:en": "Baomao Expressway",
+    "name:zh": "包茂高速",
+    "oneway": "yes",
+    "ref": "G65;G78",
+    "source": "maxar Premium"
+  }
+},
+{
+  "type": "way",
+  "id": 844155738,
+  "bounds": {
+    "minlat": 24.4023505,
+    "minlon": 111.1727762,
+    "maxlat": 24.4033542,
+    "maxlon": 111.1731863
+  },
+  "geometry": [
+    { "lat": 24.4033542, "lon": 111.1727762 },
+    { "lat": 24.4023505, "lon": 111.1731863 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "包茂高速",
+    "name:en": "Baomao Expressway",
+    "name:zh": "包茂高速",
+    "oneway": "yes",
+    "ref": "G65;G78",
+    "source": "maxar Premium"
+  }
+},
+{
+  "type": "way",
+  "id": 844155751,
+  "bounds": {
+    "minlat": 24.4599637,
+    "minlon": 111.0925484,
+    "maxlat": 24.4602659,
+    "maxlon": 111.0929137
+  },
+  "geometry": [
+    { "lat": 24.4599637, "lon": 111.0929137 },
+    { "lat": 24.4602659, "lon": 111.0925484 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "包茂高速",
+    "name:en": "Baomao Expressway",
+    "name:zh": "包茂高速",
+    "oneway": "yes",
+    "ref": "G65;G78",
+    "source": "GPS"
+  }
+},
+{
+  "type": "way",
+  "id": 844155753,
+  "bounds": {
+    "minlat": 24.4599924,
+    "minlon": 111.0926342,
+    "maxlat": 24.4603001,
+    "maxlon": 111.0929882
+  },
+  "geometry": [
+    { "lat": 24.4599924, "lon": 111.0929882 },
+    { "lat": 24.4603001, "lon": 111.0926342 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway_link",
+    "layer": "1",
+    "oneway": "yes"
+  }
+},
+{
+  "type": "way",
+  "id": 844155755,
+  "bounds": {
+    "minlat": 24.4599060,
+    "minlon": 111.0924326,
+    "maxlat": 24.4601998,
+    "maxlon": 111.0927971
+  },
+  "geometry": [
+    { "lat": 24.4601998, "lon": 111.0924326 },
+    { "lat": 24.4599060, "lon": 111.0927971 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "包茂高速",
+    "name:en": "Baomao Expressway",
+    "name:zh": "包茂高速",
+    "oneway": "yes",
+    "ref": "G65;G78",
+    "source": "GPS"
+  }
+},
+{
+  "type": "way",
+  "id": 844155769,
+  "bounds": {
+    "minlat": 24.4483804,
+    "minlon": 111.1023652,
+    "maxlat": 24.4506949,
+    "maxlon": 111.1044336
+  },
+  "geometry": [
+    { "lat": 24.4506949, "lon": 111.1023652 },
+    { "lat": 24.4483804, "lon": 111.1044336 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "包茂高速",
+    "name:en": "Baomao Expressway",
+    "name:zh": "包茂高速",
+    "oneway": "yes",
+    "ref": "G65;G78",
+    "source": "GPS"
+  }
+},
+{
+  "type": "way",
+  "id": 844155770,
+  "bounds": {
+    "minlat": 24.4484877,
+    "minlon": 111.1024878,
+    "maxlat": 24.4507255,
+    "maxlon": 111.1045861
+  },
+  "geometry": [
+    { "lat": 24.4484877, "lon": 111.1045861 },
+    { "lat": 24.4507255, "lon": 111.1024878 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "name": "包茂高速",
+    "name:en": "Baomao Expressway",
+    "name:zh": "包茂高速",
+    "oneway": "yes",
+    "ref": "G65;G78",
+    "source": "GPS"
+  }
+},
+{
+  "type": "way",
+  "id": 844155775,
+  "bounds": {
+    "minlat": 24.4629515,
+    "minlon": 111.1066675,
+    "maxlat": 24.4629662,
+    "maxlon": 111.1070381
+  },
+  "geometry": [
+    { "lat": 24.4629515, "lon": 111.1066675 },
+    { "lat": 24.4629662, "lon": 111.1070381 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "trunk",
+    "layer": "1",
+    "ref": "G323",
+    "source": "maxar Premium"
+  }
+},
+{
+  "type": "way",
+  "id": 844211701,
+  "bounds": {
+    "minlat": 24.3945682,
+    "minlon": 111.1833304,
+    "maxlat": 24.3950127,
+    "maxlon": 111.1836469
+  },
+  "geometry": [
+    { "lat": 24.3945682, "lon": 111.1833304 },
+    { "lat": 24.3950127, "lon": 111.1836469 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "service",
+    "layer": "1",
+    "source": "maxar Premium"
+  }
+},
+{
+  "type": "way",
+  "id": 844211730,
+  "bounds": {
+    "minlat": 24.3811519,
+    "minlon": 111.2038600,
+    "maxlat": 24.3813522,
+    "maxlon": 111.2040532
+  },
+  "geometry": [
+    { "lat": 24.3811519, "lon": 111.2040532 },
+    { "lat": 24.3813522, "lon": 111.2038600 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "unclassified",
+    "layer": "1",
+    "source": "maxar Premium"
+  }
+},
+{
+  "type": "way",
+  "id": 844277535,
+  "bounds": {
+    "minlat": 24.5384616,
+    "minlon": 111.1314699,
+    "maxlat": 24.5384958,
+    "maxlon": 111.1317649
+  },
+  "geometry": [
+    { "lat": 24.5384616, "lon": 111.1314699 },
+    { "lat": 24.5384958, "lon": 111.1317649 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "unclassified",
+    "layer": "1",
+    "source": "maxar Premium"
+  }
+},
+{
+  "type": "way",
+  "id": 844277555,
+  "bounds": {
+    "minlat": 24.4987475,
+    "minlon": 111.1863989,
+    "maxlat": 24.4988207,
+    "maxlon": 111.1865491
+  },
+  "geometry": [
+    { "lat": 24.4987475, "lon": 111.1863989 },
+    { "lat": 24.4988207, "lon": 111.1865491 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "unclassified",
+    "layer": "1",
+    "source": "maxar Premium"
+  }
+},
+{
+  "type": "way",
+  "id": 844307203,
+  "bounds": {
+    "minlat": 24.5396096,
+    "minlon": 111.2996927,
+    "maxlat": 24.5400915,
+    "maxlon": 111.3003793
+  },
+  "geometry": [
+    { "lat": 24.5396096, "lon": 111.2996927 },
+    { "lat": 24.5400915, "lon": 111.3003793 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "trunk",
+    "layer": "1",
+    "name": "钟山大桥",
+    "oneway": "yes",
+    "ref": "G323",
+    "source": "GPS"
+  }
+},
+{
+  "type": "way",
+  "id": 844307205,
+  "bounds": {
+    "minlat": 24.5384135,
+    "minlon": 111.3007615,
+    "maxlat": 24.5385286,
+    "maxlon": 111.3008964
+  },
+  "geometry": [
+    { "lat": 24.5385286, "lon": 111.3007615 },
+    { "lat": 24.5384399, "lon": 111.3008655 },
+    { "lat": 24.5384135, "lon": 111.3008964 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "tertiary",
+    "layer": "1",
+    "name": "滨江路"
+  }
+},
+{
+  "type": "way",
+  "id": 844307208,
+  "bounds": {
+    "minlat": 24.5335428,
+    "minlon": 111.3056797,
+    "maxlat": 24.5340370,
+    "maxlon": 111.3065527
+  },
+  "geometry": [
+    { "lat": 24.5340370, "lon": 111.3065527 },
+    { "lat": 24.5335428, "lon": 111.3056797 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "secondary",
+    "layer": "1",
+    "name": "富江大桥",
+    "oneway": "yes"
+  }
+},
+{
+  "type": "way",
+  "id": 844606448,
+  "bounds": {
+    "minlat": 24.2542718,
+    "minlon": 111.2103784,
+    "maxlat": 24.2544658,
+    "maxlon": 111.2104690
+  },
+  "geometry": [
+    { "lat": 24.2544658, "lon": 111.2103784 },
+    { "lat": 24.2542718, "lon": 111.2104690 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "residential",
+    "layer": "1",
+    "source": "maxar Premium"
+  }
+},
+{
+  "type": "way",
+  "id": 844606452,
+  "bounds": {
+    "minlat": 24.2503370,
+    "minlon": 111.1979941,
+    "maxlat": 24.2503908,
+    "maxlon": 111.1980665
+  },
+  "geometry": [
+    { "lat": 24.2503370, "lon": 111.1979941 },
+    { "lat": 24.2503908, "lon": 111.1980665 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "footway",
+    "layer": "1",
+    "source": "maxar Premium"
+  }
+},
+{
+  "type": "way",
+  "id": 844606455,
+  "bounds": {
+    "minlat": 24.2514693,
+    "minlon": 111.1991125,
+    "maxlat": 24.2516453,
+    "maxlon": 111.1991662
+  },
+  "geometry": [
+    { "lat": 24.2516453, "lon": 111.1991125 },
+    { "lat": 24.2514693, "lon": 111.1991662 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "residential",
+    "layer": "1",
+    "source": "maxar Premium"
+  }
+},
+{
+  "type": "way",
+  "id": 844935867,
+  "bounds": {
+    "minlat": 24.2959697,
+    "minlon": 111.4234096,
+    "maxlat": 24.2961800,
+    "maxlon": 111.4235169
+  },
+  "geometry": [
+    { "lat": 24.2959697, "lon": 111.4234096 },
+    { "lat": 24.2961800, "lon": 111.4235169 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "primary",
+    "layer": "1",
+    "ref": "S327",
+    "source": "mapbox"
+  }
+},
+{
+  "type": "way",
+  "id": 844935877,
+  "bounds": {
+    "minlat": 24.2741120,
+    "minlon": 111.3972503,
+    "maxlat": 24.2741658,
+    "maxlon": 111.3975800
+  },
+  "geometry": [
+    { "lat": 24.2741120, "lon": 111.3972503 },
+    { "lat": 24.2741658, "lon": 111.3975800 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "primary",
+    "layer": "1",
+    "ref": "S327",
+    "source": "maxar Premium"
+  }
+},
+{
+  "type": "way",
+  "id": 845050432,
+  "bounds": {
+    "minlat": 24.4802405,
+    "minlon": 111.3895708,
+    "maxlat": 24.4803918,
+    "maxlon": 111.3896030
+  },
+  "geometry": [
+    { "lat": 24.4802405, "lon": 111.3896030 },
+    { "lat": 24.4803918, "lon": 111.3895708 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "residential",
+    "layer": "1",
+    "source": "maxar Premium"
+  }
+},
+{
+  "type": "way",
+  "id": 845050435,
+  "bounds": {
+    "minlat": 24.4802698,
+    "minlon": 111.3886374,
+    "maxlat": 24.4803821,
+    "maxlon": 111.3886481
+  },
+  "geometry": [
+    { "lat": 24.4802698, "lon": 111.3886374 },
+    { "lat": 24.4803821, "lon": 111.3886481 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "residential",
+    "layer": "1",
+    "source": "maxar Premium"
+  }
+},
+{
+  "type": "way",
+  "id": 845050441,
+  "bounds": {
+    "minlat": 24.4804263,
+    "minlon": 111.3876650,
+    "maxlat": 24.4805585,
+    "maxlon": 111.3876714
+  },
+  "geometry": [
+    { "lat": 24.4805585, "lon": 111.3876714 },
+    { "lat": 24.4804263, "lon": 111.3876650 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "trunk",
+    "layer": "1",
+    "name": "瑞清线",
+    "ref": "G323"
+  }
+},
+{
+  "type": "way",
+  "id": 845050447,
+  "bounds": {
+    "minlat": 24.4920206,
+    "minlon": 111.4030302,
+    "maxlat": 24.4928627,
+    "maxlon": 111.4031562
+  },
+  "geometry": [
+    { "lat": 24.4920206, "lon": 111.4030302 },
+    { "lat": 24.4928627, "lon": 111.4031562 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "tertiary",
+    "layer": "1",
+    "source": "maxar Premium"
+  }
+},
+{
+  "type": "way",
+  "id": 845050451,
+  "bounds": {
+    "minlat": 24.4846344,
+    "minlon": 111.3909066,
+    "maxlat": 24.4846881,
+    "maxlon": 111.3909951
+  },
+  "geometry": [
+    { "lat": 24.4846344, "lon": 111.3909066 },
+    { "lat": 24.4846881, "lon": 111.3909951 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "tertiary",
+    "layer": "1",
+    "source": "maxar Premium"
+  }
+},
+{
+  "type": "way",
+  "id": 867147705,
+  "bounds": {
+    "minlat": 24.2822419,
+    "minlon": 111.2029409,
+    "maxlat": 24.2822700,
+    "maxlon": 111.2029819
+  },
+  "geometry": [
+    { "lat": 24.2822419, "lon": 111.2029409 },
+    { "lat": 24.2822700, "lon": 111.2029819 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "residential",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 910009944,
+  "bounds": {
+    "minlat": 24.3786704,
+    "minlon": 111.1943701,
+    "maxlat": 24.3823580,
+    "maxlon": 111.2026638
+  },
+  "geometry": [
+    { "lat": 24.3786704, "lon": 111.1943701 },
+    { "lat": 24.3792023, "lon": 111.1955345 },
+    { "lat": 24.3802186, "lon": 111.1972511 },
+    { "lat": 24.3814499, "lon": 111.1992788 },
+    { "lat": 24.3815460, "lon": 111.1994539 },
+    { "lat": 24.3816357, "lon": 111.1996331 },
+    { "lat": 24.3817189, "lon": 111.1998159 },
+    { "lat": 24.3817956, "lon": 111.2000022 },
+    { "lat": 24.3818656, "lon": 111.2001916 },
+    { "lat": 24.3819288, "lon": 111.2003839 },
+    { "lat": 24.3819874, "lon": 111.2005875 },
+    { "lat": 24.3820676, "lon": 111.2007421 },
+    { "lat": 24.3822047, "lon": 111.2009889 },
+    { "lat": 24.3822284, "lon": 111.2011667 },
+    { "lat": 24.3822502, "lon": 111.2013653 },
+    { "lat": 24.3823580, "lon": 111.2020603 },
+    { "lat": 24.3823221, "lon": 111.2026638 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway_link",
+    "layer": "1",
+    "oneway": "yes"
+  }
+},
+{
+  "type": "way",
+  "id": 910009946,
+  "bounds": {
+    "minlat": 24.3820050,
+    "minlon": 111.1981826,
+    "maxlat": 24.3823764,
+    "maxlon": 111.1987660
+  },
+  "geometry": [
+    { "lat": 24.3823764, "lon": 111.1987660 },
+    { "lat": 24.3822219, "lon": 111.1984581 },
+    { "lat": 24.3820050, "lon": 111.1981826 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway_link",
+    "layer": "1",
+    "oneway": "yes"
+  }
+},
+{
+  "type": "way",
+  "id": 910009949,
+  "bounds": {
+    "minlat": 24.3815212,
+    "minlon": 111.2015594,
+    "maxlat": 24.3830884,
+    "maxlon": 111.2048738
+  },
+  "geometry": [
+    { "lat": 24.3815212, "lon": 111.2048738 },
+    { "lat": 24.3822952, "lon": 111.2041425 },
+    { "lat": 24.3823393, "lon": 111.2039546 },
+    { "lat": 24.3824489, "lon": 111.2037751 },
+    { "lat": 24.3825506, "lon": 111.2035899 },
+    { "lat": 24.3826442, "lon": 111.2033997 },
+    { "lat": 24.3827294, "lon": 111.2032048 },
+    { "lat": 24.3828059, "lon": 111.2030056 },
+    { "lat": 24.3828737, "lon": 111.2028026 },
+    { "lat": 24.3829327, "lon": 111.2025963 },
+    { "lat": 24.3829825, "lon": 111.2023871 },
+    { "lat": 24.3830232, "lon": 111.2021756 },
+    { "lat": 24.3830535, "lon": 111.2019714 },
+    { "lat": 24.3830752, "lon": 111.2017658 },
+    { "lat": 24.3830884, "lon": 111.2015594 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway_link",
+    "layer": "1",
+    "oneway": "yes"
+  }
+},
+{
+  "type": "way",
+  "id": 910009951,
+  "bounds": {
+    "minlat": 24.3822968,
+    "minlon": 111.2000359,
+    "maxlat": 24.3867159,
+    "maxlon": 111.2046265
+  },
+  "geometry": [
+    { "lat": 24.3822968, "lon": 111.2000359 },
+    { "lat": 24.3826048, "lon": 111.2006969 },
+    { "lat": 24.3832459, "lon": 111.2016707 },
+    { "lat": 24.3835997, "lon": 111.2021434 },
+    { "lat": 24.3838219, "lon": 111.2025443 },
+    { "lat": 24.3840395, "lon": 111.2029481 },
+    { "lat": 24.3844694, "lon": 111.2038708 },
+    { "lat": 24.3846746, "lon": 111.2042248 },
+    { "lat": 24.3847487, "lon": 111.2043028 },
+    { "lat": 24.3848286, "lon": 111.2043735 },
+    { "lat": 24.3849137, "lon": 111.2044363 },
+    { "lat": 24.3850035, "lon": 111.2044908 },
+    { "lat": 24.3850973, "lon": 111.2045366 },
+    { "lat": 24.3851943, "lon": 111.2045733 },
+    { "lat": 24.3852938, "lon": 111.2046006 },
+    { "lat": 24.3853951, "lon": 111.2046184 },
+    { "lat": 24.3854975, "lon": 111.2046265 },
+    { "lat": 24.3856001, "lon": 111.2046249 },
+    { "lat": 24.3857021, "lon": 111.2046135 },
+    { "lat": 24.3858029, "lon": 111.2045925 },
+    { "lat": 24.3859017, "lon": 111.2045619 },
+    { "lat": 24.3859977, "lon": 111.2045222 },
+    { "lat": 24.3860902, "lon": 111.2044734 },
+    { "lat": 24.3861785, "lon": 111.2044161 },
+    { "lat": 24.3862619, "lon": 111.2043505 },
+    { "lat": 24.3863399, "lon": 111.2042773 },
+    { "lat": 24.3864119, "lon": 111.2041970 },
+    { "lat": 24.3864772, "lon": 111.2041101 },
+    { "lat": 24.3865354, "lon": 111.2040174 },
+    { "lat": 24.3865862, "lon": 111.2039195 },
+    { "lat": 24.3866290, "lon": 111.2038171 },
+    { "lat": 24.3866630, "lon": 111.2037131 },
+    { "lat": 24.3866889, "lon": 111.2036063 },
+    { "lat": 24.3867064, "lon": 111.2034974 },
+    { "lat": 24.3867154, "lon": 111.2033873 },
+    { "lat": 24.3867159, "lon": 111.2032768 },
+    { "lat": 24.3867078, "lon": 111.2031666 },
+    { "lat": 24.3866913, "lon": 111.2030576 },
+    { "lat": 24.3866664, "lon": 111.2029505 },
+    { "lat": 24.3866333, "lon": 111.2028461 },
+    { "lat": 24.3865923, "lon": 111.2027452 },
+    { "lat": 24.3865436, "lon": 111.2026485 },
+    { "lat": 24.3864876, "lon": 111.2025566 },
+    { "lat": 24.3864635, "lon": 111.2024466 },
+    { "lat": 24.3864157, "lon": 111.2023429 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway_link",
+    "layer": "1",
+    "oneway": "yes"
+  }
+},
+{
+  "type": "way",
+  "id": 910009952,
+  "bounds": {
+    "minlat": 24.3796128,
+    "minlon": 111.1957598,
+    "maxlat": 24.3824959,
+    "maxlon": 111.1986239
+  },
+  "geometry": [
+    { "lat": 24.3824959, "lon": 111.1986239 },
+    { "lat": 24.3823880, "lon": 111.1985385 },
+    { "lat": 24.3820050, "lon": 111.1981826 },
+    { "lat": 24.3804141, "lon": 111.1967039 },
+    { "lat": 24.3802427, "lon": 111.1965268 },
+    { "lat": 24.3800768, "lon": 111.1963436 },
+    { "lat": 24.3799163, "lon": 111.1961546 },
+    { "lat": 24.3797616, "lon": 111.1959599 },
+    { "lat": 24.3796128, "lon": 111.1957598 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway_link",
+    "layer": "1",
+    "oneway": "yes"
+  }
+},
+{
+  "type": "way",
+  "id": 910009953,
+  "bounds": {
+    "minlat": 24.3796128,
+    "minlon": 111.1957598,
+    "maxlat": 24.3818038,
+    "maxlon": 111.1984285
+  },
+  "geometry": [
+    { "lat": 24.3818038, "lon": 111.1984285 },
+    { "lat": 24.3815867, "lon": 111.1982274 },
+    { "lat": 24.3813940, "lon": 111.1980387 },
+    { "lat": 24.3812059, "lon": 111.1978444 },
+    { "lat": 24.3810225, "lon": 111.1976448 },
+    { "lat": 24.3808440, "lon": 111.1974399 },
+    { "lat": 24.3806705, "lon": 111.1972299 },
+    { "lat": 24.3805020, "lon": 111.1970150 },
+    { "lat": 24.3802708, "lon": 111.1967090 },
+    { "lat": 24.3800454, "lon": 111.1963977 },
+    { "lat": 24.3798260, "lon": 111.1960812 },
+    { "lat": 24.3796128, "lon": 111.1957598 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "layer": "1",
+    "name": "贺巴高速",
+    "name:en": "Heba Expressway",
+    "name:zh": "贺巴高速",
+    "oneway": "yes",
+    "ref": "S30",
+    "source": "Sentinel - s2cloudless-2019_3857"
+  }
+},
+{
+  "type": "way",
+  "id": 910009954,
+  "bounds": {
+    "minlat": 24.3818038,
+    "minlon": 111.1984285,
+    "maxlat": 24.3856420,
+    "maxlon": 111.2021005
+  },
+  "geometry": [
+    { "lat": 24.3856420, "lon": 111.2021005 },
+    { "lat": 24.3854119, "lon": 111.2018152 },
+    { "lat": 24.3851766, "lon": 111.2015352 },
+    { "lat": 24.3849361, "lon": 111.2012604 },
+    { "lat": 24.3846906, "lon": 111.2009910 },
+    { "lat": 24.3844401, "lon": 111.2007272 },
+    { "lat": 24.3841755, "lon": 111.2004598 },
+    { "lat": 24.3839059, "lon": 111.2001986 },
+    { "lat": 24.3836312, "lon": 111.1999437 },
+    { "lat": 24.3833518, "lon": 111.1996952 },
+    { "lat": 24.3830677, "lon": 111.1994532 },
+    { "lat": 24.3827789, "lon": 111.1992178 },
+    { "lat": 24.3824858, "lon": 111.1989891 },
+    { "lat": 24.3822535, "lon": 111.1988095 },
+    { "lat": 24.3820262, "lon": 111.1986226 },
+    { "lat": 24.3818038, "lon": 111.1984285 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "layer": "1",
+    "name": "贺巴高速",
+    "name:en": "Heba Expressway",
+    "name:zh": "贺巴高速",
+    "oneway": "yes",
+    "ref": "S30",
+    "source": "Sentinel - s2cloudless-2019_3857"
+  }
+},
+{
+  "type": "way",
+  "id": 910009955,
+  "bounds": {
+    "minlat": 24.3778771,
+    "minlon": 111.1926243,
+    "maxlat": 24.3796128,
+    "maxlon": 111.1957598
+  },
+  "geometry": [
+    { "lat": 24.3796128, "lon": 111.1957598 },
+    { "lat": 24.3794809, "lon": 111.1955706 },
+    { "lat": 24.3793542, "lon": 111.1953771 },
+    { "lat": 24.3792329, "lon": 111.1951795 },
+    { "lat": 24.3791171, "lon": 111.1949780 },
+    { "lat": 24.3790069, "lon": 111.1947727 },
+    { "lat": 24.3786649, "lon": 111.1941183 },
+    { "lat": 24.3781763, "lon": 111.1932385 },
+    { "lat": 24.3778771, "lon": 111.1926243 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "layer": "1",
+    "name": "贺巴高速",
+    "name:en": "Heba Expressway",
+    "name:zh": "贺巴高速",
+    "oneway": "yes",
+    "ref": "S30",
+    "source": "Sentinel - s2cloudless-2019_3857"
+  }
+},
+{
+  "type": "way",
+  "id": 910009957,
+  "bounds": {
+    "minlat": 24.3803145,
+    "minlon": 111.1970417,
+    "maxlat": 24.3854662,
+    "maxlon": 111.2045789
+  },
+  "geometry": [
+    { "lat": 24.3803145, "lon": 111.1970417 },
+    { "lat": 24.3822968, "lon": 111.2000359 },
+    { "lat": 24.3837952, "lon": 111.2020576 },
+    { "lat": 24.3854662, "lon": 111.2045789 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "layer": "1",
+    "name": "贺巴高速",
+    "name:en": "Heba Expressway",
+    "name:zh": "贺巴高速",
+    "oneway": "yes",
+    "ref": "S30",
+    "source": "Sentinel - s2cloudless-2019_3857"
+  }
+},
+{
+  "type": "way",
+  "id": 910009958,
+  "bounds": {
+    "minlat": 24.3777854,
+    "minlon": 111.1926484,
+    "maxlat": 24.3803145,
+    "maxlon": 111.1970417
+  },
+  "geometry": [
+    { "lat": 24.3777854, "lon": 111.1926484 },
+    { "lat": 24.3779828, "lon": 111.1930517 },
+    { "lat": 24.3781848, "lon": 111.1934523 },
+    { "lat": 24.3783912, "lon": 111.1938500 },
+    { "lat": 24.3786704, "lon": 111.1943701 },
+    { "lat": 24.3789573, "lon": 111.1948851 },
+    { "lat": 24.3792519, "lon": 111.1953949 },
+    { "lat": 24.3795541, "lon": 111.1958992 },
+    { "lat": 24.3803145, "lon": 111.1970417 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "layer": "1",
+    "name": "贺巴高速",
+    "name:en": "Heba Expressway",
+    "name:zh": "贺巴高速",
+    "oneway": "yes",
+    "ref": "S30",
+    "source": "Sentinel - s2cloudless-2019_3857"
+  }
+},
+{
+  "type": "way",
+  "id": 910009959,
+  "bounds": {
+    "minlat": 24.3770332,
+    "minlon": 111.1765177,
+    "maxlat": 24.3773848,
+    "maxlon": 111.1767368
+  },
+  "geometry": [
+    { "lat": 24.3770332, "lon": 111.1767368 },
+    { "lat": 24.3773848, "lon": 111.1765177 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "tertiary",
+    "layer": "1",
+    "ref": "Y002"
+  }
+},
+{
+  "type": "way",
+  "id": 910009963,
+  "bounds": {
+    "minlat": 24.3601209,
+    "minlon": 111.1272452,
+    "maxlat": 24.3605382,
+    "maxlon": 111.1276299
+  },
+  "geometry": [
+    { "lat": 24.3605382, "lon": 111.1276299 },
+    { "lat": 24.3601209, "lon": 111.1272452 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "layer": "1",
+    "name": "贺巴高速",
+    "name:en": "Heba Expressway",
+    "name:zh": "贺巴高速",
+    "oneway": "yes",
+    "ref": "S30",
+    "source": "Sentinel - s2cloudless-2019_3857"
+  }
+},
+{
+  "type": "way",
+  "id": 910009965,
+  "bounds": {
+    "minlat": 24.3600816,
+    "minlon": 111.1273443,
+    "maxlat": 24.3605200,
+    "maxlon": 111.1277485
+  },
+  "geometry": [
+    { "lat": 24.3600816, "lon": 111.1273443 },
+    { "lat": 24.3605200, "lon": 111.1277485 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "layer": "1",
+    "name": "贺巴高速",
+    "name:en": "Heba Expressway",
+    "name:zh": "贺巴高速",
+    "oneway": "yes",
+    "ref": "S30",
+    "source": "Sentinel - s2cloudless-2019_3857"
+  }
+},
+{
+  "type": "way",
+  "id": 910009968,
+  "bounds": {
+    "minlat": 24.3520413,
+    "minlon": 111.0962019,
+    "maxlat": 24.3524667,
+    "maxlon": 111.1011990
+  },
+  "geometry": [
+    { "lat": 24.3524667, "lon": 111.1011990 },
+    { "lat": 24.3523833, "lon": 111.1007558 },
+    { "lat": 24.3523088, "lon": 111.1003092 },
+    { "lat": 24.3522433, "lon": 111.0998608 },
+    { "lat": 24.3521926, "lon": 111.0994592 },
+    { "lat": 24.3521568, "lon": 111.0991259 },
+    { "lat": 24.3521493, "lon": 111.0990564 },
+    { "lat": 24.3521133, "lon": 111.0986527 },
+    { "lat": 24.3520847, "lon": 111.0982484 },
+    { "lat": 24.3520413, "lon": 111.0962019 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "layer": "2",
+    "name": "贺巴高速",
+    "name:en": "Heba Expressway",
+    "name:zh": "贺巴高速",
+    "oneway": "yes",
+    "ref": "S30",
+    "source": "Sentinel - s2cloudless-2019_3857"
+  }
+},
+{
+  "type": "way",
+  "id": 1104690151,
+  "bounds": {
+    "minlat": 24.2643002,
+    "minlon": 111.2251517,
+    "maxlat": 24.2644561,
+    "maxlon": 111.2262987
+  },
+  "geometry": [
+    { "lat": 24.2643689, "lon": 111.2251517 },
+    { "lat": 24.2643991, "lon": 111.2252614 },
+    { "lat": 24.2644270, "lon": 111.2254056 },
+    { "lat": 24.2644468, "lon": 111.2255357 },
+    { "lat": 24.2644561, "lon": 111.2257105 },
+    { "lat": 24.2644538, "lon": 111.2258356 },
+    { "lat": 24.2644386, "lon": 111.2259542 },
+    { "lat": 24.2644026, "lon": 111.2260984 },
+    { "lat": 24.2643002, "lon": 111.2262987 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway_link",
+    "layer": "1",
+    "oneway": "yes"
+  }
+},
+{
+  "type": "way",
+  "id": 1104690156,
+  "bounds": {
+    "minlat": 24.2643343,
+    "minlon": 111.2251304,
+    "maxlat": 24.2645029,
+    "maxlon": 111.2263240
+  },
+  "geometry": [
+    { "lat": 24.2643343, "lon": 111.2263240 },
+    { "lat": 24.2644281, "lon": 111.2261463 },
+    { "lat": 24.2644725, "lon": 111.2260200 },
+    { "lat": 24.2644947, "lon": 111.2258630 },
+    { "lat": 24.2645029, "lon": 111.2257286 },
+    { "lat": 24.2644930, "lon": 111.2255617 },
+    { "lat": 24.2644749, "lon": 111.2254200 },
+    { "lat": 24.2644527, "lon": 111.2252901 },
+    { "lat": 24.2644305, "lon": 111.2251936 },
+    { "lat": 24.2644108, "lon": 111.2251304 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway_link",
+    "layer": "1",
+    "oneway": "yes"
+  }
+},
+{
+  "type": "way",
+  "id": 1193052466,
+  "bounds": {
+    "minlat": 24.5248539,
+    "minlon": 111.3354478,
+    "maxlat": 24.5260700,
+    "maxlon": 111.3370076
+  },
+  "geometry": [
+    { "lat": 24.5260700, "lon": 111.3370076 },
+    { "lat": 24.5248539, "lon": 111.3354478 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "unclassified",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1198414777,
+  "bounds": {
+    "minlat": 24.5100134,
+    "minlon": 111.3541893,
+    "maxlat": 24.5118009,
+    "maxlon": 111.3551903
+  },
+  "geometry": [
+    { "lat": 24.5118009, "lon": 111.3541893 },
+    { "lat": 24.5100134, "lon": 111.3551903 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "primary",
+    "layer": "1",
+    "name": "民和大桥",
+    "oneway": "yes",
+    "source": "Sentinel - s2cloudless-2019_3857"
+  }
+},
+{
+  "type": "way",
+  "id": 1198414789,
+  "bounds": {
+    "minlat": 24.4019499,
+    "minlon": 111.1706972,
+    "maxlat": 24.4026729,
+    "maxlon": 111.1708367
+  },
+  "geometry": [
+    { "lat": 24.4026729, "lon": 111.1708367 },
+    { "lat": 24.4019499, "lon": 111.1706972 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "tertiary",
+    "layer": "1",
+    "source": "maxar Premium"
+  }
+},
+{
+  "type": "way",
+  "id": 1198414795,
+  "bounds": {
+    "minlat": 24.4434869,
+    "minlon": 111.1708689,
+    "maxlat": 24.4435846,
+    "maxlon": 111.1714911
+  },
+  "geometry": [
+    { "lat": 24.4435846, "lon": 111.1708689 },
+    { "lat": 24.4434869, "lon": 111.1714911 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "unclassified",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1198414796,
+  "bounds": {
+    "minlat": 24.4509684,
+    "minlon": 111.1683369,
+    "maxlat": 24.4511442,
+    "maxlon": 111.1689913
+  },
+  "geometry": [
+    { "lat": 24.4511442, "lon": 111.1689913 },
+    { "lat": 24.4509684, "lon": 111.1683369 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "unclassified",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1198414798,
+  "bounds": {
+    "minlat": 24.4513591,
+    "minlon": 111.1635411,
+    "maxlat": 24.4517790,
+    "maxlon": 111.1637127
+  },
+  "geometry": [
+    { "lat": 24.4517790, "lon": 111.1635411 },
+    { "lat": 24.4513591, "lon": 111.1637127 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "unclassified",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1198414805,
+  "bounds": {
+    "minlat": 24.4328060,
+    "minlon": 111.1782235,
+    "maxlat": 24.4329037,
+    "maxlon": 111.1784863
+  },
+  "geometry": [
+    { "lat": 24.4328060, "lon": 111.1782235 },
+    { "lat": 24.4329037, "lon": 111.1784863 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "footway",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1198414812,
+  "bounds": {
+    "minlat": 24.4525213,
+    "minlon": 111.1621356,
+    "maxlat": 24.4528045,
+    "maxlon": 111.1624521
+  },
+  "geometry": [
+    { "lat": 24.4528045, "lon": 111.1624521 },
+    { "lat": 24.4525213, "lon": 111.1621356 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "service",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1198414815,
+  "bounds": {
+    "minlat": 24.4605198,
+    "minlon": 111.1569750,
+    "maxlat": 24.4609056,
+    "maxlon": 111.1571681
+  },
+  "geometry": [
+    { "lat": 24.4609056, "lon": 111.1569750 },
+    { "lat": 24.4605198, "lon": 111.1571681 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "service",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1198414816,
+  "bounds": {
+    "minlat": 24.4669432,
+    "minlon": 111.1509320,
+    "maxlat": 24.4671092,
+    "maxlon": 111.1510849
+  },
+  "geometry": [
+    { "lat": 24.4671092, "lon": 111.1509320 },
+    { "lat": 24.4669432, "lon": 111.1510849 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "service",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1198414818,
+  "bounds": {
+    "minlat": 24.4650853,
+    "minlon": 111.1555749,
+    "maxlat": 24.4657347,
+    "maxlon": 111.1559451
+  },
+  "geometry": [
+    { "lat": 24.4657347, "lon": 111.1559451 },
+    { "lat": 24.4650853, "lon": 111.1555749 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "service",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1198414828,
+  "bounds": {
+    "minlat": 24.4461506,
+    "minlon": 111.1707883,
+    "maxlat": 24.4462999,
+    "maxlon": 111.1711800
+  },
+  "geometry": [
+    { "lat": 24.4461506, "lon": 111.1707883 },
+    { "lat": 24.4462999, "lon": 111.1711800 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "unclassified",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1198414831,
+  "bounds": {
+    "minlat": 24.4413284,
+    "minlon": 111.1657619,
+    "maxlat": 24.4417671,
+    "maxlon": 111.1658630
+  },
+  "geometry": [
+    { "lat": 24.4413284, "lon": 111.1657619 },
+    { "lat": 24.4417671, "lon": 111.1658630 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "unclassified",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1198414832,
+  "bounds": {
+    "minlat": 24.4649095,
+    "minlon": 111.1447871,
+    "maxlat": 24.4652025,
+    "maxlon": 111.1448568
+  },
+  "geometry": [
+    { "lat": 24.4652025, "lon": 111.1448568 },
+    { "lat": 24.4649095, "lon": 111.1447871 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "unclassified",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1198414835,
+  "bounds": {
+    "minlat": 24.4669815,
+    "minlon": 111.1496985,
+    "maxlat": 24.4671119,
+    "maxlon": 111.1499532
+  },
+  "geometry": [
+    { "lat": 24.4669815, "lon": 111.1496985 },
+    { "lat": 24.4671119, "lon": 111.1499532 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "footway"
+  }
+},
+{
+  "type": "way",
+  "id": 1198414836,
+  "bounds": {
+    "minlat": 24.4672506,
+    "minlon": 111.1499383,
+    "maxlat": 24.4675055,
+    "maxlon": 111.1505216
+  },
+  "geometry": [
+    { "lat": 24.4672506, "lon": 111.1504925 },
+    { "lat": 24.4673362, "lon": 111.1505216 },
+    { "lat": 24.4673765, "lon": 111.1503862 },
+    { "lat": 24.4675055, "lon": 111.1499383 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "footway"
+  }
+},
+{
+  "type": "way",
+  "id": 1198414837,
+  "bounds": {
+    "minlat": 24.4671719,
+    "minlon": 111.1503500,
+    "maxlat": 24.4673765,
+    "maxlon": 111.1507823
+  },
+  "geometry": [
+    { "lat": 24.4671719, "lon": 111.1507823 },
+    { "lat": 24.4672386, "lon": 111.1507308 },
+    { "lat": 24.4672044, "lon": 111.1506718 },
+    { "lat": 24.4672506, "lon": 111.1504925 },
+    { "lat": 24.4672874, "lon": 111.1503500 },
+    { "lat": 24.4673765, "lon": 111.1503862 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "footway",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1198414838,
+  "bounds": {
+    "minlat": 24.4663304,
+    "minlon": 111.1495131,
+    "maxlat": 24.4677122,
+    "maxlon": 111.1508274
+  },
+  "geometry": [
+    { "lat": 24.4677122, "lon": 111.1495131 },
+    { "lat": 24.4675364, "lon": 111.1495614 },
+    { "lat": 24.4669815, "lon": 111.1496985 },
+    { "lat": 24.4669065, "lon": 111.1497170 },
+    { "lat": 24.4663304, "lon": 111.1498779 },
+    { "lat": 24.4664524, "lon": 111.1503929 },
+    { "lat": 24.4666917, "lon": 111.1503231 },
+    { "lat": 24.4671719, "lon": 111.1507823 },
+    { "lat": 24.4672190, "lon": 111.1508274 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "footway"
+  }
+},
+{
+  "type": "way",
+  "id": 1198414839,
+  "bounds": {
+    "minlat": 24.4675364,
+    "minlon": 111.1495614,
+    "maxlat": 24.4677212,
+    "maxlon": 111.1499265
+  },
+  "geometry": [
+    { "lat": 24.4677212, "lon": 111.1499265 },
+    { "lat": 24.4675364, "lon": 111.1495614 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "footway"
+  }
+},
+{
+  "type": "way",
+  "id": 1198414840,
+  "bounds": {
+    "minlat": 24.4669602,
+    "minlon": 111.1499208,
+    "maxlat": 24.4680296,
+    "maxlon": 111.1502105
+  },
+  "geometry": [
+    { "lat": 24.4680296, "lon": 111.1502105 },
+    { "lat": 24.4679856, "lon": 111.1500978 },
+    { "lat": 24.4679221, "lon": 111.1499906 },
+    { "lat": 24.4678245, "lon": 111.1499208 },
+    { "lat": 24.4677212, "lon": 111.1499265 },
+    { "lat": 24.4675055, "lon": 111.1499383 },
+    { "lat": 24.4674339, "lon": 111.1499423 },
+    { "lat": 24.4671119, "lon": 111.1499532 },
+    { "lat": 24.4669602, "lon": 111.1499584 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "footway"
+  }
+},
+{
+  "type": "way",
+  "id": 1198414847,
+  "bounds": {
+    "minlat": 24.4540058,
+    "minlon": 111.1185336,
+    "maxlat": 24.4545723,
+    "maxlon": 111.1191559
+  },
+  "geometry": [
+    { "lat": 24.4540058, "lon": 111.1191559 },
+    { "lat": 24.4545723, "lon": 111.1185336 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "unclassified",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1228979759,
+  "bounds": {
+    "minlat": 24.5396771,
+    "minlon": 111.2996354,
+    "maxlat": 24.5401588,
+    "maxlon": 111.3003217
+  },
+  "geometry": [
+    { "lat": 24.5401588, "lon": 111.3003217 },
+    { "lat": 24.5401320, "lon": 111.3002834 },
+    { "lat": 24.5398248, "lon": 111.2998458 },
+    { "lat": 24.5396771, "lon": 111.2996354 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "trunk",
+    "layer": "1",
+    "name": "钟山大桥",
+    "oneway": "yes",
+    "ref": "G323",
+    "source": "GPS"
+  }
+},
+{
+  "type": "way",
+  "id": 1229216363,
+  "bounds": {
+    "minlat": 24.5376599,
+    "minlon": 111.2996760,
+    "maxlat": 24.5378100,
+    "maxlon": 111.2997880
+  },
+  "geometry": [
+    { "lat": 24.5378100, "lon": 111.2996760 },
+    { "lat": 24.5376599, "lon": 111.2997880 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "tertiary",
+    "layer": "1",
+    "name": "钟羊路"
+  }
+},
+{
+  "type": "way",
+  "id": 1229649247,
+  "bounds": {
+    "minlat": 24.5100497,
+    "minlon": 111.3542742,
+    "maxlat": 24.5118277,
+    "maxlon": 111.3552808
+  },
+  "geometry": [
+    { "lat": 24.5100497, "lon": 111.3552808 },
+    { "lat": 24.5118277, "lon": 111.3542742 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "primary",
+    "layer": "1",
+    "name": "民和大桥",
+    "oneway": "yes",
+    "source": "Sentinel - s2cloudless-2019_3857"
+  }
+},
+{
+  "type": "way",
+  "id": 1318125253,
+  "bounds": {
+    "minlat": 24.5069114,
+    "minlon": 111.4288491,
+    "maxlat": 24.5076460,
+    "maxlon": 111.4310807
+  },
+  "geometry": [
+    { "lat": 24.5069114, "lon": 111.4310807 },
+    { "lat": 24.5076460, "lon": 111.4288491 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "electrified": "contact_line",
+    "frequency": "50",
+    "full_name": "贵广高速铁路",
+    "gauge": "1435",
+    "highspeed": "yes",
+    "layer": "1",
+    "maxspeed": "300",
+    "name": "贵广客专线",
+    "name:en": "Guiguang Passenger Line",
+    "name:zh": "贵广客专线",
+    "name:zh-Hans": "贵广客专线",
+    "oneway": "yes",
+    "railway": "rail",
+    "railway:traffic_mode": "passenger",
+    "ref": "3044",
+    "start_date": "2014-12-26",
+    "usage": "main",
+    "voltage": "25000"
+  }
+},
+{
+  "type": "way",
+  "id": 1318125254,
+  "bounds": {
+    "minlat": 24.5069651,
+    "minlon": 111.4288652,
+    "maxlat": 24.5076997,
+    "maxlon": 111.4310995
+  },
+  "geometry": [
+    { "lat": 24.5076997, "lon": 111.4288652 },
+    { "lat": 24.5069651, "lon": 111.4310995 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "electrified": "contact_line",
+    "frequency": "50",
+    "full_name": "贵广高速铁路",
+    "gauge": "1435",
+    "highspeed": "yes",
+    "layer": "1",
+    "maxspeed": "300",
+    "name": "贵广客专线",
+    "name:en": "Guiguang Passenger Line",
+    "name:zh": "贵广客专线",
+    "name:zh-Hans": "贵广客专线",
+    "oneway": "yes",
+    "railway": "rail",
+    "railway:traffic_mode": "passenger",
+    "ref": "3044",
+    "start_date": "2014-12-26",
+    "usage": "main",
+    "voltage": "25000"
+  }
+},
+{
+  "type": "way",
+  "id": 1318126407,
+  "bounds": {
+    "minlat": 24.5088112,
+    "minlon": 111.4228061,
+    "maxlat": 24.5097425,
+    "maxlon": 111.4254360
+  },
+  "geometry": [
+    { "lat": 24.5088112, "lon": 111.4254360 },
+    { "lat": 24.5097425, "lon": 111.4228061 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "electrified": "contact_line",
+    "frequency": "50",
+    "full_name": "贵广高速铁路",
+    "gauge": "1435",
+    "highspeed": "yes",
+    "layer": "1",
+    "maxspeed": "300",
+    "name": "贵广客专线",
+    "name:en": "Guiguang Passenger Line",
+    "name:zh": "贵广客专线",
+    "name:zh-Hans": "贵广客专线",
+    "oneway": "yes",
+    "railway": "rail",
+    "railway:traffic_mode": "passenger",
+    "ref": "3044",
+    "start_date": "2014-12-26",
+    "usage": "main",
+    "voltage": "25000"
+  }
+},
+{
+  "type": "way",
+  "id": 1318126410,
+  "bounds": {
+    "minlat": 24.5088648,
+    "minlon": 111.4228222,
+    "maxlat": 24.5097962,
+    "maxlon": 111.4254339
+  },
+  "geometry": [
+    { "lat": 24.5097962, "lon": 111.4228222 },
+    { "lat": 24.5088648, "lon": 111.4254339 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "electrified": "contact_line",
+    "frequency": "50",
+    "full_name": "贵广高速铁路",
+    "gauge": "1435",
+    "highspeed": "yes",
+    "layer": "1",
+    "maxspeed": "300",
+    "name": "贵广客专线",
+    "name:en": "Guiguang Passenger Line",
+    "name:zh": "贵广客专线",
+    "name:zh-Hans": "贵广客专线",
+    "oneway": "yes",
+    "railway": "rail",
+    "railway:traffic_mode": "passenger",
+    "ref": "3044",
+    "start_date": "2014-12-26",
+    "usage": "main",
+    "voltage": "25000"
+  }
+},
+{
+  "type": "way",
+  "id": 1318126411,
+  "bounds": {
+    "minlat": 24.5114679,
+    "minlon": 111.4156151,
+    "maxlat": 24.5128760,
+    "maxlon": 111.4186621
+  },
+  "geometry": [
+    { "lat": 24.5114679, "lon": 111.4186621 },
+    { "lat": 24.5123245, "lon": 111.4166765 },
+    { "lat": 24.5128760, "lon": 111.4156151 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "electrified": "contact_line",
+    "frequency": "50",
+    "full_name": "贵广高速铁路",
+    "gauge": "1435",
+    "highspeed": "yes",
+    "layer": "1",
+    "maxspeed": "300",
+    "name": "贵广客专线",
+    "name:en": "Guiguang Passenger Line",
+    "name:zh": "贵广客专线",
+    "name:zh-Hans": "贵广客专线",
+    "oneway": "yes",
+    "railway": "rail",
+    "railway:traffic_mode": "passenger",
+    "ref": "3044",
+    "start_date": "2014-12-26",
+    "usage": "main",
+    "voltage": "25000"
+  }
+},
+{
+  "type": "way",
+  "id": 1318126412,
+  "bounds": {
+    "minlat": 24.5115191,
+    "minlon": 111.4156446,
+    "maxlat": 24.5129322,
+    "maxlon": 111.4186808
+  },
+  "geometry": [
+    { "lat": 24.5129322, "lon": 111.4156446 },
+    { "lat": 24.5123800, "lon": 111.4167085 },
+    { "lat": 24.5115191, "lon": 111.4186808 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "electrified": "contact_line",
+    "frequency": "50",
+    "full_name": "贵广高速铁路",
+    "gauge": "1435",
+    "highspeed": "yes",
+    "layer": "1",
+    "maxspeed": "300",
+    "name": "贵广客专线",
+    "name:en": "Guiguang Passenger Line",
+    "name:zh": "贵广客专线",
+    "name:zh-Hans": "贵广客专线",
+    "oneway": "yes",
+    "railway": "rail",
+    "railway:traffic_mode": "passenger",
+    "ref": "3044",
+    "start_date": "2014-12-26",
+    "usage": "main",
+    "voltage": "25000"
+  }
+},
+{
+  "type": "way",
+  "id": 1318126415,
+  "bounds": {
+    "minlat": 24.5144967,
+    "minlon": 111.4099240,
+    "maxlat": 24.5156966,
+    "maxlon": 111.4123268
+  },
+  "geometry": [
+    { "lat": 24.5144967, "lon": 111.4123268 },
+    { "lat": 24.5156966, "lon": 111.4099240 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "electrified": "contact_line",
+    "frequency": "50",
+    "full_name": "贵广高速铁路",
+    "gauge": "1435",
+    "highspeed": "yes",
+    "layer": "1",
+    "maxspeed": "300",
+    "name": "贵广客专线",
+    "name:en": "Guiguang Passenger Line",
+    "name:zh": "贵广客专线",
+    "name:zh-Hans": "贵广客专线",
+    "oneway": "yes",
+    "railway": "rail",
+    "railway:traffic_mode": "passenger",
+    "ref": "3044",
+    "start_date": "2014-12-26",
+    "usage": "main",
+    "voltage": "25000"
+  }
+},
+{
+  "type": "way",
+  "id": 1318126416,
+  "bounds": {
+    "minlat": 24.5145545,
+    "minlon": 111.4099583,
+    "maxlat": 24.5157509,
+    "maxlon": 111.4123541
+  },
+  "geometry": [
+    { "lat": 24.5157509, "lon": 111.4099583 },
+    { "lat": 24.5145545, "lon": 111.4123541 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "electrified": "contact_line",
+    "frequency": "50",
+    "full_name": "贵广高速铁路",
+    "gauge": "1435",
+    "highspeed": "yes",
+    "layer": "1",
+    "maxspeed": "300",
+    "name": "贵广客专线",
+    "name:en": "Guiguang Passenger Line",
+    "name:zh": "贵广客专线",
+    "name:zh-Hans": "贵广客专线",
+    "oneway": "yes",
+    "railway": "rail",
+    "railway:traffic_mode": "passenger",
+    "ref": "3044",
+    "start_date": "2014-12-26",
+    "usage": "main",
+    "voltage": "25000"
+  }
+},
+{
+  "type": "way",
+  "id": 1318126419,
+  "bounds": {
+    "minlat": 24.5175011,
+    "minlon": 111.4044514,
+    "maxlat": 24.5184295,
+    "maxlon": 111.4063105
+  },
+  "geometry": [
+    { "lat": 24.5175011, "lon": 111.4063105 },
+    { "lat": 24.5184295, "lon": 111.4044514 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "electrified": "contact_line",
+    "frequency": "50",
+    "full_name": "贵广高速铁路",
+    "gauge": "1435",
+    "highspeed": "yes",
+    "layer": "1",
+    "maxspeed": "300",
+    "name": "贵广客专线",
+    "name:en": "Guiguang Passenger Line",
+    "name:zh": "贵广客专线",
+    "name:zh-Hans": "贵广客专线",
+    "oneway": "yes",
+    "railway": "rail",
+    "railway:traffic_mode": "passenger",
+    "ref": "3044",
+    "start_date": "2014-12-26",
+    "usage": "main",
+    "voltage": "25000"
+  }
+},
+{
+  "type": "way",
+  "id": 1318126420,
+  "bounds": {
+    "minlat": 24.5175546,
+    "minlon": 111.4044853,
+    "maxlat": 24.5184840,
+    "maxlon": 111.4063465
+  },
+  "geometry": [
+    { "lat": 24.5184840, "lon": 111.4044853 },
+    { "lat": 24.5175546, "lon": 111.4063465 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "electrified": "contact_line",
+    "frequency": "50",
+    "full_name": "贵广高速铁路",
+    "gauge": "1435",
+    "highspeed": "yes",
+    "layer": "1",
+    "maxspeed": "300",
+    "name": "贵广客专线",
+    "name:en": "Guiguang Passenger Line",
+    "name:zh": "贵广客专线",
+    "name:zh-Hans": "贵广客专线",
+    "oneway": "yes",
+    "railway": "rail",
+    "railway:traffic_mode": "passenger",
+    "ref": "3044",
+    "start_date": "2014-12-26",
+    "usage": "main",
+    "voltage": "25000"
+  }
+},
+{
+  "type": "way",
+  "id": 1318128976,
+  "bounds": {
+    "minlat": 24.5228668,
+    "minlon": 111.3893372,
+    "maxlat": 24.5259769,
+    "maxlon": 111.3955655
+  },
+  "geometry": [
+    { "lat": 24.5228668, "lon": 111.3955655 },
+    { "lat": 24.5259769, "lon": 111.3893372 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "electrified": "contact_line",
+    "frequency": "50",
+    "full_name": "贵广高速铁路",
+    "gauge": "1435",
+    "highspeed": "yes",
+    "layer": "1",
+    "maxspeed": "300",
+    "name": "贵广客专线",
+    "name:en": "Guiguang Passenger Line",
+    "name:zh": "贵广客专线",
+    "name:zh-Hans": "贵广客专线",
+    "oneway": "yes",
+    "railway": "rail",
+    "railway:traffic_mode": "passenger",
+    "ref": "3044",
+    "start_date": "2014-12-26",
+    "usage": "main",
+    "voltage": "25000"
+  }
+},
+{
+  "type": "way",
+  "id": 1318128977,
+  "bounds": {
+    "minlat": 24.5229262,
+    "minlon": 111.3893617,
+    "maxlat": 24.5260360,
+    "maxlon": 111.3955896
+  },
+  "geometry": [
+    { "lat": 24.5260360, "lon": 111.3893617 },
+    { "lat": 24.5229262, "lon": 111.3955896 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "electrified": "contact_line",
+    "frequency": "50",
+    "full_name": "贵广高速铁路",
+    "gauge": "1435",
+    "highspeed": "yes",
+    "layer": "1",
+    "maxspeed": "300",
+    "name": "贵广客专线",
+    "name:en": "Guiguang Passenger Line",
+    "name:zh": "贵广客专线",
+    "name:zh-Hans": "贵广客专线",
+    "oneway": "yes",
+    "railway": "rail",
+    "railway:traffic_mode": "passenger",
+    "ref": "3044",
+    "start_date": "2014-12-26",
+    "usage": "main",
+    "voltage": "25000"
+  }
+},
+{
+  "type": "way",
+  "id": 1318128981,
+  "bounds": {
+    "minlat": 24.5293790,
+    "minlon": 111.3805735,
+    "maxlat": 24.5304031,
+    "maxlon": 111.3826371
+  },
+  "geometry": [
+    { "lat": 24.5304031, "lon": 111.3805735 },
+    { "lat": 24.5293790, "lon": 111.3826371 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "electrified": "contact_line",
+    "frequency": "50",
+    "full_name": "贵广高速铁路",
+    "gauge": "1435",
+    "highspeed": "yes",
+    "layer": "1",
+    "maxspeed": "300",
+    "name": "贵广客专线",
+    "name:en": "Guiguang Passenger Line",
+    "name:zh": "贵广客专线",
+    "name:zh-Hans": "贵广客专线",
+    "oneway": "yes",
+    "railway": "rail",
+    "railway:traffic_mode": "passenger",
+    "ref": "3044",
+    "start_date": "2014-12-26",
+    "usage": "main",
+    "voltage": "25000"
+  }
+},
+{
+  "type": "way",
+  "id": 1318128982,
+  "bounds": {
+    "minlat": 24.5293168,
+    "minlon": 111.3805462,
+    "maxlat": 24.5303453,
+    "maxlon": 111.3826186
+  },
+  "geometry": [
+    { "lat": 24.5293168, "lon": 111.3826186 },
+    { "lat": 24.5303453, "lon": 111.3805462 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "electrified": "contact_line",
+    "frequency": "50",
+    "full_name": "贵广高速铁路",
+    "gauge": "1435",
+    "highspeed": "yes",
+    "layer": "1",
+    "maxspeed": "300",
+    "name": "贵广客专线",
+    "name:en": "Guiguang Passenger Line",
+    "name:zh": "贵广客专线",
+    "name:zh-Hans": "贵广客专线",
+    "oneway": "yes",
+    "railway": "rail",
+    "railway:traffic_mode": "passenger",
+    "ref": "3044",
+    "start_date": "2014-12-26",
+    "usage": "main",
+    "voltage": "25000"
+  }
+},
+{
+  "type": "way",
+  "id": 1318128984,
+  "bounds": {
+    "minlat": 24.5335915,
+    "minlon": 111.3713022,
+    "maxlat": 24.5349328,
+    "maxlon": 111.3740051
+  },
+  "geometry": [
+    { "lat": 24.5335915, "lon": 111.3740051 },
+    { "lat": 24.5349328, "lon": 111.3713022 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "electrified": "contact_line",
+    "frequency": "50",
+    "full_name": "贵广高速铁路",
+    "gauge": "1435",
+    "highspeed": "yes",
+    "layer": "1",
+    "maxspeed": "300",
+    "name": "贵广客专线",
+    "name:en": "Guiguang Passenger Line",
+    "name:zh": "贵广客专线",
+    "name:zh-Hans": "贵广客专线",
+    "oneway": "yes",
+    "railway": "rail",
+    "railway:traffic_mode": "passenger",
+    "ref": "3044",
+    "start_date": "2014-12-26",
+    "usage": "main",
+    "voltage": "25000"
+  }
+},
+{
+  "type": "way",
+  "id": 1318128985,
+  "bounds": {
+    "minlat": 24.5336508,
+    "minlon": 111.3713342,
+    "maxlat": 24.5349883,
+    "maxlon": 111.3740294
+  },
+  "geometry": [
+    { "lat": 24.5349883, "lon": 111.3713342 },
+    { "lat": 24.5336508, "lon": 111.3740294 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "electrified": "contact_line",
+    "frequency": "50",
+    "full_name": "贵广高速铁路",
+    "gauge": "1435",
+    "highspeed": "yes",
+    "layer": "1",
+    "maxspeed": "300",
+    "name": "贵广客专线",
+    "name:en": "Guiguang Passenger Line",
+    "name:zh": "贵广客专线",
+    "name:zh-Hans": "贵广客专线",
+    "oneway": "yes",
+    "railway": "rail",
+    "railway:traffic_mode": "passenger",
+    "ref": "3044",
+    "start_date": "2014-12-26",
+    "usage": "main",
+    "voltage": "25000"
+  }
+},
+{
+  "type": "way",
+  "id": 1318128988,
+  "bounds": {
+    "minlat": 24.5372973,
+    "minlon": 111.3643931,
+    "maxlat": 24.5383688,
+    "maxlon": 111.3665375
+  },
+  "geometry": [
+    { "lat": 24.5372973, "lon": 111.3665375 },
+    { "lat": 24.5383688, "lon": 111.3643931 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "electrified": "contact_line",
+    "frequency": "50",
+    "full_name": "贵广高速铁路",
+    "gauge": "1435",
+    "highspeed": "yes",
+    "layer": "1",
+    "maxspeed": "300",
+    "name": "贵广客专线",
+    "name:en": "Guiguang Passenger Line",
+    "name:zh": "贵广客专线",
+    "name:zh-Hans": "贵广客专线",
+    "oneway": "yes",
+    "railway": "rail",
+    "railway:traffic_mode": "passenger",
+    "ref": "3044",
+    "start_date": "2014-12-26",
+    "usage": "main",
+    "voltage": "25000"
+  }
+},
+{
+  "type": "way",
+  "id": 1318128989,
+  "bounds": {
+    "minlat": 24.5373509,
+    "minlon": 111.3644214,
+    "maxlat": 24.5384261,
+    "maxlon": 111.3665733
+  },
+  "geometry": [
+    { "lat": 24.5384261, "lon": 111.3644214 },
+    { "lat": 24.5373509, "lon": 111.3665733 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "electrified": "contact_line",
+    "frequency": "50",
+    "full_name": "贵广高速铁路",
+    "gauge": "1435",
+    "highspeed": "yes",
+    "layer": "1",
+    "maxspeed": "300",
+    "name": "贵广客专线",
+    "name:en": "Guiguang Passenger Line",
+    "name:zh": "贵广客专线",
+    "name:zh-Hans": "贵广客专线",
+    "oneway": "yes",
+    "railway": "rail",
+    "railway:traffic_mode": "passenger",
+    "ref": "3044",
+    "start_date": "2014-12-26",
+    "usage": "main",
+    "voltage": "25000"
+  }
+},
+{
+  "type": "way",
+  "id": 1361457681,
+  "bounds": {
+    "minlat": 24.2490969,
+    "minlon": 111.1954205,
+    "maxlat": 24.2490998,
+    "maxlon": 111.1954785
+  },
+  "geometry": [
+    { "lat": 24.2490998, "lon": 111.1954205 },
+    { "lat": 24.2490969, "lon": 111.1954785 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "footway": "sidewalk",
+    "highway": "footway",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1361457683,
+  "bounds": {
+    "minlat": 24.2492594,
+    "minlon": 111.1947004,
+    "maxlat": 24.2495011,
+    "maxlon": 111.1947279
+  },
+  "geometry": [
+    { "lat": 24.2492594, "lon": 111.1947169 },
+    { "lat": 24.2493048, "lon": 111.1947279 },
+    { "lat": 24.2495011, "lon": 111.1947004 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "footway",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1362107519,
+  "bounds": {
+    "minlat": 24.2544581,
+    "minlon": 111.2089599,
+    "maxlat": 24.2546799,
+    "maxlon": 111.2091714
+  },
+  "geometry": [
+    { "lat": 24.2546799, "lon": 111.2091714 },
+    { "lat": 24.2544581, "lon": 111.2089599 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "tertiary",
+    "layer": "1",
+    "oneway": "yes"
+  }
+},
+{
+  "type": "way",
+  "id": 1362107522,
+  "bounds": {
+    "minlat": 24.2544580,
+    "minlon": 111.2091705,
+    "maxlat": 24.2546836,
+    "maxlon": 111.2093950
+  },
+  "geometry": [
+    { "lat": 24.2544580, "lon": 111.2091705 },
+    { "lat": 24.2546836, "lon": 111.2093950 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "tertiary",
+    "layer": "1",
+    "oneway": "yes"
+  }
+},
+{
+  "type": "way",
+  "id": 1382699375,
+  "bounds": {
+    "minlat": 24.3853171,
+    "minlon": 111.3562327,
+    "maxlat": 24.3856518,
+    "maxlon": 111.3566865
+  },
+  "geometry": [
+    { "lat": 24.3856518, "lon": 111.3566865 },
+    { "lat": 24.3853171, "lon": 111.3562327 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "tertiary",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1382699378,
+  "bounds": {
+    "minlat": 24.3891115,
+    "minlon": 111.3562210,
+    "maxlat": 24.3893468,
+    "maxlon": 111.3564670
+  },
+  "geometry": [
+    { "lat": 24.3893468, "lon": 111.3564670 },
+    { "lat": 24.3891115, "lon": 111.3562210 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "tertiary",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1382699384,
+  "bounds": {
+    "minlat": 24.3839768,
+    "minlon": 111.3633763,
+    "maxlat": 24.3841070,
+    "maxlon": 111.3634682
+  },
+  "geometry": [
+    { "lat": 24.3841070, "lon": 111.3634682 },
+    { "lat": 24.3839768, "lon": 111.3633763 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "track",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1382699396,
+  "bounds": {
+    "minlat": 24.3763484,
+    "minlon": 111.3631146,
+    "maxlat": 24.3764309,
+    "maxlon": 111.3633466
+  },
+  "geometry": [
+    { "lat": 24.3763484, "lon": 111.3631146 },
+    { "lat": 24.3764309, "lon": 111.3633466 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "unclassified",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1382699402,
+  "bounds": {
+    "minlat": 24.3690610,
+    "minlon": 111.3609308,
+    "maxlat": 24.3692366,
+    "maxlon": 111.3610385
+  },
+  "geometry": [
+    { "lat": 24.3692366, "lon": 111.3609308 },
+    { "lat": 24.3690610, "lon": 111.3610385 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "tertiary",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1385900224,
+  "bounds": {
+    "minlat": 24.2492257,
+    "minlon": 111.1934733,
+    "maxlat": 24.2492586,
+    "maxlon": 111.1935550
+  },
+  "geometry": [
+    { "lat": 24.2492586, "lon": 111.1935550 },
+    { "lat": 24.2492257, "lon": 111.1934733 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "footway",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1385900235,
+  "bounds": {
+    "minlat": 24.2523709,
+    "minlon": 111.2017309,
+    "maxlat": 24.2526082,
+    "maxlon": 111.2018247
+  },
+  "geometry": [
+    { "lat": 24.2526082, "lon": 111.2017309 },
+    { "lat": 24.2523709, "lon": 111.2018247 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "footway",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1413851750,
+  "bounds": {
+    "minlat": 24.5286065,
+    "minlon": 111.3130086,
+    "maxlat": 24.5296608,
+    "maxlon": 111.3131574
+  },
+  "geometry": [
+    { "lat": 24.5296608, "lon": 111.3130086 },
+    { "lat": 24.5286065, "lon": 111.3131574 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "secondary",
+    "layer": "1",
+    "name": "复兴大桥",
+    "oneway": "yes",
+    "source": "maxar Premium"
+  }
+},
+{
+  "type": "way",
+  "id": 1413851753,
+  "bounds": {
+    "minlat": 24.5285792,
+    "minlon": 111.3131189,
+    "maxlat": 24.5296442,
+    "maxlon": 111.3132571
+  },
+  "geometry": [
+    { "lat": 24.5285792, "lon": 111.3132571 },
+    { "lat": 24.5296442, "lon": 111.3131189 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "secondary",
+    "layer": "1",
+    "name": "复兴大桥",
+    "oneway": "yes"
+  }
+},
+{
+  "type": "way",
+  "id": 1415193223,
+  "bounds": {
+    "minlat": 24.5319003,
+    "minlon": 111.2811903,
+    "maxlat": 24.5319822,
+    "maxlon": 111.2812747
+  },
+  "geometry": [
+    { "lat": 24.5319003, "lon": 111.2812747 },
+    { "lat": 24.5319822, "lon": 111.2811903 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "unclassified",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1420422818,
+  "bounds": {
+    "minlat": 24.4561461,
+    "minlon": 111.2659972,
+    "maxlat": 24.4564053,
+    "maxlon": 111.2660286
+  },
+  "geometry": [
+    { "lat": 24.4564053, "lon": 111.2659972 },
+    { "lat": 24.4561461, "lon": 111.2660286 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "motorway",
+    "lanes": "2",
+    "layer": "1",
+    "maxspeed": "120",
+    "name": "富钟高速",
+    "name:zh-Hant": "富鐘高速",
+    "oneway": "yes",
+    "ref": "S13",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 1445810685,
+  "bounds": {
+    "minlat": 24.5348124,
+    "minlon": 111.2888046,
+    "maxlat": 24.5348317,
+    "maxlon": 111.2888934
+  },
+  "geometry": [
+    { "lat": 24.5348317, "lon": 111.2888046 },
+    { "lat": 24.5348124, "lon": 111.2888934 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "footway",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1445935876,
+  "bounds": {
+    "minlat": 24.2571948,
+    "minlon": 111.2243848,
+    "maxlat": 24.2572189,
+    "maxlon": 111.2250135
+  },
+  "geometry": [
+    { "lat": 24.2572189, "lon": 111.2250135 },
+    { "lat": 24.2571948, "lon": 111.2243848 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "residential",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1452756481,
+  "bounds": {
+    "minlat": 24.5334521,
+    "minlon": 111.3057068,
+    "maxlat": 24.5339870,
+    "maxlon": 111.3065820
+  },
+  "geometry": [
+    { "lat": 24.5334521, "lon": 111.3057068 },
+    { "lat": 24.5339174, "lon": 111.3064681 },
+    { "lat": 24.5339870, "lon": 111.3065820 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "secondary",
+    "layer": "1",
+    "name": "富江大桥",
+    "oneway": "yes"
+  }
+},
+{
+  "type": "way",
+  "id": 1464152544,
+  "bounds": {
+    "minlat": 24.5356870,
+    "minlon": 111.2946595,
+    "maxlat": 24.5357678,
+    "maxlon": 111.2947682
+  },
+  "geometry": [
+    { "lat": 24.5357678, "lon": 111.2947682 },
+    { "lat": 24.5356870, "lon": 111.2946595 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "service",
+    "layer": "1",
+    "service": "alley"
+  }
+},
+{
+  "type": "way",
+  "id": 1479956126,
+  "bounds": {
+    "minlat": 24.5353198,
+    "minlon": 111.2950898,
+    "maxlat": 24.5353957,
+    "maxlon": 111.2951952
+  },
+  "geometry": [
+    { "lat": 24.5353957, "lon": 111.2951952 },
+    { "lat": 24.5353198, "lon": 111.2950898 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "residential",
+    "layer": "1",
+    "name": "北路市场二巷"
+  }
+},
+{
+  "type": "way",
+  "id": 1508010463,
+  "bounds": {
+    "minlat": 24.5293016,
+    "minlon": 111.3318699,
+    "maxlat": 24.5296874,
+    "maxlon": 111.3330435
+  },
+  "geometry": [
+    { "lat": 24.5296874, "lon": 111.3330435 },
+    { "lat": 24.5293016, "lon": 111.3318699 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "construction",
+    "layer": "1",
+    "name": "程石大桥",
+    "oneway": "yes"
+  }
+},
+{
+  "type": "way",
+  "id": 1508010464,
+  "bounds": {
+    "minlat": 24.5291622,
+    "minlon": 111.3319392,
+    "maxlat": 24.5295705,
+    "maxlon": 111.3330723
+  },
+  "geometry": [
+    { "lat": 24.5295705, "lon": 111.3330723 },
+    { "lat": 24.5291622, "lon": 111.3319392 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "construction",
+    "layer": "1",
+    "name": "程石大桥",
+    "oneway": "yes"
+  }
+},
+{
+  "type": "way",
+  "id": 1510293630,
+  "bounds": {
+    "minlat": 24.5322478,
+    "minlon": 111.3057264,
+    "maxlat": 24.5323593,
+    "maxlon": 111.3058128
+  },
+  "geometry": [
+    { "lat": 24.5323593, "lon": 111.3058128 },
+    { "lat": 24.5322478, "lon": 111.3057264 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "footway",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1510293632,
+  "bounds": {
+    "minlat": 24.5320094,
+    "minlon": 111.3055665,
+    "maxlat": 24.5321008,
+    "maxlon": 111.3056798
+  },
+  "geometry": [
+    { "lat": 24.5321008, "lon": 111.3056798 },
+    { "lat": 24.5320094, "lon": 111.3055665 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "footway",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1510293637,
+  "bounds": {
+    "minlat": 24.5320690,
+    "minlon": 111.3049144,
+    "maxlat": 24.5321444,
+    "maxlon": 111.3050534
+  },
+  "geometry": [
+    { "lat": 24.5321444, "lon": 111.3050534 },
+    { "lat": 24.5320690, "lon": 111.3049144 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "footway",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1510293638,
+  "bounds": {
+    "minlat": 24.5323778,
+    "minlon": 111.3051025,
+    "maxlat": 24.5325049,
+    "maxlon": 111.3052569
+  },
+  "geometry": [
+    { "lat": 24.5325049, "lon": 111.3051025 },
+    { "lat": 24.5323778, "lon": 111.3052569 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "footway",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1510569554,
+  "bounds": {
+    "minlat": 24.5288400,
+    "minlon": 111.3058955,
+    "maxlat": 24.5289347,
+    "maxlon": 111.3060472
+  },
+  "geometry": [
+    { "lat": 24.5289347, "lon": 111.3058955 },
+    { "lat": 24.5288400, "lon": 111.3060472 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "secondary",
+    "layer": "1",
+    "name": "钟羊南路"
+  }
+},
+{
+  "type": "way",
+  "id": 1510569556,
+  "bounds": {
+    "minlat": 24.5217314,
+    "minlon": 111.3062212,
+    "maxlat": 24.5218168,
+    "maxlon": 111.3064478
+  },
+  "geometry": [
+    { "lat": 24.5218168, "lon": 111.3062212 },
+    { "lat": 24.5217314, "lon": 111.3064478 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "unclassified",
+    "layer": "1",
+    "source": "maxar"
+  }
+},
+{
+  "type": "way",
+  "id": 1510569562,
+  "bounds": {
+    "minlat": 24.5286365,
+    "minlon": 111.3070993,
+    "maxlat": 24.5287707,
+    "maxlon": 111.3071690
+  },
+  "geometry": [
+    { "lat": 24.5286365, "lon": 111.3070993 },
+    { "lat": 24.5287707, "lon": 111.3071690 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "footway",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1513579997,
+  "bounds": {
+    "minlat": 24.5099930,
+    "minlon": 111.3541027,
+    "maxlat": 24.5119050,
+    "maxlon": 111.3553752
+  },
+  "geometry": [
+    { "lat": 24.5118012, "lon": 111.3541027 },
+    { "lat": 24.5119050, "lon": 111.3543492 },
+    { "lat": 24.5101164, "lon": 111.3553752 },
+    { "lat": 24.5099930, "lon": 111.3551287 },
+    { "lat": 24.5118012, "lon": 111.3541027 }
+  ],
+  "tags": {
+    "layer": "1",
+    "man_made": "bridge",
+    "name": "民和大桥"
+  }
+},
+{
+  "type": "way",
+  "id": 1513580004,
+  "bounds": {
+    "minlat": 24.5290998,
+    "minlon": 111.3318434,
+    "maxlat": 24.5297406,
+    "maxlon": 111.3330609
+  },
+  "geometry": [
+    { "lat": 24.5293606, "lon": 111.3318434 },
+    { "lat": 24.5290998, "lon": 111.3319814 },
+    { "lat": 24.5294862, "lon": 111.3330609 },
+    { "lat": 24.5297406, "lon": 111.3329795 },
+    { "lat": 24.5293606, "lon": 111.3318434 }
+  ],
+  "tags": {
+    "layer": "1",
+    "man_made": "bridge",
+    "name": "程石大桥"
+  }
+},
+{
+  "type": "way",
+  "id": 1513580005,
+  "bounds": {
+    "minlat": 24.5272304,
+    "minlon": 111.3181485,
+    "maxlat": 24.5294084,
+    "maxlon": 111.3183457
+  },
+  "geometry": [
+    { "lat": 24.5294084, "lon": 111.3181485 },
+    { "lat": 24.5294000, "lon": 111.3183457 },
+    { "lat": 24.5272304, "lon": 111.3183180 },
+    { "lat": 24.5272312, "lon": 111.3182714 },
+    { "lat": 24.5272332, "lon": 111.3181547 },
+    { "lat": 24.5294084, "lon": 111.3181485 }
+  ],
+  "tags": {
+    "layer": "1",
+    "man_made": "bridge",
+    "name": "富江大桥"
+  }
+},
+{
+  "type": "way",
+  "id": 1513580007,
+  "bounds": {
+    "minlat": 24.5286051,
+    "minlon": 111.3128696,
+    "maxlat": 24.5296776,
+    "maxlon": 111.3134063
+  },
+  "geometry": [
+    { "lat": 24.5296776, "lon": 111.3128696 },
+    { "lat": 24.5295408, "lon": 111.3132559 },
+    { "lat": 24.5286051, "lon": 111.3134063 },
+    { "lat": 24.5287214, "lon": 111.3130244 },
+    { "lat": 24.5296776, "lon": 111.3128696 }
+  ],
+  "tags": {
+    "layer": "1",
+    "man_made": "bridge",
+    "name": "复兴大桥"
+  }
+},
+{
+  "type": "way",
+  "id": 1513581722,
+  "bounds": {
+    "minlat": 24.4958456,
+    "minlon": 111.2985803,
+    "maxlat": 24.4959805,
+    "maxlon": 111.2986250
+  },
+  "geometry": [
+    { "lat": 24.4959805, "lon": 111.2986250 },
+    { "lat": 24.4958456, "lon": 111.2985803 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "unclassified",
+    "layer": "1"
+  }
+},
+{
+  "type": "way",
+  "id": 1513581724,
+  "bounds": {
+    "minlat": 24.4994113,
+    "minlon": 111.3016319,
+    "maxlat": 24.4994170,
+    "maxlon": 111.3019195
+  },
+  "geometry": [
+    { "lat": 24.4994113, "lon": 111.3016319 },
+    { "lat": 24.4994170, "lon": 111.3019195 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "trunk",
+    "layer": "1",
+    "name": "环城大道南",
+    "ref": "G323",
+    "source": "Sentinel - s2cloudless-2019_3857"
+  }
+},
+{
+  "type": "way",
+  "id": 1513581726,
+  "bounds": {
+    "minlat": 24.5015997,
+    "minlon": 111.3029033,
+    "maxlat": 24.5017194,
+    "maxlon": 111.3030839
+  },
+  "geometry": [
+    { "lat": 24.5015997, "lon": 111.3030839 },
+    { "lat": 24.5017194, "lon": 111.3029033 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "unclassified",
+    "layer": "1",
+    "source": "maxar"
+  }
+},
+{
+  "type": "way",
+  "id": 1515103766,
+  "bounds": {
+    "minlat": 24.5395617,
+    "minlon": 111.2995717,
+    "maxlat": 24.5401498,
+    "maxlon": 111.3002927
+  },
+  "geometry": [
+    { "lat": 24.5397047, "lon": 111.2995717 },
+    { "lat": 24.5401498, "lon": 111.3001625 },
+    { "lat": 24.5400068, "lon": 111.3002927 },
+    { "lat": 24.5395617, "lon": 111.2997019 },
+    { "lat": 24.5397047, "lon": 111.2995717 }
+  ],
+  "tags": {
+    "layer": "1",
+    "man_made": "bridge",
+    "name": "钟山大桥"
+  }
+},
+{
+  "type": "way",
+  "id": 1515103767,
+  "bounds": {
+    "minlat": 24.5333465,
+    "minlon": 111.3055103,
+    "maxlat": 24.5340808,
+    "maxlon": 111.3065468
+  },
+  "geometry": [
+    { "lat": 24.5335302, "lon": 111.3055103 },
+    { "lat": 24.5333465, "lon": 111.3056460 },
+    { "lat": 24.5338970, "lon": 111.3065468 },
+    { "lat": 24.5340808, "lon": 111.3064110 },
+    { "lat": 24.5335302, "lon": 111.3055103 }
+  ],
+  "tags": {
+    "layer": "1",
+    "man_made": "bridge",
+    "name": "富江大桥"
+  }
+},
+{
+  "type": "way",
+  "id": 1518302270,
+  "bounds": {
+    "minlat": 24.5353546,
+    "minlon": 111.2915316,
+    "maxlat": 24.5354253,
+    "maxlon": 111.2915752
+  },
+  "geometry": [
+    { "lat": 24.5354253, "lon": 111.2915316 },
+    { "lat": 24.5353546, "lon": 111.2915752 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "tertiary",
+    "layer": "1",
+    "name": "花园西路"
+  }
+},
+{
+  "type": "way",
+  "id": 1518302272,
+  "bounds": {
+    "minlat": 24.5361001,
+    "minlon": 111.2930186,
+    "maxlat": 24.5361453,
+    "maxlon": 111.2930409
+  },
+  "geometry": [
+    { "lat": 24.5361453, "lon": 111.2930186 },
+    { "lat": 24.5361001, "lon": 111.2930409 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "residential",
+    "layer": "1"
+  }
+}
+
+  ]
+}

@@ -22,16 +22,20 @@ sys.path.insert(0, str(PROJECT_DIR))
 sys.path.insert(0, str(PROJECT_DIR / "agent"))
 
 from frontend_server.map_planner import MapActionPlanner  # noqa: E402
+from frontend_server.map_tools import register_map_tools, tool_result_to_map_event  # noqa: E402
 from openai import OpenAI  # noqa: E402
 from oag.agent import Agent  # noqa: E402
 from oag.harness import Harness  # noqa: E402
 from oag.ontology.loader import load_domain  # noqa: E402
 from oag.runtime import HarnessConfig  # noqa: E402
 from oag.runtime.events import event_to_dict  # noqa: E402
+from oag.runtime.hooks import HookResult  # noqa: E402
 
 
 ID_FIELDS = {
     "River": "river_id",
+    "Watershed": "watershed_id",
+    "Waterway": "waterway_id",
     "County": "county_id",
     "Town": "town_id",
     "Reservoir": "reservoir_id",
@@ -71,6 +75,8 @@ class FloodApp:
         self.resolver = self.registry.get_resolver("flood_repository")
         self.scenarios = self.registry.call("list_scenarios")
         self.map_planner = MapActionPlanner(self.resolver, self.registry, self.scenarios)
+        self._pending_map_events: dict[str, list[dict[str, Any]]] = {}
+        self._pending_map_events_lock = threading.Lock()
         self.agent = self._build_agent()
         self._export_lock = threading.Lock()
 
@@ -122,29 +128,40 @@ class FloodApp:
 
     def stream_chat(self, run: "AgentRun"):
         selected = run.selected or {}
-        plan = self.map_planner.plan(run.message, selected)
-        self._append_map_event(run, plan)
 
         if not self.agent:
+            plan = self.map_planner.plan(run.message, selected)
+            self._append_map_event(run, plan)
             self._append_event(run, "text", {
                 "type": "text",
                 "content": plan.get("note") or "当前未启用 LLM，已根据地图动作规则更新地图。",
             })
             return
 
-        agent_message = self._agent_message(run.message, selected, plan)
+        agent_message = self._agent_message(run.message, selected)
+        emitted_map_action = False
         try:
             for event in self.agent.chat_stream(agent_message, session_id=run.session_id):
                 if run.cancelled:
                     break
+                for map_event in self._pop_pending_map_events(run.session_id):
+                    emitted_map_action = True
+                    self._append_map_event(run, map_event)
                 data = event_to_dict(event)
                 self._append_event(run, data["type"], data)
+            for map_event in self._pop_pending_map_events(run.session_id):
+                emitted_map_action = True
+                self._append_map_event(run, map_event)
         except Exception as exc:
             print(f"OAG agent stream failed: {exc}")
             self._append_event(run, "text", {
                 "type": "text",
                 "content": f"智能体生成失败：{exc}",
             })
+        if not emitted_map_action:
+            plan = self.map_planner.plan(run.message, selected)
+            if plan.get("map_actions"):
+                self._append_map_event(run, plan)
 
     def _append_map_event(self, run: "AgentRun", result: dict):
         self._append_event(run, "map_actions", {
@@ -199,12 +216,16 @@ class FloodApp:
                     "你服务于一个以珊瑚河流域 GIS 为中心的前端。"
                     "回答用户时优先调用领域对象查询和领域函数获取事实。"
                     "不要让用户通过情景切换控件操作；如果需要其他情景，请让用户直接在对话中指定。"
-                    "地图动作由前端服务根据回答上下文执行，你只需要清楚说明依据、对象和建议。"
+                    "当用户要求在地图上显示、打开、绘制、加载、叠加、缩放、聚焦或清空对象时，"
+                    "必须调用 ui_show_objects、ui_focus_object 或 ui_clear_map，让前端执行地图动作；"
+                    "不要只用文字说明将要显示什么。"
                     "当前 analyze_risks/plan_response/generate_brief 可能尚未实现；如工具返回 not_implemented，必须如实说明。"
                     "在空间叠加风险函数实现前，不得声称已经判定某个学校、道路、桥梁或路线受淹；只能说明已展示对象和淹没范围，可作为研判基础。"
                 ),
             ),
         )
+        register_map_tools(harness.tools, self.resolver, self.registry)
+        harness.hooks.register("post_tool_call", self._capture_map_tool_event)
         return Agent(
             harness,
             self.llm_client,
@@ -212,21 +233,37 @@ class FloodApp:
             db_dir=str(PROJECT_DIR / ".oag_data"),
         )
 
-    def _agent_message(self, message: str, selected: dict, map_plan: dict) -> str:
+    def _agent_message(self, message: str, selected: dict) -> str:
         frontend_context = {
             "用户问题": message,
             "选中对象": selected,
-            "当前地图上下文": map_plan.get("context"),
-            "已规划地图动作": map_plan.get("map_actions", []),
-            "结果卡片": map_plan.get("result_cards", []),
+            "地图动作工具": ["ui_show_objects", "ui_clear_map", "ui_focus_object"],
         }
         return (
             f"用户问题：{message}\n\n"
             "以下是前端 GIS 的当前状态，只用于帮助你理解用户正在看的地图。"
             "不要把这些前端动作当作领域事实；领域事实必须通过 OAG 工具查询。"
+            "如果用户请求地图展示，请调用 ui_* 工具；这些工具只改变前端显示，不改变领域数据。"
             "如果 analyze_risks 返回 not_implemented，不要声称已经完成对象级受淹判定。\n"
             f"{json.dumps(frontend_context, ensure_ascii=False, indent=2)}"
         )
+
+    def _capture_map_tool_event(self, context: dict[str, Any]) -> HookResult:
+        event = tool_result_to_map_event(
+            str(context.get("tool_name") or ""),
+            str(context.get("result") or ""),
+        )
+        if not event:
+            return HookResult(action="allow")
+        session_id = str(context.get("session_id") or "")
+        if session_id:
+            with self._pending_map_events_lock:
+                self._pending_map_events.setdefault(session_id, []).append(event)
+        return HookResult(action="allow")
+
+    def _pop_pending_map_events(self, session_id: str) -> list[dict[str, Any]]:
+        with self._pending_map_events_lock:
+            return self._pending_map_events.pop(session_id, [])
 
 
 APP = FloodApp()

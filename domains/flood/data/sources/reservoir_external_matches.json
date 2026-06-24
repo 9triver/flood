@@ -1,0 +1,841 @@
+{
+  "sources": {
+    "hydrolakes": "domains/flood/data/sources/hydrolakes/hydrolakes_shanhu_bbox.geojson",
+    "jrc_gsw_extent": "domains/flood/data/sources/jrc_gsw/extent_110E_30Nv1_4_2021.tif",
+    "jrc_gsw_occurrence": "domains/flood/data/sources/jrc_gsw/occurrence_110E_30Nv1_4_2021.tif",
+    "esa_worldcover_n21e111": "domains/flood/data/sources/esa_worldcover/ESA_WorldCover_10m_2021_v200_N21E111_Map.tif",
+    "esa_worldcover_n24e111": "domains/flood/data/sources/esa_worldcover/ESA_WorldCover_10m_2021_v200_N24E111_Map.tif"
+  },
+  "counts": {
+    "reservoir_objects": 17,
+    "hydrolakes_local_polygons": 44,
+    "hydrolakes_inside": 0,
+    "hydrolakes_le_100m": 10,
+    "hydrolakes_le_300m": 11,
+    "hydrolakes_le_1000m": 13,
+    "jrc_extent_at_point": 6,
+    "jrc_occurrence_gt_0_at_point": 6,
+    "esa_water_at_point": 1,
+    "esa_water_within_100m": 17,
+    "esa_water_within_300m": 17,
+    "esa_water_within_1000m": 17
+  },
+  "matches": [
+    {
+      "reservoir_id": "HP0014511230000606_1",
+      "name": "砂龙冲水库",
+      "local_lon": 111.42666666666663,
+      "local_lat": 24.67194444444453,
+      "current_geometry_type": "Point",
+      "current_geometry_source": "local_inventory_with_osm_reservoir_match",
+      "current_osm_ref": "relation/11577836",
+      "hydrolakes": {
+        "match_status": "candidate",
+        "distance_m": 979.37,
+        "inside": false,
+        "hylak_id": 1386107,
+        "lake_name": null,
+        "lake_area_km2": 0.23,
+        "lake_type": 1,
+        "geometry_type": "Polygon"
+      },
+      "jrc_gsw": {
+        "extent_at_point": 1.0,
+        "occurrence_at_point": 68.0,
+        "recurrence_at_point": 96.0,
+        "seasonality_at_point": 4.0
+      },
+      "esa_worldcover": {
+        "tile": "domains/flood/data/sources/esa_worldcover/ESA_WorldCover_10m_2021_v200_N24E111_Map.tif",
+        "class_at_point": 30,
+        "water_at_point": false,
+        "water_within_100m": {
+          "has_water": true,
+          "water_pixels": 137,
+          "checked_pixels": 483,
+          "water_fraction": 0.2836
+        },
+        "water_within_300m": {
+          "has_water": true,
+          "water_pixels": 612,
+          "checked_pixels": 4615,
+          "water_fraction": 0.1326
+        },
+        "water_within_1000m": {
+          "has_water": true,
+          "water_pixels": 1241,
+          "checked_pixels": 50955,
+          "water_fraction": 0.0244
+        }
+      }
+    },
+    {
+      "reservoir_id": "HP0014511230000261_2",
+      "name": "横塘水库",
+      "local_lon": 111.32383682536229,
+      "local_lat": 24.857831925553207,
+      "current_geometry_type": "Point",
+      "current_geometry_source": "local_inventory",
+      "current_osm_ref": "",
+      "hydrolakes": {
+        "match_status": "matched",
+        "distance_m": 52.44,
+        "inside": false,
+        "hylak_id": 1385651,
+        "lake_name": null,
+        "lake_area_km2": 0.81,
+        "lake_type": 1,
+        "geometry_type": "Polygon"
+      },
+      "jrc_gsw": {
+        "extent_at_point": 0.0,
+        "occurrence_at_point": 0.0,
+        "recurrence_at_point": 0.0,
+        "seasonality_at_point": 0.0
+      },
+      "esa_worldcover": {
+        "tile": "domains/flood/data/sources/esa_worldcover/ESA_WorldCover_10m_2021_v200_N24E111_Map.tif",
+        "class_at_point": 30,
+        "water_at_point": false,
+        "water_within_100m": {
+          "has_water": true,
+          "water_pixels": 180,
+          "checked_pixels": 483,
+          "water_fraction": 0.3727
+        },
+        "water_within_300m": {
+          "has_water": true,
+          "water_pixels": 1346,
+          "checked_pixels": 4615,
+          "water_fraction": 0.2917
+        },
+        "water_within_1000m": {
+          "has_water": true,
+          "water_pixels": 9231,
+          "checked_pixels": 50955,
+          "water_fraction": 0.1812
+        }
+      }
+    },
+    {
+      "reservoir_id": "HP0014511190000237_3",
+      "name": "桂山水库",
+      "local_lon": 111.478901,
+      "local_lat": 24.291401,
+      "current_geometry_type": "Point",
+      "current_geometry_source": "local_inventory_with_osm_reservoir_match",
+      "current_osm_ref": "relation/11590576",
+      "hydrolakes": {
+        "match_status": "matched",
+        "distance_m": 32.98,
+        "inside": false,
+        "hylak_id": 1386706,
+        "lake_name": null,
+        "lake_area_km2": 0.19,
+        "lake_type": 1,
+        "geometry_type": "Polygon"
+      },
+      "jrc_gsw": {
+        "extent_at_point": 1.0,
+        "occurrence_at_point": 33.0,
+        "recurrence_at_point": 89.0,
+        "seasonality_at_point": 2.0
+      },
+      "esa_worldcover": {
+        "tile": "domains/flood/data/sources/esa_worldcover/ESA_WorldCover_10m_2021_v200_N24E111_Map.tif",
+        "class_at_point": 50,
+        "water_at_point": false,
+        "water_within_100m": {
+          "has_water": true,
+          "water_pixels": 195,
+          "checked_pixels": 483,
+          "water_fraction": 0.4037
+        },
+        "water_within_300m": {
+          "has_water": true,
+          "water_pixels": 1408,
+          "checked_pixels": 4615,
+          "water_fraction": 0.3051
+        },
+        "water_within_1000m": {
+          "has_water": true,
+          "water_pixels": 2828,
+          "checked_pixels": 50955,
+          "water_fraction": 0.0555
+        }
+      }
+    },
+    {
+      "reservoir_id": "HP0014511190000203_4",
+      "name": "狮洞水库",
+      "local_lon": 111.418701,
+      "local_lat": 24.277801,
+      "current_geometry_type": "Point",
+      "current_geometry_source": "local_inventory_with_osm_reservoir_match",
+      "current_osm_ref": "relation/11590577",
+      "hydrolakes": {
+        "match_status": "matched",
+        "distance_m": 54.7,
+        "inside": false,
+        "hylak_id": 1386726,
+        "lake_name": null,
+        "lake_area_km2": 0.74,
+        "lake_type": 1,
+        "geometry_type": "Polygon"
+      },
+      "jrc_gsw": {
+        "extent_at_point": 0.0,
+        "occurrence_at_point": 0.0,
+        "recurrence_at_point": 0.0,
+        "seasonality_at_point": 0.0
+      },
+      "esa_worldcover": {
+        "tile": "domains/flood/data/sources/esa_worldcover/ESA_WorldCover_10m_2021_v200_N24E111_Map.tif",
+        "class_at_point": 50,
+        "water_at_point": false,
+        "water_within_100m": {
+          "has_water": true,
+          "water_pixels": 174,
+          "checked_pixels": 483,
+          "water_fraction": 0.3602
+        },
+        "water_within_300m": {
+          "has_water": true,
+          "water_pixels": 1084,
+          "checked_pixels": 4615,
+          "water_fraction": 0.2349
+        },
+        "water_within_1000m": {
+          "has_water": true,
+          "water_pixels": 6411,
+          "checked_pixels": 50955,
+          "water_fraction": 0.1258
+        }
+      }
+    },
+    {
+      "reservoir_id": "HP0014511190000237_5",
+      "name": "桂山水库",
+      "local_lon": 111.478901,
+      "local_lat": 24.291401,
+      "current_geometry_type": "Point",
+      "current_geometry_source": "local_inventory",
+      "current_osm_ref": "",
+      "hydrolakes": {
+        "match_status": "matched",
+        "distance_m": 32.98,
+        "inside": false,
+        "hylak_id": 1386706,
+        "lake_name": null,
+        "lake_area_km2": 0.19,
+        "lake_type": 1,
+        "geometry_type": "Polygon"
+      },
+      "jrc_gsw": {
+        "extent_at_point": 1.0,
+        "occurrence_at_point": 33.0,
+        "recurrence_at_point": 89.0,
+        "seasonality_at_point": 2.0
+      },
+      "esa_worldcover": {
+        "tile": "domains/flood/data/sources/esa_worldcover/ESA_WorldCover_10m_2021_v200_N24E111_Map.tif",
+        "class_at_point": 50,
+        "water_at_point": false,
+        "water_within_100m": {
+          "has_water": true,
+          "water_pixels": 195,
+          "checked_pixels": 483,
+          "water_fraction": 0.4037
+        },
+        "water_within_300m": {
+          "has_water": true,
+          "water_pixels": 1408,
+          "checked_pixels": 4615,
+          "water_fraction": 0.3051
+        },
+        "water_within_1000m": {
+          "has_water": true,
+          "water_pixels": 2828,
+          "checked_pixels": 50955,
+          "water_fraction": 0.0555
+        }
+      }
+    },
+    {
+      "reservoir_id": "HP0014511190000203_6",
+      "name": "狮洞水库",
+      "local_lon": 111.418701,
+      "local_lat": 24.277801,
+      "current_geometry_type": "Point",
+      "current_geometry_source": "local_inventory_with_osm_dam_match",
+      "current_osm_ref": "way/844935882",
+      "hydrolakes": {
+        "match_status": "matched",
+        "distance_m": 54.7,
+        "inside": false,
+        "hylak_id": 1386726,
+        "lake_name": null,
+        "lake_area_km2": 0.74,
+        "lake_type": 1,
+        "geometry_type": "Polygon"
+      },
+      "jrc_gsw": {
+        "extent_at_point": 0.0,
+        "occurrence_at_point": 0.0,
+        "recurrence_at_point": 0.0,
+        "seasonality_at_point": 0.0
+      },
+      "esa_worldcover": {
+        "tile": "domains/flood/data/sources/esa_worldcover/ESA_WorldCover_10m_2021_v200_N24E111_Map.tif",
+        "class_at_point": 50,
+        "water_at_point": false,
+        "water_within_100m": {
+          "has_water": true,
+          "water_pixels": 174,
+          "checked_pixels": 483,
+          "water_fraction": 0.3602
+        },
+        "water_within_300m": {
+          "has_water": true,
+          "water_pixels": 1084,
+          "checked_pixels": 4615,
+          "water_fraction": 0.2349
+        },
+        "water_within_1000m": {
+          "has_water": true,
+          "water_pixels": 6411,
+          "checked_pixels": 50955,
+          "water_fraction": 0.1258
+        }
+      }
+    },
+    {
+      "reservoir_id": "HP0014504210000154_7",
+      "name": "爽岛水库",
+      "local_lon": 111.46332974475278,
+      "local_lat": 23.810597397780867,
+      "current_geometry_type": "Point",
+      "current_geometry_source": "local_inventory_with_osm_dam_match",
+      "current_osm_ref": "way/151117718",
+      "hydrolakes": {
+        "match_status": "matched",
+        "distance_m": 226.58,
+        "inside": false,
+        "hylak_id": 177374,
+        "lake_name": null,
+        "lake_area_km2": 4.34,
+        "lake_type": 2,
+        "geometry_type": "Polygon"
+      },
+      "jrc_gsw": {
+        "extent_at_point": 0.0,
+        "occurrence_at_point": 0.0,
+        "recurrence_at_point": 0.0,
+        "seasonality_at_point": 0.0
+      },
+      "esa_worldcover": {
+        "tile": "domains/flood/data/sources/esa_worldcover/ESA_WorldCover_10m_2021_v200_N21E111_Map.tif",
+        "class_at_point": 80,
+        "water_at_point": true,
+        "water_within_100m": {
+          "has_water": true,
+          "water_pixels": 37,
+          "checked_pixels": 483,
+          "water_fraction": 0.0766
+        },
+        "water_within_300m": {
+          "has_water": true,
+          "water_pixels": 519,
+          "checked_pixels": 4615,
+          "water_fraction": 0.1125
+        },
+        "water_within_1000m": {
+          "has_water": true,
+          "water_pixels": 3621,
+          "checked_pixels": 50525,
+          "water_fraction": 0.0717
+        }
+      }
+    },
+    {
+      "reservoir_id": "HP0014511230000606_8",
+      "name": "砂龙冲水库",
+      "local_lon": 111.42666666666663,
+      "local_lat": 24.67194444444453,
+      "current_geometry_type": "Point",
+      "current_geometry_source": "local_inventory_with_osm_dam_match",
+      "current_osm_ref": "way/843952346",
+      "hydrolakes": {
+        "match_status": "candidate",
+        "distance_m": 979.37,
+        "inside": false,
+        "hylak_id": 1386107,
+        "lake_name": null,
+        "lake_area_km2": 0.23,
+        "lake_type": 1,
+        "geometry_type": "Polygon"
+      },
+      "jrc_gsw": {
+        "extent_at_point": 1.0,
+        "occurrence_at_point": 68.0,
+        "recurrence_at_point": 96.0,
+        "seasonality_at_point": 4.0
+      },
+      "esa_worldcover": {
+        "tile": "domains/flood/data/sources/esa_worldcover/ESA_WorldCover_10m_2021_v200_N24E111_Map.tif",
+        "class_at_point": 30,
+        "water_at_point": false,
+        "water_within_100m": {
+          "has_water": true,
+          "water_pixels": 137,
+          "checked_pixels": 483,
+          "water_fraction": 0.2836
+        },
+        "water_within_300m": {
+          "has_water": true,
+          "water_pixels": 612,
+          "checked_pixels": 4615,
+          "water_fraction": 0.1326
+        },
+        "water_within_1000m": {
+          "has_water": true,
+          "water_pixels": 1241,
+          "checked_pixels": 50955,
+          "water_fraction": 0.0244
+        }
+      }
+    },
+    {
+      "reservoir_id": "HP0014511190000040_9",
+      "name": "大姚水库",
+      "local_lon": 111.35220243481228,
+      "local_lat": 24.210238497915377,
+      "current_geometry_type": "Point",
+      "current_geometry_source": "local_inventory_with_osm_reservoir_match",
+      "current_osm_ref": "relation/11589310",
+      "hydrolakes": {
+        "match_status": "weak_candidate",
+        "distance_m": 5558.29,
+        "inside": false,
+        "hylak_id": 1386874,
+        "lake_name": null,
+        "lake_area_km2": 0.21,
+        "lake_type": 1,
+        "geometry_type": "Polygon"
+      },
+      "jrc_gsw": {
+        "extent_at_point": 0.0,
+        "occurrence_at_point": 0.0,
+        "recurrence_at_point": 0.0,
+        "seasonality_at_point": 0.0
+      },
+      "esa_worldcover": {
+        "tile": "domains/flood/data/sources/esa_worldcover/ESA_WorldCover_10m_2021_v200_N24E111_Map.tif",
+        "class_at_point": 50,
+        "water_at_point": false,
+        "water_within_100m": {
+          "has_water": true,
+          "water_pixels": 220,
+          "checked_pixels": 483,
+          "water_fraction": 0.4555
+        },
+        "water_within_300m": {
+          "has_water": true,
+          "water_pixels": 1181,
+          "checked_pixels": 4615,
+          "water_fraction": 0.2559
+        },
+        "water_within_1000m": {
+          "has_water": true,
+          "water_pixels": 1456,
+          "checked_pixels": 50955,
+          "water_fraction": 0.0286
+        }
+      }
+    },
+    {
+      "reservoir_id": "HP0014511220000113_10",
+      "name": "花山水库",
+      "local_lon": 111.127663,
+      "local_lat": 24.560555,
+      "current_geometry_type": "Point",
+      "current_geometry_source": "local_inventory_with_osm_reservoir_match",
+      "current_osm_ref": "relation/11580522",
+      "hydrolakes": {
+        "match_status": "matched",
+        "distance_m": 69.39,
+        "inside": false,
+        "hylak_id": 177249,
+        "lake_name": null,
+        "lake_area_km2": 1.12,
+        "lake_type": 1,
+        "geometry_type": "Polygon"
+      },
+      "jrc_gsw": {
+        "extent_at_point": 0.0,
+        "occurrence_at_point": 0.0,
+        "recurrence_at_point": 0.0,
+        "seasonality_at_point": 0.0
+      },
+      "esa_worldcover": {
+        "tile": "domains/flood/data/sources/esa_worldcover/ESA_WorldCover_10m_2021_v200_N24E111_Map.tif",
+        "class_at_point": 50,
+        "water_at_point": false,
+        "water_within_100m": {
+          "has_water": true,
+          "water_pixels": 67,
+          "checked_pixels": 483,
+          "water_fraction": 0.1387
+        },
+        "water_within_300m": {
+          "has_water": true,
+          "water_pixels": 1117,
+          "checked_pixels": 4615,
+          "water_fraction": 0.242
+        },
+        "water_within_1000m": {
+          "has_water": true,
+          "water_pixels": 6480,
+          "checked_pixels": 50955,
+          "water_fraction": 0.1272
+        }
+      }
+    },
+    {
+      "reservoir_id": "HP0014511230000261_11",
+      "name": "横塘水库",
+      "local_lon": 111.32383682536229,
+      "local_lat": 24.857831925553207,
+      "current_geometry_type": "Point",
+      "current_geometry_source": "local_inventory",
+      "current_osm_ref": "",
+      "hydrolakes": {
+        "match_status": "matched",
+        "distance_m": 52.44,
+        "inside": false,
+        "hylak_id": 1385651,
+        "lake_name": null,
+        "lake_area_km2": 0.81,
+        "lake_type": 1,
+        "geometry_type": "Polygon"
+      },
+      "jrc_gsw": {
+        "extent_at_point": 0.0,
+        "occurrence_at_point": 0.0,
+        "recurrence_at_point": 0.0,
+        "seasonality_at_point": 0.0
+      },
+      "esa_worldcover": {
+        "tile": "domains/flood/data/sources/esa_worldcover/ESA_WorldCover_10m_2021_v200_N24E111_Map.tif",
+        "class_at_point": 30,
+        "water_at_point": false,
+        "water_within_100m": {
+          "has_water": true,
+          "water_pixels": 180,
+          "checked_pixels": 483,
+          "water_fraction": 0.3727
+        },
+        "water_within_300m": {
+          "has_water": true,
+          "water_pixels": 1346,
+          "checked_pixels": 4615,
+          "water_fraction": 0.2917
+        },
+        "water_within_1000m": {
+          "has_water": true,
+          "water_pixels": 9231,
+          "checked_pixels": 50955,
+          "water_fraction": 0.1812
+        }
+      }
+    },
+    {
+      "reservoir_id": "HP0014511210000056_12",
+      "name": "良佑水库",
+      "local_lon": 111.09736,
+      "local_lat": 24.07813,
+      "current_geometry_type": "Point",
+      "current_geometry_source": "local_inventory_with_osm_reservoir_match",
+      "current_osm_ref": "relation/11583638",
+      "hydrolakes": {
+        "match_status": "weak_candidate",
+        "distance_m": 14757.06,
+        "inside": false,
+        "hylak_id": 1387105,
+        "lake_name": null,
+        "lake_area_km2": 0.11,
+        "lake_type": 1,
+        "geometry_type": "Polygon"
+      },
+      "jrc_gsw": {
+        "extent_at_point": 1.0,
+        "occurrence_at_point": 62.0,
+        "recurrence_at_point": 96.0,
+        "seasonality_at_point": 0.0
+      },
+      "esa_worldcover": {
+        "tile": "domains/flood/data/sources/esa_worldcover/ESA_WorldCover_10m_2021_v200_N24E111_Map.tif",
+        "class_at_point": 10,
+        "water_at_point": false,
+        "water_within_100m": {
+          "has_water": true,
+          "water_pixels": 59,
+          "checked_pixels": 483,
+          "water_fraction": 0.1222
+        },
+        "water_within_300m": {
+          "has_water": true,
+          "water_pixels": 59,
+          "checked_pixels": 4615,
+          "water_fraction": 0.0128
+        },
+        "water_within_1000m": {
+          "has_water": true,
+          "water_pixels": 367,
+          "checked_pixels": 50955,
+          "water_fraction": 0.0072
+        }
+      }
+    },
+    {
+      "reservoir_id": "HP0014511230000659_13",
+      "name": "鸟源水库",
+      "local_lon": 111.11033757682546,
+      "local_lat": 24.99038442665129,
+      "current_geometry_type": "Polygon",
+      "current_geometry_source": "osm_reservoir_area",
+      "current_osm_ref": "way/839624103",
+      "hydrolakes": {
+        "match_status": "weak_candidate",
+        "distance_m": 4075.9,
+        "inside": false,
+        "hylak_id": 1385361,
+        "lake_name": null,
+        "lake_area_km2": 0.53,
+        "lake_type": 1,
+        "geometry_type": "Polygon"
+      },
+      "jrc_gsw": {
+        "extent_at_point": 0.0,
+        "occurrence_at_point": 0.0,
+        "recurrence_at_point": 0.0,
+        "seasonality_at_point": 0.0
+      },
+      "esa_worldcover": {
+        "tile": "domains/flood/data/sources/esa_worldcover/ESA_WorldCover_10m_2021_v200_N24E111_Map.tif",
+        "class_at_point": 30,
+        "water_at_point": false,
+        "water_within_100m": {
+          "has_water": true,
+          "water_pixels": 100,
+          "checked_pixels": 483,
+          "water_fraction": 0.207
+        },
+        "water_within_300m": {
+          "has_water": true,
+          "water_pixels": 470,
+          "checked_pixels": 4615,
+          "water_fraction": 0.1018
+        },
+        "water_within_1000m": {
+          "has_water": true,
+          "water_pixels": 1699,
+          "checked_pixels": 50955,
+          "water_fraction": 0.0333
+        }
+      }
+    },
+    {
+      "reservoir_id": "HP0014511190000093_14",
+      "name": "盘谷水库",
+      "local_lon": 111.51741,
+      "local_lat": 24.29985,
+      "current_geometry_type": "Point",
+      "current_geometry_source": "local_inventory_with_osm_dam_match",
+      "current_osm_ref": "way/844985206",
+      "hydrolakes": {
+        "match_status": "matched",
+        "distance_m": 76.18,
+        "inside": false,
+        "hylak_id": 1386691,
+        "lake_name": null,
+        "lake_area_km2": 0.14,
+        "lake_type": 1,
+        "geometry_type": "Polygon"
+      },
+      "jrc_gsw": {
+        "extent_at_point": 0.0,
+        "occurrence_at_point": 0.0,
+        "recurrence_at_point": 0.0,
+        "seasonality_at_point": 0.0
+      },
+      "esa_worldcover": {
+        "tile": "domains/flood/data/sources/esa_worldcover/ESA_WorldCover_10m_2021_v200_N24E111_Map.tif",
+        "class_at_point": 30,
+        "water_at_point": false,
+        "water_within_100m": {
+          "has_water": true,
+          "water_pixels": 80,
+          "checked_pixels": 483,
+          "water_fraction": 0.1656
+        },
+        "water_within_300m": {
+          "has_water": true,
+          "water_pixels": 667,
+          "checked_pixels": 4615,
+          "water_fraction": 0.1445
+        },
+        "water_within_1000m": {
+          "has_water": true,
+          "water_pixels": 2170,
+          "checked_pixels": 50955,
+          "water_fraction": 0.0426
+        }
+      }
+    },
+    {
+      "reservoir_id": "HP0014511020000327_15",
+      "name": "沙冲水库",
+      "local_lon": 111.80305268434014,
+      "local_lat": 23.925680274035546,
+      "current_geometry_type": "Point",
+      "current_geometry_source": "local_inventory_with_osm_dam_match",
+      "current_osm_ref": "way/258295414",
+      "hydrolakes": {
+        "match_status": "weak_candidate",
+        "distance_m": 5917.95,
+        "inside": false,
+        "hylak_id": 1387195,
+        "lake_name": null,
+        "lake_area_km2": 0.52,
+        "lake_type": 1,
+        "geometry_type": "Polygon"
+      },
+      "jrc_gsw": {
+        "extent_at_point": 0.0,
+        "occurrence_at_point": 0.0,
+        "recurrence_at_point": 0.0,
+        "seasonality_at_point": 0.0
+      },
+      "esa_worldcover": {
+        "tile": "domains/flood/data/sources/esa_worldcover/ESA_WorldCover_10m_2021_v200_N21E111_Map.tif",
+        "class_at_point": 50,
+        "water_at_point": false,
+        "water_within_100m": {
+          "has_water": true,
+          "water_pixels": 89,
+          "checked_pixels": 483,
+          "water_fraction": 0.1843
+        },
+        "water_within_300m": {
+          "has_water": true,
+          "water_pixels": 534,
+          "checked_pixels": 4615,
+          "water_fraction": 0.1157
+        },
+        "water_within_1000m": {
+          "has_water": true,
+          "water_pixels": 1518,
+          "checked_pixels": 50525,
+          "water_fraction": 0.03
+        }
+      }
+    },
+    {
+      "reservoir_id": "HP0014511190000237_16",
+      "name": "桂山水库",
+      "local_lon": 111.478901,
+      "local_lat": 24.291401,
+      "current_geometry_type": "Point",
+      "current_geometry_source": "local_inventory",
+      "current_osm_ref": "",
+      "hydrolakes": {
+        "match_status": "matched",
+        "distance_m": 32.98,
+        "inside": false,
+        "hylak_id": 1386706,
+        "lake_name": null,
+        "lake_area_km2": 0.19,
+        "lake_type": 1,
+        "geometry_type": "Polygon"
+      },
+      "jrc_gsw": {
+        "extent_at_point": 1.0,
+        "occurrence_at_point": 33.0,
+        "recurrence_at_point": 89.0,
+        "seasonality_at_point": 2.0
+      },
+      "esa_worldcover": {
+        "tile": "domains/flood/data/sources/esa_worldcover/ESA_WorldCover_10m_2021_v200_N24E111_Map.tif",
+        "class_at_point": 50,
+        "water_at_point": false,
+        "water_within_100m": {
+          "has_water": true,
+          "water_pixels": 195,
+          "checked_pixels": 483,
+          "water_fraction": 0.4037
+        },
+        "water_within_300m": {
+          "has_water": true,
+          "water_pixels": 1408,
+          "checked_pixels": 4615,
+          "water_fraction": 0.3051
+        },
+        "water_within_1000m": {
+          "has_water": true,
+          "water_pixels": 2828,
+          "checked_pixels": 50955,
+          "water_fraction": 0.0555
+        }
+      }
+    },
+    {
+      "reservoir_id": "HP0014511190000203_17",
+      "name": "狮洞水库",
+      "local_lon": 111.418701,
+      "local_lat": 24.277801,
+      "current_geometry_type": "Point",
+      "current_geometry_source": "local_inventory",
+      "current_osm_ref": "",
+      "hydrolakes": {
+        "match_status": "matched",
+        "distance_m": 54.7,
+        "inside": false,
+        "hylak_id": 1386726,
+        "lake_name": null,
+        "lake_area_km2": 0.74,
+        "lake_type": 1,
+        "geometry_type": "Polygon"
+      },
+      "jrc_gsw": {
+        "extent_at_point": 0.0,
+        "occurrence_at_point": 0.0,
+        "recurrence_at_point": 0.0,
+        "seasonality_at_point": 0.0
+      },
+      "esa_worldcover": {
+        "tile": "domains/flood/data/sources/esa_worldcover/ESA_WorldCover_10m_2021_v200_N24E111_Map.tif",
+        "class_at_point": 50,
+        "water_at_point": false,
+        "water_within_100m": {
+          "has_water": true,
+          "water_pixels": 174,
+          "checked_pixels": 483,
+          "water_fraction": 0.3602
+        },
+        "water_within_300m": {
+          "has_water": true,
+          "water_pixels": 1084,
+          "checked_pixels": 4615,
+          "water_fraction": 0.2349
+        },
+        "water_within_1000m": {
+          "has_water": true,
+          "water_pixels": 6411,
+          "checked_pixels": 50955,
+          "water_fraction": 0.1258
+        }
+      }
+    }
+  ]
+}

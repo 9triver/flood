@@ -7,6 +7,11 @@ agent/.venv/
 
 # Domain/runtime generated outputs
 domains/flood/data/generated/
+domains/flood/data/spatial/
+domains/flood/data/sources/hydrolakes/*.zip
+domains/flood/data/sources/esa_worldcover/*.tif
+domains/flood/data/sources/esa_worldcover/derived/*_clip.tif
+domains/flood/data/sources/jrc_gsw/*.tif
 
 # Local domain tool secrets
 domains/tools/.env

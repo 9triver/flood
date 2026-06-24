@@ -1,0 +1,77 @@
+{
+  "generated_at": "2026-06-24T02:01:20.013733+00:00",
+  "notes": [
+    "Cell inundation geometries are intentionally not materialized as JSONL; they remain scenario spatial sources exported on demand."
+  ],
+  "object_types": {
+    "Bridge": {
+      "count": 44,
+      "path": "domains/flood/data/objects/bridge.jsonl"
+    },
+    "County": {
+      "count": 3,
+      "path": "domains/flood/data/objects/county.jsonl"
+    },
+    "Facility": {
+      "count": 106,
+      "path": "domains/flood/data/objects/facility.jsonl"
+    },
+    "HydraulicStructure": {
+      "count": 40,
+      "path": "domains/flood/data/objects/hydraulic_structure.jsonl"
+    },
+    "Hydrology": {
+      "count": 20,
+      "path": "domains/flood/data/objects/hydrology.jsonl"
+    },
+    "Impact": {
+      "count": 5,
+      "path": "domains/flood/data/objects/impact.jsonl"
+    },
+    "Place": {
+      "count": 719,
+      "path": "domains/flood/data/objects/place.jsonl"
+    },
+    "Reservoir": {
+      "count": 17,
+      "path": "domains/flood/data/objects/reservoir.jsonl"
+    },
+    "River": {
+      "count": 1,
+      "path": "domains/flood/data/objects/river.jsonl"
+    },
+    "Road": {
+      "count": 423,
+      "path": "domains/flood/data/objects/road.jsonl"
+    },
+    "Route": {
+      "count": 10,
+      "path": "domains/flood/data/objects/route.jsonl"
+    },
+    "Scenario": {
+      "count": 5,
+      "path": "domains/flood/data/objects/scenario.jsonl"
+    },
+    "Sluice": {
+      "count": 3,
+      "path": "domains/flood/data/objects/sluice.jsonl"
+    },
+    "Town": {
+      "count": 7,
+      "path": "domains/flood/data/objects/town.jsonl"
+    },
+    "Transfer": {
+      "count": 10,
+      "path": "domains/flood/data/objects/transfer.jsonl"
+    },
+    "Watershed": {
+      "count": 1,
+      "path": "domains/flood/data/objects/watershed.jsonl"
+    },
+    "Waterway": {
+      "count": 15,
+      "path": "domains/flood/data/objects/waterway.jsonl"
+    }
+  },
+  "source_data": "珊瑚河数据"
+}
