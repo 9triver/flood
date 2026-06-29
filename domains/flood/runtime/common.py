@@ -29,10 +29,19 @@ OBJECT_LIBRARY_FILES = {
     "Route": "route.jsonl",
     "Scenario": "scenario.jsonl",
     "Impact": "impact.jsonl",
+    "Risk": "risk.jsonl",
+    "HydroStation": "hydro_station.jsonl",
+    "HydroObservation": "hydro_observation.jsonl",
+    "HistoricalFloodMark": "historical_flood_mark.jsonl",
     "Hydrology": "hydrology.jsonl",
 }
 
 MAPPABLE_OBJECTS = {
+    "River": {
+        "label": "珊瑚河",
+        "role": "base",
+        "style": {"type": "line", "color": "#0e7490", "weight": 4},
+    },
     "Watershed": {
         "label": "珊瑚河流域",
         "role": "base",
@@ -93,10 +102,30 @@ MAPPABLE_OBJECTS = {
         "role": "evacuation",
         "style": {"type": "line", "color": "#ef4444", "weight": 3},
     },
+    "Risk": {
+        "label": "危险区",
+        "role": "risk",
+        "style": {"type": "circle", "color": "#b91c1c", "radius": 5, "stroke": "#ffffff"},
+    },
+    "HydroStation": {
+        "label": "水文测站",
+        "role": "hydrology",
+        "style": {"type": "circle", "color": "#0284c7", "radius": 5, "stroke": "#ffffff"},
+    },
+    "HistoricalFloodMark": {
+        "label": "历史洪痕",
+        "role": "hydrology",
+        "style": {"type": "circle", "color": "#be123c", "radius": 4, "stroke": "#ffffff"},
+    },
     "Cell": {
         "label": "洪水计算单元",
         "role": "scenario",
         "style": {"type": "fill", "fillColor": "#4292c6", "fillOpacity": 0.35, "color": "#4292c6", "weight": 0.5},
+    },
+    "ForecastCell": {
+        "label": "预测淹没单元",
+        "role": "forecast",
+        "style": {"type": "fill", "fillColor": "#7c3aed", "fillOpacity": 0.34, "color": "#7c3aed", "weight": 0.5},
     },
 }
 
@@ -157,6 +186,12 @@ def id_field(object_type: str) -> str:
         "Route": "route_id",
         "Scenario": "scenario_id",
         "Impact": "impact_id",
+        "Risk": "risk_id",
+        "HydroStation": "station_id",
+        "HydroObservation": "observation_id",
+        "HistoricalFloodMark": "mark_id",
+        "ForecastRun": "forecast_id",
+        "ForecastCell": "forecast_cell_id",
         "Hydrology": "hydrology_id",
     }.get(object_type, f"{object_type.lower()}_id")
 

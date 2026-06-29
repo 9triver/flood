@@ -39,26 +39,58 @@ class FloodObjectBuilder:
 
     def _build_river(self) -> list[dict]:
         watershed = self.build("Watershed")[0]
+        path = DATA_DIR / "珊瑚河河道中心线/珊瑚河河道中心线.shp"
+        features = _features(path)
+        feature = features[0] if features else {}
+        props = feature.get("properties") or {}
         return [{
             "river_id": "shanhu",
-            "name": "珊瑚河",
+            "name": _first_non_empty(props, "名称", "name") or "珊瑚河",
+            "water_system": _first_non_empty(props, "所属水") or "西江水系",
             "watershed_id": watershed["watershed_id"],
             "watershed_name": watershed["name"],
-            "data_note": "OSM 未检索到命名为珊瑚河/Shanhu River 的 waterway 主体；河道绘制使用 Waterway 候选对象。",
+            "geometry_source": "local_river_centerline",
+            **_geometry_fields(feature),
+            "data_path": rel(path) if features else "",
+            "data_note": "河流主体使用本地珊瑚河河道中心线；OSM waterway 候选对象保留为 Waterway 补充水系。",
         }]
 
     def _build_watershed(self) -> list[dict]:
+        rows = []
         path = DATA_DIR / "1.流域边界/珊瑚河流域范围.shp"
-        feature = _features(path)
-        geo = _geometry_fields(feature[0]) if feature else {}
-        return [{
+        features = _features(path)
+        feature = features[0] if features else {}
+        rows.append({
             "watershed_id": "shanhu_watershed",
             "river_id": "shanhu",
             "name": "珊瑚河流域",
-            "crs": "EPSG:2434",
-            **geo,
+            "watershed_type": "flood_risk_basin",
+            **_geometry_fields(feature),
             "data_path": rel(path),
-        }]
+        })
+
+        guijiang_path = DATA_DIR / "广西西江水系桂江053小流域/广西西江水系桂江053.shp"
+        for feature in _features(guijiang_path):
+            props = feature.get("properties") or {}
+            rows.append({
+                "watershed_id": _code(_first_non_empty(props, "WSCD")) or "guijiang_053",
+                "river_id": "shanhu",
+                "name": _first_non_empty(props, "WSNM") or "广西西江水系桂江053小流域",
+                "watershed_type": "small_watershed",
+                "area_km2": _float(_first_non_empty(props, "WSAREA")),
+                "districts": _first_non_empty(props, "区县") or "",
+                "town_count": int(_float(_first_non_empty(props, "乡镇"))),
+                "village_count": int(_float(_first_non_empty(props, "行政村"))),
+                "natural_village_count": int(_float(_first_non_empty(props, "自然村"))),
+                "enterprise_count": int(_float(_first_non_empty(props, "企业"))),
+                "danger_area_count": int(_float(_first_non_empty(props, "危险区"))),
+                "population": int(_float(_first_non_empty(props, "人口"))),
+                "household_count": int(_float(_first_non_empty(props, "家庭"))),
+                "high_risk_flag": _first_non_empty(props, "高风险") or "",
+                **_geometry_fields(feature),
+                "data_path": rel(guijiang_path),
+            })
+        return rows
 
     def _build_waterway(self) -> list[dict]:
         watershed = self.build("Watershed")[0]
@@ -94,6 +126,8 @@ class FloodObjectBuilder:
                 "inside_basin_ratio": round(inside_length_m / length_m, 4) if length_m else 0,
                 "candidate_status": "osm_unnamed_candidate" if not (tags.get("name") or tags.get("name:zh")) else "osm_named_neighbor",
                 "geometry_type": "LineString",
+                "source_crs": "EPSG:4326",
+                "geometry_crs": "EPSG:4326",
                 "geometry": json.dumps({
                     "type": "LineString",
                     "coordinates": [[lon, lat] for lon, lat in coords],
@@ -319,6 +353,274 @@ class FloodObjectBuilder:
         wb.close()
         return rows
 
+    def _build_risk(self) -> list[dict]:
+        path = DATA_DIR / "危险区-珊瑚河流域/危险区-珊瑚河流域.dbf"
+        if not path.exists():
+            return []
+        rows = []
+        for i, feature in enumerate(_features(path), 1):
+            props = feature.get("properties") or {}
+            risk_id = _code(_first_non_empty(props, "序号")) or f"danger_area_{i}"
+            village_code = _code(_first_non_empty(props, "自然屯"))
+            village = _first_non_empty(props, "自然村") or f"危险区{i}"
+            lon, lat = _float(_first_non_empty(props, "经度")), _float(_first_non_empty(props, "纬度"))
+            geometry = {"type": "Point", "coordinates": [lon, lat]} if lon and lat else {}
+            rows.append({
+                "risk_id": f"danger_area_{risk_id}",
+                "scenario_id": "",
+                "target_type": "Settlement",
+                "target_id": village_code or risk_id,
+                "name": village,
+                "risk_type": "danger_area",
+                "risk_level": "unknown",
+                "city": _first_non_empty(props, "市") or "",
+                "county_name": _first_non_empty(props, "县_区") or "",
+                "town_name": _first_non_empty(props, "乡镇_") or "",
+                "village_committee": _first_non_empty(props, "行政村") or "",
+                "natural_village": village,
+                "longitude": lon,
+                "latitude": lat,
+                "evidence": "危险区-珊瑚河流域 DBF 台账记录，包含经纬度字段；原目录缺少 .shp 主文件，按经纬度生成点 geometry。",
+                "data_quality": "table_record",
+                "recommended_action": "纳入洪水预警、转移通知和现场核查清单。",
+                "source": "local_danger_area_inventory",
+                "source_crs": "EPSG:4326",
+                "geometry_crs": "EPSG:4326" if geometry else "",
+                "geometry_type": geometry.get("type", ""),
+                "geometry": json.dumps(geometry, ensure_ascii=False) if geometry else "",
+                "data_path": rel(path),
+            })
+        return rows
+
+    def _build_hydrostation(self) -> list[dict]:
+        stations = [
+            {
+                "station_id": "hydro_station_longtan",
+                "river_id": "shanhu",
+                "name": "龙潭水库站",
+                "alias": "龙潭",
+                "station_type": "reservoir_hydro_rainfall",
+                "location": "钟山县珊瑚镇龙潭水库坝首",
+                "longitude": _dms_to_decimal(111, 22),
+                "latitude": _dms_to_decimal(24, 23),
+                "established_year": 1973,
+                "observation_items": "rainfall,water_level,outflow",
+                "record_period": "1973~1974、1976~2020年最大一日降雨；1973年起降雨和库水位；1983年起由发电、灌溉用水反推出库流量。",
+                "data_availability": "summary_only",
+                "source": "洪水风险图水文分析专题（珊瑚河）.md: 1.3水文资料、3.1测站基本资料",
+            },
+            {
+                "station_id": "hydro_station_zhongshan_huilong",
+                "river_id": "shanhu",
+                "name": "钟山回龙雨量站",
+                "alias": "钟山回龙",
+                "station_type": "rainfall",
+                "location": "钟山县回龙镇回龙村",
+                "longitude": _dms_to_decimal(111, 17),
+                "latitude": _dms_to_decimal(24, 27),
+                "established_year": 1966,
+                "observation_items": "rainfall",
+                "record_period": "1977年至今降雨观测资料。",
+                "data_availability": "metadata_only",
+                "source": "洪水风险图水文分析专题（珊瑚河）.md: 3.1测站基本资料",
+            },
+            {
+                "station_id": "hydro_station_tonggu",
+                "river_id": "shanhu",
+                "name": "同古雨量站",
+                "alias": "同古",
+                "station_type": "rainfall",
+                "location": "钟山县同古镇同古村",
+                "longitude": _dms_to_decimal(111, 13),
+                "latitude": _dms_to_decimal(24, 23),
+                "established_year": 1956,
+                "observation_items": "rainfall",
+                "record_period": "1958年至今降雨观测资料。",
+                "data_availability": "metadata_only",
+                "source": "洪水风险图水文分析专题（珊瑚河）.md: 3.1测站基本资料",
+            },
+            {
+                "station_id": "weather_station_zhongshan",
+                "river_id": "shanhu",
+                "name": "钟山县气象站",
+                "alias": "钟山县",
+                "station_type": "weather",
+                "location": "钟山县城区",
+                "longitude": _dms_to_decimal(111, 18),
+                "latitude": _dms_to_decimal(24, 31),
+                "elevation_m": 150.0,
+                "established_year": 1960,
+                "observation_items": "rainfall,temperature,wind_speed,evaporation",
+                "record_period": "1960年设站；1990年以前人工观测，1990年以后自记式观测。",
+                "data_availability": "metadata_only",
+                "source": "洪水风险图水文分析专题（珊瑚河）.md: 3.1测站基本资料",
+            },
+        ]
+        for row in stations:
+            geometry = {"type": "Point", "coordinates": [row["longitude"], row["latitude"]]}
+            row.update({
+                "source_crs": "EPSG:4326",
+                "geometry_crs": "EPSG:4326",
+                "geometry_type": "Point",
+                "geometry": json.dumps(geometry, ensure_ascii=False),
+            })
+        return stations
+
+    def _build_hydroobservation(self) -> list[dict]:
+        return [
+            {
+                "observation_id": "obs_longtan_daily_max_rainfall_1973_2020",
+                "station_id": "hydro_station_longtan",
+                "river_id": "shanhu",
+                "observation_type": "annual_max_1d_rainfall_series",
+                "metric": "annual_max_1d_rainfall",
+                "unit": "mm",
+                "start_year": 1973,
+                "end_year": 2020,
+                "missing_years": "1975",
+                "record_count": 47,
+                "value": 119.41,
+                "value_stat": "mean",
+                "description": "报告说明收集统计龙潭水库站1973年至2015年（缺1975年）年最大24h降雨量用于频率计算；水文资料章节列出1973~1974年、1976~2020年的年最大一日降雨资料。对象库记录均值和资料系列说明，不含逐年原始序列。",
+                "data_availability": "summary_without_raw_series",
+                "source": "洪水风险图水文分析专题（珊瑚河）.md: 1.3水文资料、3.2.2.1设计暴雨",
+            },
+            {
+                "observation_id": "obs_longtan_water_level_since_1973",
+                "station_id": "hydro_station_longtan",
+                "river_id": "shanhu",
+                "observation_type": "reservoir_water_level_series",
+                "metric": "reservoir_water_level",
+                "unit": "m",
+                "start_year": 1973,
+                "description": "龙潭水库站1973年开始观测库水位资料，每天8时观测一次；当前本地数据未包含逐日水位序列。",
+                "data_availability": "metadata_only",
+                "source": "洪水风险图水文分析专题（珊瑚河）.md: 3.1测站基本资料",
+            },
+            {
+                "observation_id": "obs_longtan_outflow_since_1983",
+                "station_id": "hydro_station_longtan",
+                "river_id": "shanhu",
+                "observation_type": "reservoir_outflow_series",
+                "metric": "reservoir_outflow",
+                "unit": "m3/s",
+                "start_year": 1983,
+                "description": "龙潭水库站1983年开始观测/整编出库流量资料，由发电、灌溉用水反推出库流量；当前本地数据未包含逐日出库流量序列。",
+                "data_availability": "metadata_only",
+                "source": "洪水风险图水文分析专题（珊瑚河）.md: 3.1测站基本资料",
+            },
+            {
+                "observation_id": "obs_zhongshan_huilong_rainfall_since_1977",
+                "station_id": "hydro_station_zhongshan_huilong",
+                "river_id": "shanhu",
+                "observation_type": "rainfall_series",
+                "metric": "rainfall",
+                "unit": "mm",
+                "start_year": 1977,
+                "description": "钟山回龙雨量站统计有1977年至今降雨观测资料；当前本地数据未包含原始时序。",
+                "data_availability": "metadata_only",
+                "source": "洪水风险图水文分析专题（珊瑚河）.md: 3.1测站基本资料",
+            },
+            {
+                "observation_id": "obs_tonggu_rainfall_since_1958",
+                "station_id": "hydro_station_tonggu",
+                "river_id": "shanhu",
+                "observation_type": "rainfall_series",
+                "metric": "rainfall",
+                "unit": "mm",
+                "start_year": 1958,
+                "description": "同古雨量站统计有1958年至今降雨观测资料；当前本地数据未包含原始时序。",
+                "data_availability": "metadata_only",
+                "source": "洪水风险图水文分析专题（珊瑚河）.md: 3.1测站基本资料",
+            },
+            {
+                "observation_id": "obs_zhongshan_weather_climate_summary",
+                "station_id": "weather_station_zhongshan",
+                "river_id": "shanhu",
+                "observation_type": "climate_summary",
+                "metric": "multi_year_rainfall",
+                "unit": "mm",
+                "start_year": 1960,
+                "value": 1550.0,
+                "value_stat": "multi_year_mean",
+                "description": "钟山县气象站多年平均降雨量1550mm，1973年最多2371mm，1984年最少1091.2mm；当前对象库记录摘要，不含逐年原始序列。",
+                "data_availability": "summary_without_raw_series",
+                "source": "洪水风险图水文分析专题（珊瑚河）.md: 2.流域概况、3.1测站基本资料",
+            },
+        ]
+
+    def _build_historicalfloodmark(self) -> list[dict]:
+        marks = [
+            {
+                "mark_id": "flood_mark_2024_xinzhu_tianchang",
+                "river_id": "shanhu",
+                "event_year": 2024,
+                "location": "新竹村田厂村",
+                "description": "最大淹没房门顶，每年都会淹没到房子路面。",
+                "elevation_m": 147.1,
+                "reliability": "survey_record",
+                "source": "45050092_珊瑚河洪水风险图成果报告（附审查意见）.md: 表2-5-1",
+            },
+            {
+                "mark_id": "flood_mark_2024_fengxiang",
+                "river_id": "shanhu",
+                "event_year": 2024,
+                "location": "凤翔村",
+                "description": "老戏台后面，淹没到膝盖。",
+                "elevation_m": 191.56,
+                "reliability": "survey_record",
+                "source": "45050092_珊瑚河洪水风险图成果报告（附审查意见）.md: 表2-5-1",
+            },
+            {
+                "mark_id": "flood_mark_2022_huilong_school",
+                "river_id": "shanhu",
+                "event_year": 2022,
+                "location": "回龙镇中心小学",
+                "description": "淹没告示牌。",
+                "elevation_m": 173.68,
+                "reliability": "survey_record",
+                "source": "45050092_珊瑚河洪水风险图成果报告（附审查意见）.md: 表2-5-1",
+            },
+            {
+                "mark_id": "flood_mark_2022_shipai_bridge",
+                "river_id": "shanhu",
+                "event_year": 2022,
+                "location": "十排村交通桥",
+                "description": "淹没十排村交通桥桥面。",
+                "elevation_m": 150.1,
+                "reliability": "基本可靠",
+                "source": "洪水风险图水文分析专题（珊瑚河）.md: 表3-2-1",
+            },
+            {
+                "mark_id": "flood_mark_2022_guangying_bridge",
+                "river_id": "shanhu",
+                "event_year": 2022,
+                "location": "广营铁桥",
+                "description": "淹没广营铁桥桥面。",
+                "elevation_m": 147.02,
+                "reliability": "基本可靠",
+                "source": "洪水风险图水文分析专题（珊瑚河）.md: 表3-2-1",
+            },
+            {
+                "mark_id": "flood_mark_2022_shanhu_estuary",
+                "river_id": "shanhu",
+                "event_year": 2022,
+                "location": "珊瑚河河口",
+                "description": "淹至G241交通桥桥基。",
+                "elevation_m": 145.82,
+                "reliability": "基本可靠",
+                "source": "洪水风险图水文分析专题（珊瑚河）.md: 表3-2-1",
+            },
+        ]
+        for row in marks:
+            row.update({
+                "geometry_crs": "",
+                "geometry_type": "",
+                "geometry": "",
+                "data_availability": "survey_without_coordinates",
+            })
+        return marks
+
     def _build_hydrology(self) -> list[dict]:
         path = DATA_DIR / "9.水文计算结果/珊瑚河水文分析结果.xlsx"
         wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
@@ -369,6 +671,7 @@ def write_object_library(object_type: str, rows: list[dict]) -> Path:
 
 
 def _features(path: Path) -> list[dict]:
+    source_crs = _source_crs(path)
     result = subprocess.run(
         ["ogr2ogr", "-f", "GeoJSON", "/vsistdout/", "-t_srs", "EPSG:4326", str(path)],
         check=False,
@@ -377,7 +680,36 @@ def _features(path: Path) -> list[dict]:
     )
     if result.returncode != 0 or not result.stdout.strip():
         return []
-    return json.loads(result.stdout).get("features", [])
+    features = json.loads(result.stdout).get("features", [])
+    for feature in features:
+        feature["_source_crs"] = source_crs
+        feature["_geometry_crs"] = "EPSG:4326"
+    return features
+
+
+def _source_crs(path: Path) -> str:
+    prj_path = path.with_suffix(".prj")
+    result = subprocess.run(
+        ["gdalsrsinfo", "-o", "epsg", str(prj_path if prj_path.exists() else path)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    match = re.search(r"EPSG:(\d+)", result.stdout)
+    if match:
+        return f"EPSG:{match.group(1)}"
+    if not prj_path.exists():
+        return ""
+    prj = prj_path.read_text(encoding="utf-8", errors="ignore")
+    if "CGCS2000_3_Degree_GK_CM_111E" in prj:
+        return "EPSG:4546"
+    if "Beijing_1954_3_Degree_GK_CM_111E" in prj:
+        return "EPSG:2434"
+    if "GCS_China_2000" in prj or "China_2000" in prj:
+        return "EPSG:4490"
+    if "WGS_1984" in prj or "WGS 84" in prj:
+        return "EPSG:4326"
+    return ""
 
 
 def _ensure_osm_waterways(bbox: tuple[float, float, float, float]) -> Path:
@@ -689,6 +1021,8 @@ def _apply_osm_reservoir(row: dict, match: dict):
     if match["kind"] == "reservoir_area" and match["geometry"]:
         row["geometry_source"] = "osm_reservoir_area"
         row["geometry_type"] = match["geometry"]["type"]
+        row["source_crs"] = "EPSG:4326"
+        row["geometry_crs"] = "EPSG:4326"
         row["geometry"] = json.dumps(match["geometry"], ensure_ascii=False)
     elif match["kind"] == "reservoir_area":
         row["geometry_source"] = "local_inventory_with_osm_reservoir_match"
@@ -718,6 +1052,8 @@ def _apply_hydrolakes_reservoir(row: dict, match: dict):
     row.update({
         "geometry_source": "hydrolakes_reservoir_area",
         "geometry_type": match["geometry"]["type"],
+        "source_crs": "EPSG:4326",
+        "geometry_crs": "EPSG:4326",
         "geometry": json.dumps(match["geometry"], ensure_ascii=False),
         "external_geometry_source": "HydroLAKES",
         "external_geometry_ref": f"Hylak_id/{match['hylak_id']}",
@@ -748,6 +1084,8 @@ def _apply_esa_water_reservoir(row: dict, match: dict):
     row.update({
         "geometry_source": "esa_worldcover_water_area",
         "geometry_type": match["geometry"]["type"],
+        "source_crs": "EPSG:4326",
+        "geometry_crs": "EPSG:4326",
         "geometry": json.dumps(match["geometry"], ensure_ascii=False),
         "external_geometry_source": "ESA WorldCover",
         "external_geometry_ref": match["esa_ref"],
@@ -1040,7 +1378,6 @@ def _road_record(index: int, feature: dict, path: Path) -> dict:
         "bridge_flag": str(_first_non_empty(props, "bridge") or "").upper() == "T",
         "tunnel_flag": str(_first_non_empty(props, "tunnel") or "").upper() == "T",
         "length_m": _float(_first_non_empty(props, "Shape_Leng")),
-        "crs": "EPSG:4546",
         **_osm_defaults(),
         **_geometry_fields(feature),
         "data_path": rel(path),
@@ -1255,6 +1592,8 @@ def _geometry_fields(feature: dict) -> dict:
     geom = feature.get("geometry") or {}
     return {
         "geometry_type": geom.get("type", ""),
+        "source_crs": feature.get("_source_crs", ""),
+        "geometry_crs": feature.get("_geometry_crs", "EPSG:4326") if geom else "",
         "geometry": json.dumps(geom, ensure_ascii=False) if geom else "",
     }
 
@@ -1281,6 +1620,11 @@ def _return_period(value: Any) -> int:
 def _duration_hours(value: Any) -> float:
     match = re.search(r"(\d+(?:\.\d+)?)", str(value))
     return float(match.group(1)) if match else 0
+
+
+def _dms_to_decimal(degrees: float, minutes: float = 0.0,
+                    seconds: float = 0.0) -> float:
+    return round(float(degrees) + float(minutes) / 60 + float(seconds) / 3600, 7)
 
 
 def _slug_id(value: str) -> str:

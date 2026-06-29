@@ -13,6 +13,12 @@ from .common import (
     apply_window,
     id_field,
 )
+from .forecast import (
+    count_forecast_cells,
+    count_forecast_runs,
+    query_forecast_cells,
+    query_forecast_runs,
+)
 
 
 class FloodRepository:
@@ -24,6 +30,10 @@ class FloodRepository:
               offset: int | None = None) -> list[dict]:
         if object_type == "Cell":
             return query_cells(self, filters, limit, order_by, offset)
+        if object_type == "ForecastRun":
+            return query_forecast_runs(self, filters, limit, order_by, offset)
+        if object_type == "ForecastCell":
+            return query_forecast_cells(self, filters, limit, order_by, offset)
         rows = [dict(row) for row in self._rows(object_type)]
         rows = apply_filters(rows, filters)
         rows = apply_order(rows, order_by)
@@ -32,6 +42,10 @@ class FloodRepository:
     def count(self, object_type: str, filters: dict[str, Any] | None = None) -> int:
         if object_type == "Cell":
             return count_cells(self, filters)
+        if object_type == "ForecastRun":
+            return count_forecast_runs(self, filters)
+        if object_type == "ForecastCell":
+            return count_forecast_cells(self, filters)
         return len(self.query(object_type, filters))
 
     def query_by_id(self, object_type: str, id_value: Any) -> dict | None:
@@ -44,7 +58,8 @@ class FloodRepository:
             return []
         results = []
         searchable_types = object_types or [
-            item for item in OBJECT_LIBRARY_FILES if item != "Cell"
+            item for item in OBJECT_LIBRARY_FILES
+            if item not in {"Cell", "ForecastRun", "ForecastCell"}
         ]
         for object_type in searchable_types:
             for row in self._rows(object_type):
@@ -80,6 +95,18 @@ class FloodRepository:
     @cached_property
     def hydrology(self) -> list[dict]:
         return self._rows("Hydrology")
+
+    @cached_property
+    def hydro_stations(self) -> list[dict]:
+        return self._rows("HydroStation")
+
+    @cached_property
+    def hydro_observations(self) -> list[dict]:
+        return self._rows("HydroObservation")
+
+    @cached_property
+    def historical_flood_marks(self) -> list[dict]:
+        return self._rows("HistoricalFloodMark")
 
     @cached_property
     def towns(self) -> list[dict]:

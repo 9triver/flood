@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import mimetypes
 import os
@@ -48,8 +49,30 @@ ID_FIELDS = {
     "Transfer": "transfer_id",
     "Route": "route_id",
     "Scenario": "scenario_id",
+    "Risk": "risk_id",
+    "HydroStation": "station_id",
+    "HydroObservation": "observation_id",
+    "HistoricalFloodMark": "mark_id",
     "Cell": "cell_id",
+    "ForecastRun": "forecast_id",
+    "ForecastCell": "forecast_cell_id",
 }
+
+HYDRO_EVENT_DEBUG_TOOLS = frozenset({
+    "inspect",
+    "query",
+    "count",
+    "ui_show_event_marker",
+    "ui_show_objects",
+    "run_flood_forecast",
+})
+
+INUNDATION_EVENT_TOOLS = frozenset({
+    "inspect",
+    "query",
+    "count",
+    "ui_show_objects",
+})
 
 def load_env(path: Path) -> dict[str, str]:
     values = dict(os.environ)
@@ -77,6 +100,8 @@ class FloodApp:
         self.map_planner = MapActionPlanner(self.resolver, self.registry, self.scenarios)
         self._pending_map_events: dict[str, list[dict[str, Any]]] = {}
         self._pending_map_events_lock = threading.Lock()
+        self._pending_forecast_results: dict[str, list[dict[str, Any]]] = {}
+        self._pending_forecast_results_lock = threading.Lock()
         self.agent = self._build_agent()
         self._export_lock = threading.Lock()
 
@@ -102,6 +127,12 @@ class FloodApp:
             "llm_enabled": self.llm_enabled,
             "default_context": "基础态 · 领域对象地图",
         }
+
+    def autonomy_cycle(self, force_forecast: bool = False) -> dict:
+        return self.registry.call("run_emergency_cycle", force_forecast=force_forecast)
+
+    def forecast(self, force: bool = False) -> dict:
+        return self.registry.call("run_flood_forecast", forecast_id="latest", force=force)
 
     def export_geojson(self, object_type: str, filters: dict,
                        simplify: float = 0) -> tuple[dict, bytes]:
@@ -208,6 +239,7 @@ class FloodApp:
             config=HarnessConfig(
                 max_turns=6,
                 enable_write_confirmation=True,
+                llm_extra_body=self._llm_extra_body(),
                 runtime_context={
                     "frontend": "GIS-centered flood emergency workspace",
                     "map_rendering": "Frontend renders domain objects by their geometry. Layer is UI state, not a domain object.",
@@ -217,9 +249,13 @@ class FloodApp:
                     "回答用户时优先调用领域对象查询和领域函数获取事实。"
                     "不要让用户通过情景切换控件操作；如果需要其他情景，请让用户直接在对话中指定。"
                     "当用户要求在地图上显示、打开、绘制、加载、叠加、缩放、聚焦或清空对象时，"
-                    "必须调用 ui_show_objects、ui_focus_object 或 ui_clear_map，让前端执行地图动作；"
+                    "必须调用 ui_show_objects、ui_show_event_marker、ui_focus_object 或 ui_clear_map，让前端执行地图动作；"
                     "不要只用文字说明将要显示什么。"
                     "当前 analyze_risks/plan_response/generate_brief 可能尚未实现；如工具返回 not_implemented，必须如实说明。"
+                    "当用户要求运行预测、实时预测或未来淹没时，先调用 run_flood_forecast，再调用 ui_show_objects 显示 ForecastCell。"
+                    "当用户要求自主观测、持续预测、自动告警、闭环调度或避洪转移调度时，调用 run_emergency_cycle，"
+                    "再用 ui_show_objects 展示 ForecastCell、Risk、Transfer、Place、Route 等对象。"
+                    "预测淹没必须使用 ForecastCell；不要把 severity_index 或综合指标映射到 5/10/20/50/100 年一遇情景。"
                     "在空间叠加风险函数实现前，不得声称已经判定某个学校、道路、桥梁或路线受淹；只能说明已展示对象和淹没范围，可作为研判基础。"
                 ),
             ),
@@ -233,11 +269,15 @@ class FloodApp:
             db_dir=str(PROJECT_DIR / ".oag_data"),
         )
 
+    def _llm_extra_body(self) -> dict[str, Any]:
+        disabled = str(self.llm_config.get("LLM_DISABLE_REASONING", "")).lower() in {"1", "true", "yes", "on"}
+        return {"enable_thinking": False} if disabled else {}
+
     def _agent_message(self, message: str, selected: dict) -> str:
         frontend_context = {
             "用户问题": message,
             "选中对象": selected,
-            "地图动作工具": ["ui_show_objects", "ui_clear_map", "ui_focus_object"],
+            "地图动作工具": ["ui_show_objects", "ui_show_event_marker", "ui_clear_map", "ui_focus_object"],
         }
         return (
             f"用户问题：{message}\n\n"
@@ -249,13 +289,20 @@ class FloodApp:
         )
 
     def _capture_map_tool_event(self, context: dict[str, Any]) -> HookResult:
+        tool_name = str(context.get("tool_name") or "")
+        session_id = str(context.get("session_id") or "")
+        if tool_name == "run_flood_forecast" and session_id:
+            result = parse_tool_json_result(context.get("result") or "")
+            if result and "error" not in result:
+                with self._pending_forecast_results_lock:
+                    self._pending_forecast_results.setdefault(session_id, []).append(result)
+            return HookResult(action="allow")
         event = tool_result_to_map_event(
-            str(context.get("tool_name") or ""),
+            tool_name,
             str(context.get("result") or ""),
         )
         if not event:
             return HookResult(action="allow")
-        session_id = str(context.get("session_id") or "")
         if session_id:
             with self._pending_map_events_lock:
                 self._pending_map_events.setdefault(session_id, []).append(event)
@@ -264,6 +311,10 @@ class FloodApp:
     def _pop_pending_map_events(self, session_id: str) -> list[dict[str, Any]]:
         with self._pending_map_events_lock:
             return self._pending_map_events.pop(session_id, [])
+
+    def _pop_pending_forecast_results(self, session_id: str) -> list[dict[str, Any]]:
+        with self._pending_forecast_results_lock:
+            return self._pending_forecast_results.pop(session_id, [])
 
 
 APP = FloodApp()
@@ -390,6 +441,592 @@ class AgentRunManager:
 RUNS = AgentRunManager(APP)
 
 
+class EventRuntime:
+    def __init__(self, app: FloodApp):
+        self.app = app
+        self.stop_after_inundation_event = True
+        self.events: list[dict[str, Any]] = []
+        self.outputs: list[dict[str, Any]] = []
+        self.condition = threading.Condition()
+        self._started = False
+        self._event_queue: collections.deque[tuple[dict[str, Any], int]] = collections.deque()
+        self._event_queue_condition = threading.Condition()
+        self._generation = 0
+        self._hydro_index = 0
+        self._active_thresholds: set[str] = set()
+        self._published_inundation_sources: set[str] = set()
+        self._stations = {
+            row["station_id"]: row
+            for row in self.app.resolver.query("HydroStation")
+        }
+        self._mock_series = [
+            {
+                "station_id": "hydro_station_longtan",
+                "metric": "reservoir_water_level",
+                "unit": "m",
+                "value": 193.6,
+                "threshold": 191.2,
+                "severity": "warning",
+            },
+            {
+                "station_id": "hydro_station_zhongshan_huilong",
+                "metric": "rainfall_6h",
+                "unit": "mm",
+                "value": 146.0,
+                "threshold": 100.0,
+                "severity": "warning",
+            },
+            {
+                "station_id": "hydro_station_tonggu",
+                "metric": "rainfall_6h",
+                "unit": "mm",
+                "value": 121.5,
+                "threshold": 100.0,
+                "severity": "watch",
+            },
+        ]
+
+    def ensure_started(self) -> None:
+        if self._started:
+            return
+        self._started = True
+        threading.Thread(target=self._hydro_station_loop, daemon=True).start()
+        threading.Thread(target=self._event_worker_loop, daemon=True).start()
+
+    def stream(self, interval: int):
+        self.ensure_started()
+        with self.condition:
+            self._generation += 1
+            self.events.clear()
+            self.outputs.clear()
+            self._active_thresholds.clear()
+            self._published_inundation_sources.clear()
+            next_seq = 0
+        yield Handler._format_sse("runtime_status", {
+            "type": "runtime_status",
+            "label": "事件驱动闭环已启动",
+            "detail": "后台水文站 mock 服务正在推送观测，异常事件将进入单 worker 队列串行交给智能体处理。",
+        })
+        yield Handler._format_sse("map_actions", {
+            "type": "map_actions",
+            "context": "调试 · 水文事件到智能体",
+            "map_actions": [
+                {"type": "reset"},
+            ],
+            "result_cards": [
+                {"title": "调试范围", "value": "水文事件", "detail": "已切断水动力模型、淹没事件、影响评估和预案自动执行。"},
+            ],
+        })
+        while True:
+            pending = []
+            with self.condition:
+                while len(self.outputs) <= next_seq:
+                    self.condition.wait(timeout=max(1, interval))
+                    if len(self.outputs) <= next_seq:
+                        yield Handler._format_sse("runtime_status", {
+                            "type": "runtime_status",
+                            "label": "等待水文事件",
+                            "detail": "后台服务继续观测水文站 mock 数据。",
+                        })
+                pending = self.outputs[next_seq:]
+                next_seq = len(self.outputs)
+            for item in pending:
+                yield Handler._format_sse(item["event"], item["data"])
+
+    def _hydro_station_loop(self) -> None:
+        time.sleep(1.0)
+        while True:
+            sample = self._mock_series[self._hydro_index % len(self._mock_series)]
+            self._hydro_index += 1
+            if self._should_publish_threshold_event(sample):
+                event = self._make_hydro_event(sample)
+                self._publish_event(event)
+            time.sleep(5)
+
+    def _should_publish_threshold_event(self, sample: dict[str, Any]) -> bool:
+        key = f"{sample['station_id']}:{sample['metric']}"
+        value = float(sample["value"])
+        threshold = float(sample["threshold"])
+        exceeded = value > threshold
+        with self.condition:
+            if not exceeded:
+                self._active_thresholds.discard(key)
+                return False
+            if key in self._active_thresholds:
+                return False
+            self._active_thresholds.add(key)
+            return True
+
+    def _make_hydro_event(self, sample: dict[str, Any]) -> dict[str, Any]:
+        station = self._stations.get(sample["station_id"], {})
+        event_id = f"evt_{uuid.uuid4().hex[:10]}"
+        value = float(sample["value"])
+        threshold = float(sample["threshold"])
+        return {
+            "event_id": event_id,
+            "event_type": "HydroThresholdExceeded",
+            "source_type": "HydroStation",
+            "source_id": sample["station_id"],
+            "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "severity": sample.get("severity", "warning"),
+            "title": f"{station.get('name', sample['station_id'])}{metric_label(sample['metric'])}超阈值",
+            "longitude": station.get("longitude"),
+            "latitude": station.get("latitude"),
+            "payload": {
+                "station_name": station.get("name", ""),
+                "metric": sample["metric"],
+                "metric_label": metric_label(sample["metric"]),
+                "value": value,
+                "threshold": threshold,
+                "unit": sample["unit"],
+            },
+            "correlation_id": f"corr_{event_id}",
+        }
+
+    def _publish_event(self, event: dict[str, Any]) -> None:
+        generation = self._generation
+        with self.condition:
+            self.events.append(event)
+            self.outputs.append({"event": "domain_event", "data": event})
+            self.outputs.append({"event": "agent_trace", "data": {
+                "type": "agent_trace",
+                "tag": "EVENT",
+                "label": event["title"],
+                "detail": hydro_event_detail(event),
+                "event_id": event["event_id"],
+            }})
+            self.condition.notify_all()
+        self._enqueue_event(event, generation)
+
+    def _enqueue_event(self, event: dict[str, Any], generation: int, *, priority: bool = False) -> None:
+        with self._event_queue_condition:
+            if priority:
+                self._event_queue.appendleft((event, generation))
+            else:
+                self._event_queue.append((event, generation))
+            self._event_queue_condition.notify()
+
+    def _event_worker_loop(self) -> None:
+        while True:
+            with self._event_queue_condition:
+                while not self._event_queue:
+                    self._event_queue_condition.wait()
+                event, generation = self._event_queue.popleft()
+            try:
+                if generation == self._generation:
+                    self._handle_event(event, generation)
+            except Exception as exc:
+                self._append_output("agent_trace", {
+                    "type": "agent_trace",
+                    "tag": "ERR",
+                    "label": "事件处理失败",
+                    "detail": str(exc),
+                    "event_id": event.get("event_id"),
+                }, generation)
+
+    def _handle_event(self, event: dict[str, Any], generation: int) -> None:
+        if generation != self._generation:
+            return
+        if event.get("event_type") == "HydroThresholdExceeded":
+            agent_result = self._run_agent_for_hydro_event(event, generation)
+            trace = self._reason_about_hydro_event(event)
+            self._append_output("agent_trace", trace, generation)
+            forecast_result = agent_result.get("forecast_result")
+            if not forecast_result and agent_result.get("forecast_requested"):
+                forecast_result = self.app.forecast(force=False)
+            if forecast_result:
+                inundation_event = self._make_inundation_event(event, forecast_result, trace.get("severity", "warning"))
+                self._publish_inundation_event_once(inundation_event, generation)
+            return
+        if event.get("event_type") == "InundationGenerated":
+            self._run_agent_for_inundation_event(event, generation)
+            return
+
+    def _run_agent_for_hydro_event(self, event: dict[str, Any], generation: int) -> dict[str, Any]:
+        if not self.app.agent:
+            return {}
+        session_id = f"event-{event['event_id']}"
+        prompt = (
+            "/no_think\n"
+            "你正在作为珊瑚河洪水应急智能体接收后台事件。"
+            "本轮链路调试放开到水动力预测：你需要判断该水文异常事件的意义。"
+            "如果你认为该事件需要用户在地图上感知，必须调用 ui_show_event_marker 展示事件 marker，"
+            "并设置 show_source=true、fit=true。"
+            "如果你认为该异常已经达到预测关注条件，可以调用 run_flood_forecast，forecast_id 使用 latest。"
+            "禁止调用 run_emergency_cycle；影响评估和防洪响应预案仍然切断。"
+            "请用简短结论说明：事件来源、指标值、阈值、是否调用了预测模型。"
+            "原始事件如下：\n"
+            f"{json.dumps(event, ensure_ascii=False, indent=2)}"
+        )
+        agent_result: dict[str, Any] = {}
+        reasoning_chunks: list[str] = []
+        text_chunks: list[str] = []
+        try:
+            for raw_event in self.app.agent.chat_stream(
+                prompt,
+                session_id=session_id,
+                allowed_tools=HYDRO_EVENT_DEBUG_TOOLS,
+            ):
+                if generation != self._generation:
+                    return agent_result
+                self._collect_agent_side_effects(session_id, agent_result, generation)
+                self._publish_forecast_result_from_agent(event, agent_result, generation)
+                data = event_to_dict(raw_event)
+                event_type = data.get("type")
+                if event_type == "tool_call":
+                    tool_name = data.get("name", "")
+                    if tool_name == "run_flood_forecast":
+                        agent_result["forecast_requested"] = True
+                    self._append_output("agent_trace", {
+                        "type": "agent_trace",
+                        "tag": "CALL",
+                        "label": readable_event_tool(tool_name),
+                        "detail": json.dumps(data.get("args") or {}, ensure_ascii=False),
+                    }, generation)
+                elif event_type == "tool_result":
+                    self._append_output("agent_trace", {
+                        "type": "agent_trace",
+                        "tag": "RESULT",
+                        "label": readable_event_tool(data.get("name", "")),
+                        "detail": compact_event_text(data.get("result") or ""),
+                    }, generation)
+                    if data.get("name") == "run_flood_forecast":
+                        agent_result["forecast_requested"] = True
+                        parsed = parse_tool_json_result(data.get("result") or "")
+                        if parsed and "error" not in parsed:
+                            agent_result["forecast_result"] = parsed
+                        elif not data.get("blocked"):
+                            agent_result["forecast_result"] = self.app.forecast(force=False)
+                        self._publish_forecast_result_from_agent(event, agent_result, generation)
+                elif event_type == "reasoning":
+                    reasoning_chunks.append(str(data.get("content") or ""))
+                elif event_type == "text":
+                    text_chunks.append(str(data.get("content") or ""))
+            self._collect_agent_side_effects(session_id, agent_result, generation)
+            if agent_result.get("forecast_requested") and not agent_result.get("forecast_result"):
+                agent_result["forecast_result"] = self.app.forecast(force=False)
+            self._publish_forecast_result_from_agent(event, agent_result, generation)
+            reasoning = "".join(reasoning_chunks).strip()
+            if reasoning:
+                self._append_output("agent_trace", {
+                    "type": "agent_trace",
+                    "tag": "THINK",
+                    "label": "LLM 事件推理",
+                    "detail": compact_event_text(reasoning),
+                }, generation)
+            conclusion = "".join(text_chunks).strip()
+            if conclusion:
+                self._append_output("agent_trace", {
+                    "type": "agent_trace",
+                    "tag": "TEXT",
+                    "label": "智能体结论",
+                    "detail": compact_event_text(conclusion),
+                }, generation)
+        except Exception as exc:
+            self._append_output("agent_trace", {
+                "type": "agent_trace",
+                "tag": "FALLBACK",
+                "label": "LLM 事件推理失败，启用规则兜底",
+                "detail": str(exc),
+            }, generation)
+            return agent_result
+        return agent_result
+
+    def _run_agent_for_inundation_event(self, event: dict[str, Any], generation: int) -> dict[str, Any]:
+        if not self.app.agent:
+            return {}
+        session_id = f"event-{event['event_id']}"
+        prompt = (
+            "/no_think\n"
+            "你正在作为珊瑚河洪水应急智能体接收水动力模型输出事件。"
+            "本轮链路调试只放开到地图展示预测淹没范围。"
+            "如果你认为该淹没事件需要在 GIS 上展示，必须调用 ui_show_objects 显示 ForecastCell，"
+            "filters 使用 {\"forecast_id\":\"latest\"}，fit=true，simplify_tolerance=5，refresh=true。"
+            "禁止调用 run_emergency_cycle、analyze_risks 或 plan_response；影响评估和防洪响应预案仍然切断。"
+            "请用简短结论说明：预测运行、淹没面积、最大水深，以及是否已请求地图展示。"
+            "原始事件如下：\n"
+            f"{json.dumps(event, ensure_ascii=False, indent=2)}"
+        )
+        return self._run_agent_for_followup_event(
+            prompt,
+            session_id,
+            generation,
+            allowed_tools=INUNDATION_EVENT_TOOLS,
+            fallback_label="LLM 淹没事件推理失败",
+        )
+
+    def _publish_forecast_result_from_agent(self, source_event: dict[str, Any],
+                                            agent_result: dict[str, Any],
+                                            generation: int) -> None:
+        forecast_result = agent_result.get("forecast_result")
+        if not forecast_result or agent_result.get("forecast_event_published"):
+            return
+        trace = self._reason_about_hydro_event(source_event)
+        inundation_event = self._make_inundation_event(
+            source_event,
+            forecast_result,
+            trace.get("severity", "warning"),
+        )
+        self._publish_inundation_event_once(inundation_event, generation)
+        agent_result["forecast_event_published"] = True
+
+    def _run_agent_for_followup_event(self, prompt: str, session_id: str, generation: int,
+                                      allowed_tools: frozenset[str],
+                                      fallback_label: str) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        reasoning_chunks: list[str] = []
+        text_chunks: list[str] = []
+        try:
+            for raw_event in self.app.agent.chat_stream(
+                prompt,
+                session_id=session_id,
+                allowed_tools=allowed_tools,
+            ):
+                if generation != self._generation:
+                    return result
+                self._collect_agent_side_effects(session_id, result, generation)
+                data = event_to_dict(raw_event)
+                event_type = data.get("type")
+                if event_type == "tool_call":
+                    self._append_output("agent_trace", {
+                        "type": "agent_trace",
+                        "tag": "CALL",
+                        "label": readable_event_tool(data.get("name", "")),
+                        "detail": json.dumps(data.get("args") or {}, ensure_ascii=False),
+                    }, generation)
+                elif event_type == "tool_result":
+                    self._append_output("agent_trace", {
+                        "type": "agent_trace",
+                        "tag": "RESULT",
+                        "label": readable_event_tool(data.get("name", "")),
+                        "detail": compact_event_text(data.get("result") or ""),
+                    }, generation)
+                elif event_type == "reasoning":
+                    reasoning_chunks.append(str(data.get("content") or ""))
+                elif event_type == "text":
+                    text_chunks.append(str(data.get("content") or ""))
+            self._collect_agent_side_effects(session_id, result, generation)
+            reasoning = "".join(reasoning_chunks).strip()
+            if reasoning:
+                self._append_output("agent_trace", {
+                    "type": "agent_trace",
+                    "tag": "THINK",
+                    "label": "LLM 事件推理",
+                    "detail": compact_event_text(reasoning),
+                }, generation)
+            conclusion = "".join(text_chunks).strip()
+            if conclusion:
+                self._append_output("agent_trace", {
+                    "type": "agent_trace",
+                    "tag": "TEXT",
+                    "label": "智能体结论",
+                    "detail": compact_event_text(conclusion),
+                }, generation)
+        except Exception as exc:
+            self._append_output("agent_trace", {
+                "type": "agent_trace",
+                "tag": "FALLBACK",
+                "label": fallback_label,
+                "detail": str(exc),
+            }, generation)
+        return result
+
+    def _collect_agent_side_effects(self, session_id: str, result: dict[str, Any], generation: int) -> None:
+        for forecast_result in self.app._pop_pending_forecast_results(session_id):
+            result["forecast_result"] = forecast_result
+        for map_event in self.app._pop_pending_map_events(session_id):
+            self._append_output("map_actions", map_event, generation)
+
+    def _make_inundation_event(self, source_event: dict[str, Any],
+                               forecast_result: dict[str, Any],
+                               severity: str) -> dict[str, Any]:
+        forecast = forecast_result.get("forecast") or {}
+        return {
+            "type": "domain_event",
+            "event_id": f"evt_{uuid.uuid4().hex[:10]}",
+            "event_type": "InundationGenerated",
+            "source_type": "HydrodynamicModel",
+            "source_id": forecast.get("forecast_id", "latest"),
+            "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "severity": severity,
+            "title": "水动力模型生成预测淹没范围",
+            "payload": forecast,
+            "correlation_id": source_event["correlation_id"],
+        }
+
+    def _publish_inundation_event_once(self, event: dict[str, Any], generation: int) -> None:
+        source_id = str(event.get("source_id") or "")
+        if not source_id:
+            source_id = str((event.get("payload") or {}).get("forecast_id") or event.get("event_id") or "")
+        with self.condition:
+            if source_id and source_id in self._published_inundation_sources:
+                return
+            if source_id:
+                self._published_inundation_sources.add(source_id)
+        self._publish_child_event(event, generation)
+
+    def _publish_child_event(self, event: dict[str, Any], generation: int) -> None:
+        with self.condition:
+            if generation != self._generation:
+                return
+            self.events.append(event)
+            self.outputs.append({"event": "domain_event", "data": event})
+            self.outputs.append({"event": "agent_trace", "data": {
+                "type": "agent_trace",
+                "tag": "EVENT",
+                "label": event["title"],
+                "detail": inundation_event_detail(event),
+                "event_id": event["event_id"],
+            }})
+            self.condition.notify_all()
+        self._enqueue_event(event, generation, priority=True)
+
+    def _reason_about_hydro_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        payload = event.get("payload") or {}
+        ratio = float(payload.get("value") or 0) / max(float(payload.get("threshold") or 1), 1e-6)
+        should_run = ratio >= 1.05
+        if self.app.agent:
+            detail = "智能体接收水文异常事件；LLM 可调用地图工具，也可决定是否调用 run_flood_forecast。"
+        else:
+            detail = "未启用 LLM，按事件阈值规则决定是否启动水动力模型。"
+        return {
+            "type": "agent_trace",
+            "tag": "SYSTEM",
+            "label": "智能体事件推理",
+            "detail": f"{detail} {payload.get('metric_label')}={payload.get('value')} {payload.get('unit')}，阈值={payload.get('threshold')} {payload.get('unit')}。",
+            "should_run_model": should_run,
+            "severity": event.get("severity", "warning"),
+        }
+
+    def _append_output(self, event_name: str, data: dict[str, Any], generation: int | None = None) -> None:
+        with self.condition:
+            if generation is not None and generation != self._generation:
+                return
+            self.outputs.append({"event": event_name, "data": data})
+            self.condition.notify_all()
+
+
+def metric_label(metric: str) -> str:
+    return {
+        "reservoir_water_level": "水位",
+        "rainfall_6h": "6小时雨量",
+        "reservoir_outflow": "出库流量",
+    }.get(metric, metric)
+
+
+def readable_event_tool(name: str) -> str:
+    return {
+        "run_flood_forecast": "运行水动力模型",
+        "run_emergency_cycle": "运行预警调度闭环",
+        "ui_show_objects": "地图展示对象",
+        "ui_show_event_marker": "地图展示事件",
+        "ui_focus_object": "地图聚焦对象",
+        "ui_clear_map": "清空地图",
+    }.get(name, name or "tool")
+
+
+def compact_event_text(value: Any, limit: int = 360) -> str:
+    text = str(value or "")
+    return f"{text[:limit]}..." if len(text) > limit else text
+
+
+def parse_tool_json_result(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        return value
+    try:
+        parsed = json.loads(str(value or ""))
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def hydro_event_detail(event: dict[str, Any]) -> str:
+    payload = event.get("payload") or {}
+    return (
+        f"{payload.get('station_name')}: {payload.get('metric_label')} "
+        f"{payload.get('value')} {payload.get('unit')} > 阈值 "
+        f"{payload.get('threshold')} {payload.get('unit')}"
+    )
+
+
+def inundation_event_detail(event: dict[str, Any]) -> str:
+    payload = event.get("payload") or {}
+    area = format_float(payload.get("inundated_area_km2"), 2)
+    depth = format_float(payload.get("max_depth_m"), 2)
+    return (
+        f"{payload.get('name') or payload.get('forecast_id')}: "
+        f"预测单元 {payload.get('forecast_cell_count', 0)} 个，"
+        f"淹没面积 {area} km²，最大水深 {depth} m"
+    )
+
+
+def format_float(value: Any, digits: int = 2) -> str:
+    try:
+        return f"{float(value):.{digits}f}"
+    except (TypeError, ValueError):
+        return "0.00"
+
+
+def forecast_map_event(result: dict[str, Any]) -> dict[str, Any]:
+    forecast = result.get("forecast") or {}
+    return {
+        "type": "map_actions",
+        "context": "事件驱动 · 水动力计算",
+        "map_actions": [
+            {
+                "type": "load_object",
+                "object_type": "ForecastCell",
+                "label": "预测淹没单元",
+                "filters": {"forecast_id": "latest"},
+                "simplify_tolerance": 5,
+                "fit": True,
+                "refresh": True,
+            },
+        ],
+        "result_cards": [
+            {
+                "title": "模型输出",
+                "value": f"{forecast.get('inundated_area_km2', 0):.2f} km²",
+                "detail": f"预测单元 {forecast.get('forecast_cell_count', 0)} 个，最大水深 {forecast.get('max_depth_m', 0):.2f} m。",
+            },
+        ],
+    }
+
+
+def decision_map_event(result: dict[str, Any]) -> dict[str, Any]:
+    transfer_ids = [row.get("transfer_id") for row in result.get("transfer_impacts", []) if row.get("transfer_id")]
+    road_ids = [row.get("object_id") for row in result.get("road_impacts", []) if row.get("object_id")]
+    route_ids = [row.get("object_id") for row in result.get("route_impacts", []) if row.get("object_id")]
+    warning = result.get("warning") or {}
+    return {
+        "type": "map_actions",
+        "context": "事件驱动 · 预案研判",
+        "map_actions": [
+            {"type": "load_object", "object_type": "Transfer", "label": "转移对象", "filters": {}, "fit": False},
+            {"type": "load_object", "object_type": "Place", "label": "安置地点", "filters": {}, "fit": False},
+            {"type": "load_object", "object_type": "Route", "label": "转移路线", "filters": {}, "fit": False},
+            {"type": "highlight_objects", "object_type": "Transfer", "object_ids": transfer_ids[:12], "fit": True},
+            {"type": "highlight_objects", "object_type": "Road", "object_ids": road_ids[:8], "fit": False},
+            {"type": "highlight_objects", "object_type": "Route", "object_ids": route_ids[:8], "fit": False},
+        ],
+        "result_cards": [
+            {
+                "title": warning.get("title", "预警决策"),
+                "value": str(warning.get("level", "")).upper(),
+                "detail": warning.get("basis", ""),
+            },
+            {
+                "title": "调度建议",
+                "value": str(len(result.get("recommendations") or [])),
+                "detail": f"转移影响 {len(result.get('transfer_impacts') or [])} 个，道路关注 {len(result.get('road_impacts') or [])} 个。",
+            },
+        ],
+    }
+
+
+EVENT_RUNTIME = EventRuntime(APP)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "FloodFrontend/0.1"
 
@@ -400,6 +1037,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(APP.bootstrap())
             if parsed.path == "/api/agent/chat/stream":
                 return self._chat_stream(parsed.query)
+            if parsed.path == "/api/autonomy/stream":
+                return self._autonomy_stream(parsed.query)
             if parsed.path == "/api/agent/runs/active":
                 return self._active_run(parsed.query)
             if parsed.path == "/api/geojson":
@@ -491,6 +1130,11 @@ class Handler(BaseHTTPRequestHandler):
 
         return self._sse(generator())
 
+    def _autonomy_stream(self, query: str):
+        params = parse_qs(query)
+        interval = max(5, int((params.get("interval") or ["5"])[0] or 5))
+        return self._sse(EVENT_RUNTIME.stream(interval))
+
     def _geojson(self, query: str):
         params = parse_qs(query)
         object_type = (params.get("object_type") or [""])[0]
@@ -564,6 +1208,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.flush()
             except BrokenPipeError:
                 break
+
+    @staticmethod
+    def _format_sse(event: str, data: dict) -> bytes:
+        payload = json.dumps(data, ensure_ascii=False)
+        return f"event: {event}\ndata: {payload}\n\n".encode("utf-8")
 
     def log_message(self, fmt: str, *args):
         print(f"{self.address_string()} - {fmt % args}")

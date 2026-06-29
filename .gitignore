@@ -2,6 +2,10 @@
 .env.*
 __pycache__/
 *.py[cod]
+*.pyo
+*.so
+*.dylib
+*.dll
 agent/.venv/
 .oag_data/
 
@@ -21,6 +25,15 @@ domains/tools/.env
 
 # Local source data
 珊瑚河数据/
+
+# Local reference documents and converted media
+*.docx
+*_media/
+45050092_珊瑚河洪水风险图成果报告（附审查意见）.md
+洪水风险图水文分析专题（珊瑚河）.md
+
+# Local hydrodynamic model workspace
+hydrodynamic_model/
 
 # Local reference repos
 mypalantir/

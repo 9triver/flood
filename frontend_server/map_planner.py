@@ -20,10 +20,15 @@ OBJECT_LABELS = {
     "Place": "安置地点",
     "Transfer": "转移对象",
     "Route": "转移路线",
+    "Risk": "危险区",
+    "HydroStation": "水文测站",
+    "HistoricalFloodMark": "历史洪痕",
     "Cell": "淹没范围",
+    "ForecastCell": "预测淹没",
 }
 
 ID_FIELDS = {
+    "River": "river_id",
     "Watershed": "watershed_id",
     "Waterway": "waterway_id",
     "County": "county_id",
@@ -36,10 +41,16 @@ ID_FIELDS = {
     "Place": "place_id",
     "Transfer": "transfer_id",
     "Route": "route_id",
+    "Risk": "risk_id",
+    "HydroStation": "station_id",
+    "HydroObservation": "observation_id",
+    "HistoricalFloodMark": "mark_id",
     "Cell": "cell_id",
+    "ForecastCell": "forecast_cell_id",
 }
 
 OBJECT_KEYWORDS = {
+    "River": ["珊瑚河", "河道中心线", "主河道"],
     "Reservoir": ["水库"],
     "Sluice": ["水闸", "闸门", "分洪闸"],
     "HydraulicStructure": ["堤防", "泵站", "溢流", "水利工程", "水利设施"],
@@ -51,6 +62,10 @@ OBJECT_KEYWORDS = {
     "Transfer": ["转移对象", "转移单元"],
     "Waterway": ["河道", "水系", "河网"],
     "Watershed": ["流域"],
+    "Risk": ["危险区", "风险点", "危险村", "危险屯"],
+    "HydroStation": ["水文站", "测站", "雨量站", "水位站", "气象站", "水文测站"],
+    "HistoricalFloodMark": ["洪痕", "历史洪水", "洪水记录", "洪水调查"],
+    "ForecastCell": ["预测淹没", "未来淹没", "实时预测", "洪水预测", "运行预测", "预报淹没"],
     "County": ["行政边界", "县界", "县"],
 }
 
@@ -62,8 +77,12 @@ class DisplayIntent:
     reset: bool = False
     return_period_year: int = 0
     show_flood: bool = False
+    show_forecast: bool = False
+    run_cycle: bool = False
     show_traffic: bool = False
     show_waterway: bool = False
+    show_river: bool = False
+    show_risk: bool = False
     water_objects: list[str] = field(default_factory=list)
     facility_type: str = ""
     facility_label: str = ""
@@ -118,10 +137,14 @@ class MapActionPlanner:
             return intent
 
         intent.return_period_year = self._extract_period(text)
+        intent.show_forecast = any(word in text for word in ["预测", "预报", "未来淹没", "实时", "运行模型", "模型运行", "自动观测"])
+        intent.run_cycle = any(word in text for word in ["闭环", "自动告警", "持续预测", "自主观测", "调度", "应急循环", "自动转移"])
         intent.show_flood = any(word in text for word in ["洪水", "淹没", "受淹", "水深", "风险", "影响", "最不利"])
         intent.show_waterway = any(word in text for word in ["河道", "水系", "河流线", "河网"]) or (
             any(word in text for word in ["河流", "珊瑚河"]) and any(word in text for word in ["显示", "打开", "绘制", "画"])
         )
+        intent.show_river = any(word in text for word in ["珊瑚河", "河道中心线", "主河道"]) and any(word in text for word in ["显示", "打开", "绘制", "画"])
+        intent.show_risk = any(word in text for word in ["危险区", "风险点", "危险村", "危险屯"])
         intent.show_traffic = any(word in text for word in ["道路", "公路", "交通", "封控", "中断", "桥", "桥梁"])
         intent.show_evacuation = any(word in text for word in ["转移", "安置", "避洪", "路线", "撤离"])
         focus_requested = any(word in text for word in ["聚焦", "定位", "缩放到", "高亮", "查看"])
@@ -174,7 +197,57 @@ class MapActionPlanner:
             })
             notes.append(self._selected_note(selected))
 
-        if intent.show_flood:
+        if intent.run_cycle:
+            context = "闭环预警 · 珊瑚河流域"
+            result = self.registry.call("run_emergency_cycle", force_forecast=False)
+            forecast = result.get("forecast") or {}
+            warning = result.get("warning") or {}
+            actions.extend([
+                {"type": "load_object", "object_type": "ForecastCell", "label": "预测淹没单元", "filters": {"forecast_id": "latest"}, "simplify_tolerance": 5, "fit": True},
+                {"type": "load_object", "object_type": "Risk", "label": "危险区", "filters": {"risk_type": "danger_area"}, "fit": False},
+                {"type": "load_object", "object_type": "Transfer", "label": "转移对象", "filters": {}, "fit": False},
+                {"type": "load_object", "object_type": "Place", "label": "安置地点", "filters": {}, "fit": False},
+                {"type": "load_object", "object_type": "Route", "label": "转移路线", "filters": {}, "fit": False},
+            ])
+            cards.extend([
+                {
+                    "title": warning.get("title", "洪水预警"),
+                    "value": str(warning.get("level", "")).upper(),
+                    "detail": warning.get("basis", ""),
+                },
+                {
+                    "title": "预测淹没",
+                    "value": f"{forecast.get('inundated_area_km2', 0):.2f} km²",
+                    "detail": f"最大水深 {forecast.get('max_depth_m', 0):.2f} m，预测单元 {forecast.get('forecast_cell_count', 0)} 个",
+                },
+                {
+                    "title": "调度建议",
+                    "value": str(len(result.get("recommendations") or [])),
+                    "detail": "建议仍需人工审批后执行，当前为闭环原型输出",
+                },
+            ])
+            notes.append("已完成一次观测-预测-告警-调度闭环原型运行，并把预测淹没、危险区和转移调度对象加载到地图。")
+
+        elif intent.show_forecast:
+            context = "实时预测 · 珊瑚河流域"
+            summary = self.registry.call("run_flood_forecast", forecast_id="latest")
+            forecast = summary.get("forecast") or {}
+            actions.append({
+                "type": "load_object",
+                "object_type": "ForecastCell",
+                "label": "预测淹没单元",
+                "filters": {"forecast_id": "latest"},
+                "simplify_tolerance": 5,
+                "fit": True,
+            })
+            cards.append({
+                "title": "洪水预测运行",
+                "value": f"{forecast.get('inundated_area_km2', 0):.2f} km²",
+                "detail": f"最大水深 {forecast.get('max_depth_m', 0):.2f} m，预测单元 {forecast.get('forecast_cell_count', 0)} 个，预见期 {forecast.get('lead_time_h', 0):.1f} h",
+            })
+            notes.append("已运行简化水动力预测，并直接展示模型输出的预测淹没单元。")
+
+        elif intent.show_flood:
             scenario = self._scenario_for_period(intent.return_period_year) or self._scenario_for_period(20)
             if scenario:
                 context = f"{scenario['return_period_year']} 年一遇 · 洪水影响分析"
@@ -196,6 +269,19 @@ class MapActionPlanner:
                 notes.append(f"已按 {scenario['return_period_year']} 年一遇情景展示淹没范围。")
 
         if intent.show_waterway:
+            if intent.show_river:
+                actions.append({
+                    "type": "load_object",
+                    "object_type": "River",
+                    "label": "珊瑚河",
+                    "filters": {},
+                    "fit": True,
+                })
+                cards.append({
+                    "title": "珊瑚河",
+                    "value": str(self.resolver.count("River")),
+                    "detail": "本地河道中心线对象，作为珊瑚河河流主体的地图几何",
+                })
             actions.append({
                 "type": "load_object",
                 "object_type": "Waterway",
@@ -209,6 +295,21 @@ class MapActionPlanner:
                 "detail": "OSM 未命名为珊瑚河的 waterway 候选线，按与流域相交关系纳入对象库",
             })
             notes.append("已打开河道水系候选对象。")
+
+        elif intent.show_river:
+            actions.append({
+                "type": "load_object",
+                "object_type": "River",
+                "label": "珊瑚河",
+                "filters": {},
+                "fit": True,
+            })
+            cards.append({
+                "title": "珊瑚河",
+                "value": str(self.resolver.count("River")),
+                "detail": "本地河道中心线对象，已从 CGCS2000 投影转换为 WGS84 用于前端绘制",
+            })
+            notes.append("已打开珊瑚河河道中心线。")
 
         if intent.show_traffic:
             actions.extend([
@@ -253,6 +354,22 @@ class MapActionPlanner:
                 {"title": "转移路线", "value": str(self.resolver.count("Route")), "detail": "路线对象可与道路和淹没范围叠加"},
             ])
             notes.append("已打开转移对象、安置地点和转移路线。")
+
+        if intent.show_risk:
+            context = "危险区 · 珊瑚河流域"
+            actions.append({
+                "type": "load_object",
+                "object_type": "Risk",
+                "label": "危险区",
+                "filters": {"risk_type": "danger_area"},
+                "fit": True,
+            })
+            cards.append({
+                "title": "危险区",
+                "value": str(self.resolver.count("Risk", {"risk_type": "danger_area"})),
+                "detail": "由危险区台账经纬度生成点对象，可与淹没范围和转移对象叠加",
+            })
+            notes.append("已打开危险区点对象。")
 
         if intent.focus_object_type and intent.focus_object_id and not intent.focus_selected:
             context = "对象定位 · 珊瑚河流域"

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-24T02:01:20.013733+00:00",
+  "generated_at": "2026-06-29T12:19:07.921675+00:00",
   "notes": [
     "Cell inundation geometries are intentionally not materialized as JSONL; they remain scenario spatial sources exported on demand."
   ],
@@ -16,9 +16,21 @@
       "count": 106,
       "path": "domains/flood/data/objects/facility.jsonl"
     },
+    "HistoricalFloodMark": {
+      "count": 6,
+      "path": "domains/flood/data/objects/historical_flood_mark.jsonl"
+    },
     "HydraulicStructure": {
       "count": 40,
       "path": "domains/flood/data/objects/hydraulic_structure.jsonl"
+    },
+    "HydroObservation": {
+      "count": 6,
+      "path": "domains/flood/data/objects/hydro_observation.jsonl"
+    },
+    "HydroStation": {
+      "count": 4,
+      "path": "domains/flood/data/objects/hydro_station.jsonl"
     },
     "Hydrology": {
       "count": 20,
@@ -35,6 +47,10 @@
     "Reservoir": {
       "count": 17,
       "path": "domains/flood/data/objects/reservoir.jsonl"
+    },
+    "Risk": {
+      "count": 24,
+      "path": "domains/flood/data/objects/risk.jsonl"
     },
     "River": {
       "count": 1,
@@ -65,7 +81,7 @@
       "path": "domains/flood/data/objects/transfer.jsonl"
     },
     "Watershed": {
-      "count": 1,
+      "count": 2,
       "path": "domains/flood/data/objects/watershed.jsonl"
     },
     "Waterway": {

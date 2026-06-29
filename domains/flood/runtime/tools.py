@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .cell import find_scenario, ogr_metadata, scenario_path
 from .common import MAPPABLE_OBJECTS
+from .forecast import ensure_latest_forecast
 
 
 def list_mappable_objects(resolver, object_type: str = "") -> list[dict]:
@@ -13,6 +14,11 @@ def list_mappable_objects(resolver, object_type: str = "") -> list[dict]:
             continue
         if item == "Cell":
             count = sum(ogr_metadata(scenario_path(row)).get("feature_count", 0) for row in resolver.scenarios)
+            geometry_type = "Polygon"
+        elif item == "ForecastCell":
+            ensure_latest_forecast(resolver)
+            objects = resolver.query(item)
+            count = len(objects)
             geometry_type = "Polygon"
         else:
             objects = resolver.query(item)

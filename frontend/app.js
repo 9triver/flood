@@ -5,12 +5,17 @@ const state = {
   featureIndex: new Map(),
   focusedLayer: null,
   focusedOriginalStyle: null,
+  highlightedLayers: [],
   selected: null,
   bootstrap: null,
   baseBounds: null,
   sessionId: getSessionId(),
   activeStream: null,
   activeRunId: null,
+  autonomyStream: null,
+  autonomyPhase: "",
+  eventMarkers: new Map(),
+  lastTrace: null,
 };
 
 const OBJECT_CONFIG = {
@@ -27,7 +32,11 @@ const OBJECT_CONFIG = {
   Place: { label: "安置地点", color: "#24895d", swatch: "point" },
   Transfer: { label: "转移对象", color: "#c97a12", swatch: "point" },
   Route: { label: "转移路线", color: "#d44a3a", swatch: "line" },
+  Risk: { label: "危险区", color: "#b91c1c", swatch: "point" },
+  HydroStation: { label: "水文测站", color: "#0284c7", swatch: "point" },
+  HistoricalFloodMark: { label: "历史洪痕", color: "#be123c", swatch: "point" },
   Cell: { label: "淹没范围", color: "#2f80c9", swatch: "fill" },
+  ForecastCell: { label: "预测淹没", color: "#7c3aed", swatch: "fill" },
 };
 
 const ID_FIELDS = {
@@ -44,7 +53,12 @@ const ID_FIELDS = {
   Place: "place_id",
   Transfer: "transfer_id",
   Route: "route_id",
+  Risk: "risk_id",
+  HydroStation: "station_id",
+  HydroObservation: "observation_id",
+  HistoricalFloodMark: "mark_id",
   Cell: "cell_id",
+  ForecastCell: "forecast_cell_id",
 };
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -54,6 +68,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   await loadObject("Watershed", {}, { fit: true });
   await loadObject("County", {}, { fit: false });
   addMessage("agent", "基础对象已加载。");
+  startAutonomyStream();
   renderIcons();
 });
 
@@ -79,7 +94,7 @@ async function bootstrap() {
 
 function renderObjectList(items) {
   const list = document.getElementById("objectList");
-  const visible = ["Watershed", "Waterway", "County", "Road", "Reservoir", "Sluice", "Bridge", "HydraulicStructure", "Place", "Route"];
+  const visible = ["River", "Watershed", "Waterway", "County", "ForecastCell", "HydroStation", "Road", "Reservoir", "Sluice", "Bridge", "HydraulicStructure", "Risk", "Place", "Route"];
   list.innerHTML = "";
 
   visible.forEach((objectType) => {
@@ -101,6 +116,10 @@ function renderObjectList(items) {
 function bindEvents() {
   document.getElementById("fitAllBtn").addEventListener("click", fitAll);
   document.getElementById("clearBtn").addEventListener("click", resetMap);
+  document.querySelectorAll("[data-panel-toggle]").forEach((btn) => {
+    btn.addEventListener("click", () => activateAgentPane(btn.dataset.panelToggle));
+  });
+  document.getElementById("chatInput").addEventListener("focus", () => activateAgentPane("chat"));
   document.querySelectorAll("[data-facility]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const type = btn.dataset.facility;
@@ -112,16 +131,20 @@ function bindEvents() {
 }
 
 async function toggleObject(objectType) {
-  const key = layerKey(objectType, {});
+  const filters = objectType === "ForecastCell" ? { forecast_id: "latest" } : {};
+  const key = layerKey(objectType, filters);
   if (state.layerGroups.has(key)) {
     removeLayer(key);
     return;
   }
-  await loadObject(objectType, {}, { fit: false });
+  await loadObject(objectType, filters, { fit: false });
 }
 
 async function loadObject(objectType, filters = {}, options = {}) {
   const key = layerKey(objectType, filters);
+  if (options.refresh && state.layerGroups.has(key)) {
+    removeLayer(key);
+  }
   if (state.layerGroups.has(key)) {
     const existing = state.layerGroups.get(key);
     if (!state.map.hasLayer(existing)) existing.addTo(state.map);
@@ -167,6 +190,8 @@ function removeLayer(key) {
 
 function resetMap() {
   clearFocus();
+  clearHighlights();
+  clearEventMarkers();
   for (const key of Array.from(state.layerGroups.keys())) {
     const meta = state.layerMeta.get(key);
     if (!["Watershed", "County"].includes(meta?.objectType)) {
@@ -175,6 +200,120 @@ function resetMap() {
   }
   document.getElementById("contextPill").textContent = "基础态 · 领域对象地图";
   fitAll();
+}
+
+function clearEventMarkers() {
+  state.eventMarkers.forEach((marker) => state.map.removeLayer(marker));
+  state.eventMarkers.clear();
+}
+
+function startAutonomyStream() {
+  if (state.autonomyStream) state.autonomyStream.close();
+  const es = new EventSource("/api/autonomy/stream?interval=5");
+  state.autonomyStream = es;
+
+  es.addEventListener("runtime_status", (event) => {
+    const data = parseEvent(event);
+    if (data.label === "等待水文事件") return;
+    addTrace("AUTO", data.label || "事件运行时", data.detail || "");
+  });
+
+  es.addEventListener("domain_event", (event) => {
+    const data = parseEvent(event);
+    renderDomainEvent(data);
+  });
+
+  es.addEventListener("agent_trace", (event) => {
+    const data = parseEvent(event);
+    if (shouldHideAutonomyTrace(data)) return;
+    addTrace(data.tag || "AGENT", data.label || "智能体事件处理", data.detail || "");
+  });
+
+  es.addEventListener("map_actions", async (event) => {
+    const data = parseEvent(event);
+    if (data.context) document.getElementById("contextPill").textContent = data.context;
+    await executeActions(data.map_actions || []);
+    renderMetrics(data.result_cards || []);
+  });
+
+  es.onerror = () => {
+    addTrace("AUTO", "闭环流断开", "5 秒后尝试重连。");
+    es.close();
+    state.autonomyStream = null;
+    window.setTimeout(startAutonomyStream, 5000);
+  };
+}
+
+function renderDomainEvent(data) {
+  if (!data || !data.event_type) return;
+  const tag = data.event_type === "HydroThresholdExceeded" ? "HYDRO" : "EVENT";
+  addTrace(tag, data.title || data.event_type, eventDetail(data));
+  setCyclePhase(eventPhase(data.event_type));
+}
+
+function eventDetail(data) {
+  const payload = data.payload || {};
+  if (data.event_type === "HydroThresholdExceeded") {
+    return `${payload.station_name || data.source_id}: ${payload.metric_label || payload.metric} ${payload.value} ${payload.unit} / 阈值 ${payload.threshold} ${payload.unit}`;
+  }
+  if (data.event_type === "InundationGenerated") {
+    return `预测单元 ${payload.forecast_cell_count || 0} 个，淹没面积 ${(Number(payload.inundated_area_km2 || 0)).toFixed(2)} km²`;
+  }
+  return data.severity || "";
+}
+
+function eventPhase(eventType) {
+  return {
+    HydroThresholdExceeded: "observe",
+    InundationGenerated: "compute",
+    ExposureAnalyzed: "decide",
+  }[eventType] || "analyze";
+}
+
+function renderAutonomyEvent(data) {
+  if (!data || !data.phase) return;
+  state.autonomyPhase = data.phase;
+  document.getElementById("contextPill").textContent = phaseContext(data.phase);
+  setCyclePhase(data.phase);
+  addTrace(data.tag || "AUTO", data.label || "自动闭环", data.detail || "");
+  if (Array.isArray(data.metrics)) renderMetrics(data.metrics);
+}
+
+function setCyclePhase(phase) {
+  if (!document.getElementById("cycleStrip")) return;
+  const order = ["observe", "analyze", "compute", "decide", "monitor"];
+  const current = order.indexOf(phase);
+  document.querySelectorAll("#cycleStrip [data-phase]").forEach((item) => {
+    const index = order.indexOf(item.dataset.phase);
+    item.classList.toggle("active", index === current);
+    item.classList.toggle("done", current >= 0 && index < current);
+  });
+}
+
+function renderMetrics(items) {
+  const grid = document.getElementById("metricGrid");
+  if (!grid) return;
+  grid.innerHTML = "";
+  (items || []).slice(0, 6).forEach((item) => {
+    const card = document.createElement("div");
+    card.className = "metric-card";
+    card.innerHTML = `
+      <div class="metric-label">${escapeHtml(item.label || item.title || "")}</div>
+      <div class="metric-value">${escapeHtml(String(item.value ?? ""))}</div>
+    `;
+    if (item.detail) card.title = item.detail;
+    grid.appendChild(card);
+  });
+}
+
+function phaseContext(phase) {
+  return {
+    observe: "自动闭环 · 感知水文",
+    analyze: "自动闭环 · 态势分析",
+    compute: "自动闭环 · 水动力计算",
+    decide: "自动闭环 · 预警决策",
+    monitor: "自动闭环 · 持续监测",
+  }[phase] || "自动闭环 · 珊瑚河流域";
 }
 
 function fitAll() {
@@ -217,12 +356,15 @@ function fitFeatureLayer(layer) {
 }
 
 function featureStyle(objectType, feature) {
-  if (objectType === "Cell") {
+  if (objectType === "Cell" || objectType === "ForecastCell") {
     const depth = Number(feature.properties?.depth_m || feature.properties?.YMSS || 0);
-    const color = depth > 1 ? "#14539a" : depth > 0.5 ? "#2f80c9" : "#7ab6df";
-    return { color, weight: 0.5, fillColor: color, fillOpacity: 0.34 };
+    const color = objectType === "ForecastCell"
+      ? depth > 1.2 ? "#4c1d95" : depth > 0.6 ? "#7c3aed" : "#c084fc"
+      : depth > 1 ? "#14539a" : depth > 0.5 ? "#2f80c9" : "#7ab6df";
+    return { color, weight: 0.5, fillColor: color, fillOpacity: objectType === "ForecastCell" ? 0.38 : 0.34 };
   }
   if (objectType === "Watershed") return { color: "#1f2937", weight: 1.3, fillColor: "#9bc4df", fillOpacity: 0.1 };
+  if (objectType === "River") return { color: "#0e7490", weight: 4, opacity: 0.95 };
   if (objectType === "Waterway") return { color: "#0e7490", weight: 2.4, opacity: 0.9 };
   if (objectType === "County") return { color: "#7b8794", weight: 1.2, fillOpacity: 0 };
   if (objectType === "Road") return { color: "#5f6772", weight: 2, opacity: 0.82 };
@@ -239,13 +381,31 @@ function pointStyle(objectType, feature) {
   }
   if (objectType === "Place") color = "#24895d";
   if (objectType === "Transfer") color = "#c97a12";
+  if (objectType === "Risk") color = "#b91c1c";
   return {
-    radius: objectType === "Bridge" ? 4.5 : 5.5,
+    radius: pointRadius(objectType),
     color: "#ffffff",
-    weight: 1.5,
+    weight: pointStrokeWeight(objectType),
     fillColor: color,
-    fillOpacity: 0.92,
+    fillOpacity: objectType === "Risk" ? 0.78 : 0.88,
   };
+}
+
+function pointRadius(objectType) {
+  return {
+    Risk: 2.2,
+    Place: 2.6,
+    Transfer: 3.0,
+    Bridge: 3.4,
+    Sluice: 3.6,
+    Reservoir: 3.8,
+    Facility: 3.6,
+    HydroStation: 4.0,
+  }[objectType] || 3.4;
+}
+
+function pointStrokeWeight(objectType) {
+  return ["Risk", "Place", "Transfer"].includes(objectType) ? 0.9 : 1.2;
 }
 
 function popupHtml(objectType, feature) {
@@ -321,8 +481,9 @@ function applyFocus(layerItem, objectType) {
   clearFocus();
   state.focusedLayer = layerItem;
   const isPoint = Boolean(layerItem.setRadius);
+  const radius = pointRadius(objectType) + 1.6;
   const style = isPoint
-    ? { radius: 8, color: "#f8fafc", weight: 3, fillColor: "#f59e0b", fillOpacity: 1 }
+    ? { radius, color: "#f8fafc", weight: 1.8, fillColor: "#f59e0b", fillOpacity: 0.96 }
     : { color: "#f59e0b", weight: 4, fillColor: "#f59e0b", fillOpacity: 0.28 };
   layerItem.setStyle?.(style);
   layerItem.bringToFront?.();
@@ -341,6 +502,60 @@ function clearFocus() {
   state.focusedOriginalStyle = null;
 }
 
+function applyHighlight(layerItem, objectType) {
+  if (!layerItem) return;
+  const isPoint = Boolean(layerItem.setRadius);
+  const radius = pointRadius(objectType) + 1.4;
+  if (isPoint) layerItem.setRadius(radius);
+  layerItem.setStyle?.(isPoint
+    ? { radius, color: "#fff7ed", weight: 1.8, fillColor: "#ea580c", fillOpacity: 0.96 }
+    : { color: "#ea580c", weight: 5, fillColor: "#ea580c", fillOpacity: 0.32 });
+  layerItem.bringToFront?.();
+  state.highlightedLayers.push({ layer: layerItem, objectType });
+}
+
+function clearHighlights() {
+  state.highlightedLayers.forEach(({ layer, objectType }) => {
+    const feature = layer.feature || {};
+    if (layer.setStyle && objectType) {
+      if (layer.setRadius) layer.setRadius(pointStyle(objectType, feature).radius);
+      layer.setStyle(layer.setRadius ? pointStyle(objectType, feature) : featureStyle(objectType, feature));
+    }
+  });
+  state.highlightedLayers = [];
+}
+
+async function highlightObjects(action = {}) {
+  const objectType = action.object_type;
+  const objectIds = (action.object_ids || []).map(String).filter(Boolean);
+  if (!objectType || !objectIds.length) return false;
+  await loadObject(objectType, action.filters || {}, { fit: false, label: action.label });
+  objectIds.forEach((objectId) => {
+    const entry = state.featureIndex.get(featureIndexKey(objectType, objectId));
+    if (entry) applyHighlight(entry.layer, objectType);
+  });
+  if (action.fit) fitHighlighted();
+  return true;
+}
+
+function fitHighlighted() {
+  const bounds = [];
+  state.highlightedLayers.forEach(({ layer }) => {
+    const b = layer.getBounds?.();
+    if (b?.isValid()) bounds.push(b);
+    const latlng = layer.getLatLng?.();
+    if (latlng) bounds.push(L.latLngBounds([latlng]));
+  });
+  if (bounds.length) {
+    state.map.flyToBounds(bounds.reduce((acc, b) => acc.extend(b), bounds[0]).pad(0.35), {
+      animate: true,
+      duration: 0.85,
+      easeLinearity: 0.22,
+      maxZoom: 15,
+    });
+  }
+}
+
 function detailHtml(objectType, props) {
   const keys = Object.keys(props).filter((key) => props[key] !== "" && props[key] !== null && key !== "geometry");
   const rows = keys.slice(0, 8).map((key) => `<div><strong>${escapeHtml(key)}</strong>: ${escapeHtml(String(props[key]))}</div>`);
@@ -349,6 +564,7 @@ function detailHtml(objectType, props) {
 
 async function onChatSubmit(event) {
   event.preventDefault();
+  activateAgentPane("chat");
   if (state.activeStream) {
     stopActiveRun();
     return;
@@ -407,15 +623,9 @@ function connectChatStream({ message = "", assistant, runId = "", since = 0 }) {
     addTrace(data.blocked ? "BLOCK" : "RESULT", data.name || "tool result", compactText(data.result || ""));
   });
 
-  es.addEventListener("reasoning", (event) => {
-    const data = parseEvent(event);
-    addTrace("THINK", "模型思考", compactText(data.content || ""));
-  });
+  es.addEventListener("reasoning", () => {});
 
-  es.addEventListener("debug", (event) => {
-    const data = parseEvent(event);
-    addTrace("DBG", data.stage || "debug", compactText(data.content || ""));
-  });
+  es.addEventListener("debug", () => {});
 
   es.addEventListener("confirmation_required", (event) => {
     const data = parseEvent(event);
@@ -433,7 +643,6 @@ function connectChatStream({ message = "", assistant, runId = "", since = 0 }) {
 
   es.addEventListener("done", () => {
     if (!assistant.dataset.rawMarkdown?.trim()) setMessageMarkdown(assistant, "已完成。");
-    addTrace("DONE", "Agent 完成", "");
     finishStream(true);
   });
 
@@ -470,7 +679,14 @@ async function executeActions(actions) {
         fit: action.fit,
         label: action.label,
         simplify_tolerance: action.simplify_tolerance,
+        refresh: action.refresh,
       });
+    }
+    if (action.type === "clear_highlights") {
+      clearHighlights();
+    }
+    if (action.type === "highlight_objects") {
+      await highlightObjects(action);
     }
     if (action.type === "focus_object") {
       await focusObject(action);
@@ -478,7 +694,52 @@ async function executeActions(actions) {
     if (action.type === "focus_selected") {
       await focusObject(action);
     }
+    if (action.type === "show_event_marker") {
+      showEventMarker(action.event || {}, action);
+    }
   }
+}
+
+function showEventMarker(event, action = {}) {
+  const lon = Number(event.longitude);
+  const lat = Number(event.latitude);
+  if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+  const eventId = event.event_id || `${event.event_type}:${lon}:${lat}`;
+  if (state.eventMarkers.has(eventId)) {
+    const existing = state.eventMarkers.get(eventId);
+    if (action.fit) state.map.flyTo(existing.getLatLng(), Math.max(state.map.getZoom(), 13), { animate: true, duration: 0.75 });
+    return existing;
+  }
+  const marker = L.circleMarker([lat, lon], {
+    radius: event.severity === "watch" ? 7 : 8,
+    color: "#ffffff",
+    weight: 2,
+    fillColor: event.severity === "watch" ? "#f59e0b" : "#dc2626",
+    fillOpacity: 0.92,
+    className: "event-marker",
+  }).addTo(state.map);
+  marker.bindPopup(eventPopupHtml(event));
+  marker.on("click", () => marker.openPopup());
+  state.eventMarkers.set(eventId, marker);
+  if (action.fit) {
+    state.map.flyTo([lat, lon], Math.max(state.map.getZoom(), 13), {
+      animate: true,
+      duration: 0.75,
+      easeLinearity: 0.22,
+    });
+    marker.openPopup();
+  }
+  return marker;
+}
+
+function eventPopupHtml(event) {
+  const payload = event.payload || {};
+  return `
+    <div class="popup-title">${escapeHtml(event.title || event.event_type || "水文事件")}</div>
+    <div class="popup-meta">${escapeHtml(payload.station_name || event.source_id || "")}</div>
+    <div class="popup-meta">${escapeHtml(payload.metric_label || payload.metric || "")}: ${escapeHtml(String(payload.value ?? ""))} ${escapeHtml(payload.unit || "")}</div>
+    <div class="popup-meta">阈值: ${escapeHtml(String(payload.threshold ?? ""))} ${escapeHtml(payload.unit || "")}</div>
+  `;
 }
 
 function addMessage(role, content) {
@@ -549,14 +810,48 @@ function scrollChat() {
 
 function addTrace(tag, label, detail) {
   const wrap = document.getElementById("agentTrace");
+  const key = JSON.stringify([tag || "", label || "", detail || ""]);
+  if (state.lastTrace?.key === key && state.lastTrace.item?.isConnected) {
+    state.lastTrace.count += 1;
+    const count = state.lastTrace.item.querySelector(".trace-count");
+    if (count) {
+      count.hidden = false;
+      count.textContent = `x${state.lastTrace.count}`;
+    }
+    state.lastTrace.item.classList.add("is-repeated");
+    wrap.scrollTop = wrap.scrollHeight;
+    return state.lastTrace.item;
+  }
   const item = document.createElement("div");
   item.className = "trace-item";
   item.innerHTML = `
-    <div class="trace-label"><span>${escapeHtml(label || "")}</span><span class="trace-tag">${escapeHtml(tag)}</span></div>
-    ${detail ? `<div class="trace-detail">${escapeHtml(String(detail))}</div>` : ""}
+    <div class="trace-label">
+      <span>${escapeHtml(label || "")}</span>
+      <span class="trace-badges"><span class="trace-count" hidden></span><span class="trace-tag">${escapeHtml(tag)}</span></span>
+    </div>
+    ${detail ? `<div class="trace-detail markdown-body">${renderMarkdown(String(detail))}</div>` : ""}
   `;
   wrap.appendChild(item);
+  state.lastTrace = { key, item, count: 1 };
   wrap.scrollTop = wrap.scrollHeight;
+  return item;
+}
+
+function shouldHideAutonomyTrace(data = {}) {
+  return new Set(["EVENT", "RESULT", "SYSTEM", "CUT"]).has(data.tag);
+}
+
+function activateAgentPane(name) {
+  const active = name === "chat" ? "chat" : "trace";
+  document.querySelectorAll("[data-agent-pane]").forEach((section) => {
+    const isActive = section.dataset.agentPane === active;
+    section.classList.toggle("is-active", isActive);
+    const toggle = section.querySelector("[data-panel-toggle]");
+    if (toggle) toggle.setAttribute("aria-expanded", String(isActive));
+  });
+  if (active === "chat") {
+    scrollChat();
+  }
 }
 
 function parseEvent(event) {
@@ -579,10 +874,13 @@ function readableTool(name, args) {
     inspect: "查看定义",
     list_scenarios: "列出洪水情景",
     get_scenario_summary: "查看情景汇总",
+    run_flood_forecast: "运行洪水预测",
+    run_emergency_cycle: "运行闭环预警",
     analyze_risks: "分析风险",
     list_mappable_objects: "列出可绘制对象",
     export_objects_geojson: "导出对象 GeoJSON",
     ui_show_objects: "地图显示",
+    ui_show_event_marker: "地图标记事件",
     ui_clear_map: "清空地图",
     ui_focus_object: "地图定位",
   };

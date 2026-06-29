@@ -5,6 +5,7 @@ from oag.ontology.repository import ObjectRepository
 from oag.ontology.schema import Ontology
 
 from domains.flood.runtime.geojson import export_objects_geojson
+from domains.flood.runtime.forecast import run_emergency_cycle, run_flood_forecast
 from domains.flood.runtime.repository import FloodRepository
 from domains.flood.runtime.tools import (
     list_mappable_objects,
@@ -23,6 +24,12 @@ def register(registry: FunctionRegistry, repository: ObjectRepository,
     registry.register("get_scenario_summary", lambda scenario_id="", return_period_year=0: scenario_summary(
         resolver, scenario_id, return_period_year,
     ), ontology.functions["get_scenario_summary"])
+    registry.register("run_flood_forecast", lambda forecast_id="latest", force=False: run_flood_forecast(
+        resolver, forecast_id, force,
+    ), ontology.functions["run_flood_forecast"])
+    registry.register("run_emergency_cycle", lambda force_forecast=False: run_emergency_cycle(
+        resolver, force_forecast,
+    ), ontology.functions["run_emergency_cycle"])
     registry.register("analyze_risks", not_wired("analyze_risks"),
                       ontology.functions["analyze_risks"])
     registry.register("list_mappable_objects", lambda object_type="": list_mappable_objects(

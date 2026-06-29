@@ -98,6 +98,7 @@ def ogr_export(source: Path, target: Path, simplify_tolerance: float = 0):
 
 
 def features(path: Path) -> list[dict]:
+    metadata = ogr_metadata(path)
     result = subprocess.run(
         ["ogr2ogr", "-f", "GeoJSON", "/vsistdout/", "-t_srs", "EPSG:4326", str(path)],
         check=False,
@@ -106,7 +107,11 @@ def features(path: Path) -> list[dict]:
     )
     if result.returncode != 0 or not result.stdout.strip():
         return []
-    return json.loads(result.stdout).get("features", [])
+    rows = json.loads(result.stdout).get("features", [])
+    for row in rows:
+        row["_source_crs"] = metadata.get("source_crs", "")
+        row["_geometry_crs"] = "EPSG:4326"
+    return rows
 
 
 def cell_record(scenario_id: str, index: int, feature: dict, path: Path) -> dict:
@@ -123,7 +128,6 @@ def cell_record(scenario_id: str, index: int, feature: dict, path: Path) -> dict
         "arrival_time_h": as_float(first_non_empty(props, "DDSJ", "arrival")),
         "recession_time_h": as_float(first_non_empty(props, "XTSJ", "recession")),
         "area_m2": as_float(first_non_empty(props, "WGMJ", "Shape_Area")),
-        "crs": "EPSG:4546",
         **geometry_fields(feature),
         "data_path": rel(path),
     }
@@ -139,5 +143,7 @@ def geometry_fields(feature: dict) -> dict:
     geom = feature.get("geometry") or {}
     return {
         "geometry_type": geom.get("type", ""),
+        "source_crs": feature.get("_source_crs", ""),
+        "geometry_crs": feature.get("_geometry_crs", "EPSG:4326") if geom else "",
         "geometry": json.dumps(geom, ensure_ascii=False) if geom else "",
     }

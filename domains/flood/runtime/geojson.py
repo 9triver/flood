@@ -27,6 +27,18 @@ def export_objects_geojson(resolver, object_type: str,
         ogr_export(source, target, simplify_tolerance)
         return geojson_result(object_type, {"scenario_id": scenario["scenario_id"]}, target, cached=False)
 
+    if object_type == "ForecastCell":
+        if not filters.get("forecast_id"):
+            filters["forecast_id"] = "latest"
+        rows = resolver.query(object_type, filters=filters)
+        collection = {
+            "type": "FeatureCollection",
+            "name": object_type,
+            "features": [feature_from_row(row) for row in rows if row.get("geometry")],
+        }
+        target.write_text(json.dumps(collection, ensure_ascii=False), encoding="utf-8")
+        return geojson_result(object_type, filters, target, cached=False)
+
     rows = resolver.query(object_type, filters=filters)
     collection = {
         "type": "FeatureCollection",
@@ -68,6 +80,9 @@ def export_key(object_type: str, filters: dict[str, Any]) -> str:
     if object_type == "Cell":
         scenario_id = filters.get("scenario_id") or f"{filters.get('return_period_year', '')}a"
         return f"{object_type.lower()}_{scenario_id}".strip("_")
+    if object_type == "ForecastCell":
+        forecast_id = filters.get("forecast_id") or "latest"
+        return f"{object_type.lower()}_{forecast_id}"
     if not filters:
         return object_type.lower()
     parts = [object_type.lower()]

@@ -9,7 +9,7 @@ from domains.flood.runtime.common import MAPPABLE_OBJECTS
 from frontend_server.map_planner import OBJECT_LABELS
 
 
-UI_TOOL_NAMES = {"ui_show_objects", "ui_clear_map", "ui_focus_object"}
+UI_TOOL_NAMES = {"ui_show_objects", "ui_clear_map", "ui_focus_object", "ui_show_event_marker"}
 
 
 def register_map_tools(tools: ToolRegistry, resolver, registry) -> None:
@@ -62,10 +62,13 @@ def register_map_tools(tools: ToolRegistry, resolver, registry) -> None:
         },
         handler=lambda args: _show_objects(args, resolver, registry),
         usage_prompt=(
-            "常用映射：河道/水系/河网 => Waterway；流域 => Watershed；行政边界 => County；"
+            "常用映射：珊瑚河/主河道/河道中心线 => River；河道/水系/河网 => Waterway；"
+            "流域/小流域 => Watershed；行政边界 => County；危险区/风险点 => Risk；"
             "学校/医院/政府机构 => Facility 并分别过滤 facility_type=school/hospital/government；"
+            "水文站/测站/雨量站/水位站/气象站 => HydroStation；"
             "水利设施/水利工程 => Reservoir、Sluice、HydraulicStructure；道路交通 => Road、Bridge；"
-            "转移安置 => Transfer、Place、Route；淹没范围/洪水情景 => Cell，并传 scenario_id 或先调用 get_scenario_summary。"
+            "转移安置 => Transfer、Place、Route；淹没范围/洪水情景 => Cell，并传 scenario_id 或先调用 get_scenario_summary；"
+            "预测淹没/未来淹没/实时预测 => ForecastCell，并传 forecast_id=latest 或先调用 run_flood_forecast。"
         ),
         category="ui",
         policy=policy,
@@ -111,6 +114,37 @@ def register_map_tools(tools: ToolRegistry, resolver, registry) -> None:
         max_result_chars=2000,
     ))
 
+    tools.register(ToolDef(
+        name="ui_show_event_marker",
+        description=(
+            "在前端 GIS 地图中显示一个领域事件 marker。"
+            "当后台水文异常、淹没异常、告警事件需要被用户在地图上直接感知时调用。"
+            "该工具只改变前端显示，不改变领域数据。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "event": {
+                    "type": "object",
+                    "description": "领域事件对象，必须包含 event_id/event_type/title/longitude/latitude/payload 等可用字段。",
+                },
+                "context": {"type": "string", "description": "地图上下文短标题"},
+                "note": {"type": "string", "description": "给用户的简短说明"},
+                "fit": {"type": "boolean", "description": "是否动画缩放到该事件 marker"},
+                "show_source": {"type": "boolean", "description": "是否同时加载事件来源对象，例如水文测站"},
+            },
+            "required": ["event"],
+        },
+        handler=lambda args: _show_event_marker(args),
+        usage_prompt=(
+            "HydroThresholdExceeded 这类水文异常事件通常应调用 ui_show_event_marker，"
+            "让前端用 marker 标出异常发生位置；如果需要同时看到测站对象，可设置 show_source=true。"
+        ),
+        category="ui",
+        policy=policy,
+        max_result_chars=4000,
+    ))
+
 
 def tool_result_to_map_event(tool_name: str, result: str) -> dict[str, Any] | None:
     if tool_name not in UI_TOOL_NAMES:
@@ -147,6 +181,8 @@ def _show_objects(args: dict[str, Any], resolver, registry) -> str:
             return _error(f"filters for {object_type} must be an object")
         if object_type == "Cell" and not filters.get("scenario_id") and not filters.get("return_period_year"):
             return _error("Cell requires filters.scenario_id or filters.return_period_year")
+        if object_type == "ForecastCell" and not filters.get("forecast_id"):
+            filters["forecast_id"] = "latest"
 
         label = str(item.get("label") or OBJECT_LABELS.get(object_type) or object_type)
         action = {
@@ -196,6 +232,35 @@ def _focus_object(args: dict[str, Any]) -> str:
     return _payload(context=context, actions=[action], cards=cards, note=note)
 
 
+def _show_event_marker(args: dict[str, Any]) -> str:
+    event = args.get("event") or {}
+    if not isinstance(event, dict):
+        return _error("event must be an object")
+    actions: list[dict[str, Any]] = []
+    if args.get("show_source") and event.get("source_type") in MAPPABLE_OBJECTS:
+        actions.append({
+            "type": "load_object",
+            "object_type": event.get("source_type"),
+            "label": OBJECT_LABELS.get(str(event.get("source_type")), str(event.get("source_type"))),
+            "filters": {},
+            "fit": False,
+        })
+    actions.append({
+        "type": "show_event_marker",
+        "event": event,
+        "fit": bool(args.get("fit")) if "fit" in args else True,
+    })
+    context = str(args.get("context") or "事件告警 · 珊瑚河流域")
+    note = str(args.get("note") or "已在地图上显示事件 marker。")
+    payload = event.get("payload") or {}
+    cards = [{
+        "title": str(event.get("title") or event.get("event_type") or "领域事件"),
+        "value": str(payload.get("value") or event.get("severity") or ""),
+        "detail": str(payload.get("station_name") or event.get("source_id") or ""),
+    }]
+    return _payload(context=context, actions=actions, cards=cards, note=note)
+
+
 def _payload(*, context: str, actions: list[dict[str, Any]],
              cards: list[dict[str, str]], note: str) -> str:
     return json.dumps({
@@ -214,11 +279,15 @@ def _error(message: str) -> str:
 def _count_mappable(resolver, registry, object_type: str, filters: dict[str, Any]) -> int:
     if object_type == "Cell":
         return int(resolver.count("Cell", filters))
+    if object_type == "ForecastCell":
+        return int(resolver.count("ForecastCell", filters or {"forecast_id": "latest"}))
     return int(resolver.count(object_type, filters))
 
 
 def _default_context(actions: list[dict[str, Any]]) -> str:
     types = {action.get("object_type") for action in actions}
+    if "ForecastCell" in types:
+        return "实时预测 · 珊瑚河流域"
     if "Cell" in types:
         return "洪水影响分析 · 珊瑚河流域"
     if types & {"Reservoir", "Sluice", "HydraulicStructure"}:

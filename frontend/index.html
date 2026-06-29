@@ -65,20 +65,37 @@
           <div class="status-dot" title="本地原型"></div>
         </header>
 
-        <section class="agent-trace" id="agentTrace"></section>
+        <div class="agent-workspace" id="agentWorkspace">
+          <section class="accordion-section trace-section is-active" data-agent-pane="trace">
+            <button class="accordion-header" type="button" data-panel-toggle="trace" aria-expanded="true">
+              <span>Agent Trace</span>
+              <i data-lucide="chevron-down"></i>
+            </button>
+            <div class="accordion-body">
+              <section class="agent-trace" id="agentTrace"></section>
+            </div>
+          </section>
 
-        <section class="chat-log" id="chatLog"></section>
-
-        <form class="chat-form" id="chatForm">
-          <input
-            id="chatInput"
-            autocomplete="off"
-            placeholder="询问道路、桥梁、学校、转移路线或洪水影响"
-          />
-          <button class="send-button" type="submit" aria-label="发送">
-            <i data-lucide="send-horizontal"></i>
-          </button>
-        </form>
+          <section class="accordion-section chat-section" data-agent-pane="chat">
+            <button class="accordion-header" type="button" data-panel-toggle="chat" aria-expanded="false">
+              <span>用户对话</span>
+              <i data-lucide="chevron-down"></i>
+            </button>
+            <div class="accordion-body chat-body">
+              <section class="chat-log" id="chatLog"></section>
+            </div>
+            <form class="chat-form" id="chatForm">
+              <input
+                id="chatInput"
+                autocomplete="off"
+                placeholder="询问道路、桥梁、学校、转移路线或洪水影响"
+              />
+              <button class="send-button" type="submit" aria-label="发送">
+                <i data-lucide="send-horizontal"></i>
+              </button>
+            </form>
+          </section>
+        </div>
       </aside>
     </div>
 
