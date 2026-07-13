@@ -39,6 +39,12 @@ def export_objects_geojson(resolver, object_type: str,
         target.write_text(json.dumps(collection, ensure_ascii=False), encoding="utf-8")
         return geojson_result(object_type, filters, target, cached=False)
 
+    if object_type == "HydrodynamicCell":
+        return {
+            "error": "HydrodynamicCell is rendered through /api/hydrodynamic-grid/tile for performance.",
+            "filters": filters,
+        }
+
     rows = resolver.query(object_type, filters=filters)
     collection = {
         "type": "FeatureCollection",
@@ -83,6 +89,8 @@ def export_key(object_type: str, filters: dict[str, Any]) -> str:
     if object_type == "ForecastCell":
         forecast_id = filters.get("forecast_id") or "latest"
         return f"{object_type.lower()}_{forecast_id}"
+    if object_type == "HydrodynamicCell":
+        return object_type.lower()
     if not filters:
         return object_type.lower()
     parts = [object_type.lower()]

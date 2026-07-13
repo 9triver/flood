@@ -16,14 +16,13 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
-FRONTEND_DIR = PROJECT_DIR / "frontend"
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 DOMAIN_DIR = PROJECT_DIR / "domains" / "flood"
 
 sys.path.insert(0, str(PROJECT_DIR))
 sys.path.insert(0, str(PROJECT_DIR / "agent"))
 
-from frontend_server.map_planner import MapActionPlanner  # noqa: E402
-from frontend_server.map_tools import register_map_tools, tool_result_to_map_event  # noqa: E402
+from server.map_tools import register_map_tools, tool_result_to_map_event  # noqa: E402
 from openai import OpenAI  # noqa: E402
 from oag.agent import Agent  # noqa: E402
 from oag.harness import Harness  # noqa: E402
@@ -31,12 +30,14 @@ from oag.ontology.loader import load_domain  # noqa: E402
 from oag.runtime import HarnessConfig  # noqa: E402
 from oag.runtime.events import event_to_dict  # noqa: E402
 from oag.runtime.hooks import HookResult  # noqa: E402
+from domains.flood.runtime.hydrodynamic_grid import hydrodynamic_grid_stats, hydrodynamic_grid_tile  # noqa: E402
 
 
 ID_FIELDS = {
     "River": "river_id",
     "Watershed": "watershed_id",
     "Waterway": "waterway_id",
+    "HydrodynamicBoundary": "boundary_id",
     "County": "county_id",
     "Town": "town_id",
     "Reservoir": "reservoir_id",
@@ -56,6 +57,7 @@ ID_FIELDS = {
     "Cell": "cell_id",
     "ForecastRun": "forecast_id",
     "ForecastCell": "forecast_cell_id",
+    "HydrodynamicCell": "hydrodynamic_cell_id",
 }
 
 HYDRO_EVENT_DEBUG_TOOLS = frozenset({
@@ -97,7 +99,6 @@ class FloodApp:
         self.ontology, self.repository, self.registry = load_domain(DOMAIN_DIR)
         self.resolver = self.registry.get_resolver("flood_repository")
         self.scenarios = self.registry.call("list_scenarios")
-        self.map_planner = MapActionPlanner(self.resolver, self.registry, self.scenarios)
         self._pending_map_events: dict[str, list[dict[str, Any]]] = {}
         self._pending_map_events_lock = threading.Lock()
         self._pending_forecast_results: dict[str, list[dict[str, Any]]] = {}
@@ -149,6 +150,14 @@ class FloodApp:
             path = Path(result["absolute_path"])
             return result, path.read_bytes()
 
+    def hydrodynamic_grid_stats(self, forecast_id: str = "latest") -> dict[str, Any]:
+        return hydrodynamic_grid_stats(forecast_id)
+
+    def hydrodynamic_grid_tile(self, z: int, x: int, y: int,
+                               forecast_id: str = "latest",
+                               wet_only: bool = False) -> dict[str, Any]:
+        return hydrodynamic_grid_tile(z, x, y, forecast_id, wet_only)
+
     def get_object(self, object_type: str, object_id: str) -> dict:
         row = self.resolver.query_by_id(object_type, object_id)
         if row:
@@ -161,27 +170,22 @@ class FloodApp:
         selected = run.selected or {}
 
         if not self.agent:
-            plan = self.map_planner.plan(run.message, selected)
-            self._append_map_event(run, plan)
             self._append_event(run, "text", {
                 "type": "text",
-                "content": plan.get("note") or "当前未启用 LLM，已根据地图动作规则更新地图。",
+                "content": "当前未启用 LLM，无法由智能体推理并调用地图工具。",
             })
             return
 
         agent_message = self._agent_message(run.message, selected)
-        emitted_map_action = False
         try:
             for event in self.agent.chat_stream(agent_message, session_id=run.session_id):
                 if run.cancelled:
                     break
                 for map_event in self._pop_pending_map_events(run.session_id):
-                    emitted_map_action = True
                     self._append_map_event(run, map_event)
                 data = event_to_dict(event)
                 self._append_event(run, data["type"], data)
             for map_event in self._pop_pending_map_events(run.session_id):
-                emitted_map_action = True
                 self._append_map_event(run, map_event)
         except Exception as exc:
             print(f"OAG agent stream failed: {exc}")
@@ -189,10 +193,6 @@ class FloodApp:
                 "type": "text",
                 "content": f"智能体生成失败：{exc}",
             })
-        if not emitted_map_action:
-            plan = self.map_planner.plan(run.message, selected)
-            if plan.get("map_actions"):
-                self._append_map_event(run, plan)
 
     def _append_map_event(self, run: "AgentRun", result: dict):
         self._append_event(run, "map_actions", {
@@ -250,12 +250,13 @@ class FloodApp:
                     "不要让用户通过情景切换控件操作；如果需要其他情景，请让用户直接在对话中指定。"
                     "当用户要求在地图上显示、打开、绘制、加载、叠加、缩放、聚焦或清空对象时，"
                     "必须调用 ui_show_objects、ui_show_event_marker、ui_focus_object 或 ui_clear_map，让前端执行地图动作；"
+                    "当用户要求清除、不显示或隐藏淹没范围、预测淹没结果、水动力结果时，调用 ui_clear_map 并传 target=inundation；这只移除淹没结果，不改变地图视野。"
                     "不要只用文字说明将要显示什么。"
                     "当前 analyze_risks/plan_response/generate_brief 可能尚未实现；如工具返回 not_implemented，必须如实说明。"
-                    "当用户要求运行预测、实时预测或未来淹没时，先调用 run_flood_forecast，再调用 ui_show_objects 显示 ForecastCell。"
+                    "当用户要求运行预测、实时预测或未来淹没时，先调用 run_flood_forecast，再调用 ui_show_objects；地图工具会先显示水动力网格，再应用 forecast_id=latest 的水深结果。"
                     "当用户要求自主观测、持续预测、自动告警、闭环调度或避洪转移调度时，调用 run_emergency_cycle，"
-                    "再用 ui_show_objects 展示 ForecastCell、Risk、Transfer、Place、Route 等对象。"
-                    "预测淹没必须使用 ForecastCell；不要把 severity_index 或综合指标映射到 5/10/20/50/100 年一遇情景。"
+                    "再用 ui_show_objects 展示 HydrodynamicCell、Risk、Transfer、Place、Route 等对象。"
+                    "预测淹没地图展示必须分解为显示水动力网格和应用 forecast_id=latest 的水深结果；不要把 severity_index 或综合指标映射到 5/10/20/50/100 年一遇情景。"
                     "在空间叠加风险函数实现前，不得声称已经判定某个学校、道路、桥梁或路线受淹；只能说明已展示对象和淹没范围，可作为研判基础。"
                 ),
             ),
@@ -486,37 +487,42 @@ class EventRuntime:
             },
         ]
 
-    def ensure_started(self) -> None:
-        if self._started:
-            return
-        self._started = True
-        threading.Thread(target=self._hydro_station_loop, daemon=True).start()
-        threading.Thread(target=self._event_worker_loop, daemon=True).start()
-
-    def stream(self, interval: int):
-        self.ensure_started()
+    def reset(self) -> None:
         with self.condition:
             self._generation += 1
             self.events.clear()
             self.outputs.clear()
             self._active_thresholds.clear()
             self._published_inundation_sources.clear()
-            next_seq = 0
-        yield Handler._format_sse("runtime_status", {
-            "type": "runtime_status",
-            "label": "事件驱动闭环已启动",
-            "detail": "后台水文站 mock 服务正在推送观测，异常事件将进入单 worker 队列串行交给智能体处理。",
-        })
-        yield Handler._format_sse("map_actions", {
-            "type": "map_actions",
-            "context": "调试 · 水文事件到智能体",
-            "map_actions": [
-                {"type": "reset"},
-            ],
-            "result_cards": [
-                {"title": "调试范围", "value": "水文事件", "detail": "已切断水动力模型、淹没事件、影响评估和预案自动执行。"},
-            ],
-        })
+            self.outputs.append({"event": "runtime_status", "data": {
+                "type": "runtime_status",
+                "label": "事件驱动闭环已启动",
+                "detail": "后台水文站 mock 服务正在推送观测，异常事件将进入单 worker 队列串行交给智能体处理。",
+            }})
+            self.outputs.append({"event": "map_actions", "data": {
+                "type": "map_actions",
+                "context": "调试 · 水文事件到智能体",
+                "map_actions": [
+                    {"type": "reset"},
+                ],
+                "result_cards": [
+                    {"title": "调试范围", "value": "水文事件", "detail": "水文异常事件由 LLM 决定地图展示和是否启动水动力预测。"},
+                ],
+            }})
+            self.condition.notify_all()
+
+    def ensure_started(self) -> None:
+        if self._started:
+            return
+        self._started = True
+        self.reset()
+        threading.Thread(target=self._hydro_station_loop, daemon=True).start()
+        threading.Thread(target=self._event_worker_loop, daemon=True).start()
+
+    def stream(self, interval: int):
+        self.ensure_started()
+        with self.condition:
+            next_seq = max(0, len(self.outputs) - 80)
         while True:
             pending = []
             with self.condition:
@@ -740,8 +746,8 @@ class EventRuntime:
             "/no_think\n"
             "你正在作为珊瑚河洪水应急智能体接收水动力模型输出事件。"
             "本轮链路调试只放开到地图展示预测淹没范围。"
-            "如果你认为该淹没事件需要在 GIS 上展示，必须调用 ui_show_objects 显示 ForecastCell，"
-            "filters 使用 {\"forecast_id\":\"latest\"}，fit=true，simplify_tolerance=5，refresh=true。"
+            "如果你认为该淹没事件需要在 GIS 上展示，必须调用 ui_show_objects 显示预测淹没结果，"
+            "对象使用 HydrodynamicCell，filters 使用 {\"forecast_id\":\"latest\"}，fit=false，refresh=true；地图工具会拆成显示网格和应用水深结果。"
             "禁止调用 run_emergency_cycle、analyze_risks 或 plan_response；影响评估和防洪响应预案仍然切断。"
             "请用简短结论说明：预测运行、淹没面积、最大水深，以及是否已请求地图展示。"
             "原始事件如下：\n"
@@ -974,12 +980,14 @@ def forecast_map_event(result: dict[str, Any]) -> dict[str, Any]:
         "context": "事件驱动 · 水动力计算",
         "map_actions": [
             {
-                "type": "load_object",
-                "object_type": "ForecastCell",
-                "label": "预测淹没单元",
+                "type": "show_hydrodynamic_mesh",
+                "fit": False,
+            },
+            {
+                "type": "apply_hydrodynamic_result",
+                "label": "预测淹没范围",
                 "filters": {"forecast_id": "latest"},
-                "simplify_tolerance": 5,
-                "fit": True,
+                "fit": False,
                 "refresh": True,
             },
         ],
@@ -1041,6 +1049,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._autonomy_stream(parsed.query)
             if parsed.path == "/api/agent/runs/active":
                 return self._active_run(parsed.query)
+            if parsed.path == "/api/hydrodynamic-grid/meta":
+                return self._hydrodynamic_grid_meta(parsed.query)
+            if parsed.path == "/api/hydrodynamic-grid/tile":
+                return self._hydrodynamic_grid_tile(parsed.query)
             if parsed.path == "/api/geojson":
                 return self._geojson(parsed.query)
             if parsed.path == "/api/object":
@@ -1052,7 +1064,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_HEAD(self):
         parsed = urlparse(self.path)
         if parsed.path in {"", "/"}:
-            target = FRONTEND_DIR / "index.html"
+            target = STATIC_DIR / "index.html"
             if target.exists():
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html")
@@ -1068,6 +1080,10 @@ class Handler(BaseHTTPRequestHandler):
             payload = self._read_json()
             if parsed.path == "/api/agent/confirm":
                 return self._confirm(payload)
+            if parsed.path == "/api/autonomy/reset":
+                EVENT_RUNTIME.reset()
+                EVENT_RUNTIME.ensure_started()
+                return self._json({"ok": True})
             if parsed.path.startswith("/api/agent/runs/") and parsed.path.endswith("/cancel"):
                 run_id = parsed.path.split("/")[-2]
                 return self._json({"ok": RUNS.cancel(run_id), "run_id": run_id})
@@ -1149,7 +1165,7 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(filters, dict):
             return self._json({"error": "filters must be a JSON object"}, status=400)
         filters.update({
-            key: values[0]
+            key: _coerce_query_value(values[0])
             for key, values in params.items()
             if key not in {"object_type", "simplify_tolerance", "filters"} and values
         })
@@ -1159,6 +1175,48 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _hydrodynamic_grid_tile(self, query: str):
+        params = parse_qs(query)
+        try:
+            z = int((params.get("z") or [""])[0])
+            x = int((params.get("x") or [""])[0])
+            y = int((params.get("y") or [""])[0])
+        except (TypeError, ValueError):
+            return self._json({"error": "z, x and y are required integers"}, status=400)
+        forecast_id = self._hydrodynamic_result_id(params)
+        wet_only = str((params.get("wet_only") or [""])[0]).lower() in {"1", "true", "yes", "on"}
+        data = APP.hydrodynamic_grid_tile(z, x, y, forecast_id, wet_only)
+        body = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "public, max-age=300")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _hydrodynamic_grid_meta(self, query: str):
+        params = parse_qs(query)
+        forecast_id = self._hydrodynamic_result_id(params)
+        return self._json(APP.hydrodynamic_grid_stats(forecast_id))
+
+    def _hydrodynamic_result_id(self, params: dict[str, list[str]]) -> str:
+        result = (params.get("result") or [""])[0]
+        if result:
+            return result
+        scenario_id = (params.get("scenario_id") or [""])[0]
+        if scenario_id:
+            return scenario_id
+        return_period = (params.get("return_period_year") or [""])[0]
+        if return_period:
+            try:
+                period = int(return_period)
+            except ValueError:
+                period = 0
+            scenario = next((row for row in APP.scenarios if row.get("return_period_year") == period), None)
+            if scenario:
+                return str(scenario.get("scenario_id") or "latest")
+        return (params.get("forecast_id") or ["latest"])[0]
 
     def _object(self, query: str):
         params = parse_qs(query)
@@ -1170,8 +1228,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _static(self, path: str):
         rel = "index.html" if path in {"", "/"} else path.lstrip("/")
-        target = (FRONTEND_DIR / rel).resolve()
-        if not str(target).startswith(str(FRONTEND_DIR.resolve())) or not target.exists():
+        target = (STATIC_DIR / rel).resolve()
+        if not str(target).startswith(str(STATIC_DIR.resolve())) or not target.exists():
             self.send_error(404)
             return
         content_type = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
@@ -1218,6 +1276,15 @@ class Handler(BaseHTTPRequestHandler):
         print(f"{self.address_string()} - {fmt % args}")
 
 
+def _coerce_query_value(value: str) -> Any:
+    lowered = value.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    return value
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
@@ -1225,7 +1292,7 @@ def main():
     args = parser.parse_args()
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"Flood frontend running at http://{args.host}:{args.port}")
+    print(f"Flood server running at http://{args.host}:{args.port}")
     server.serve_forever()
 
 

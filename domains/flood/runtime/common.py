@@ -6,7 +6,11 @@ from typing import Any
 
 DOMAIN_DIR = Path(__file__).resolve().parents[1]
 PROJECT_DIR = DOMAIN_DIR.parents[1]
-DATA_DIR = PROJECT_DIR / "珊瑚河数据"
+DATA_DIR_CANDIDATES = [
+    PROJECT_DIR / "local/source_data/珊瑚河数据",
+    PROJECT_DIR / "珊瑚河数据",
+]
+DATA_DIR = next((path for path in DATA_DIR_CANDIDATES if path.exists()), DATA_DIR_CANDIDATES[0])
 DOMAIN_DATA_DIR = DOMAIN_DIR / "data"
 OBJECTS_DIR = DOMAIN_DATA_DIR / "objects"
 GENERATED_DIR = DOMAIN_DATA_DIR / "generated"
@@ -16,6 +20,7 @@ OBJECT_LIBRARY_FILES = {
     "River": "river.jsonl",
     "Watershed": "watershed.jsonl",
     "Waterway": "waterway.jsonl",
+    "HydrodynamicBoundary": "hydrodynamic_boundary.jsonl",
     "County": "county.jsonl",
     "Town": "town.jsonl",
     "Reservoir": "reservoir.jsonl",
@@ -52,10 +57,20 @@ MAPPABLE_OBJECTS = {
         "role": "base",
         "style": {"type": "line", "color": "#0e7490", "weight": 2},
     },
+    "HydrodynamicBoundary": {
+        "label": "水动力边界",
+        "role": "forecast",
+        "style": {"type": "line", "color": "#64748b", "weight": 1},
+    },
     "County": {
         "label": "县级行政区",
         "role": "base",
         "style": {"type": "line", "color": "#64748b", "weight": 1},
+    },
+    "Town": {
+        "label": "乡镇边界",
+        "role": "base",
+        "style": {"type": "fill", "color": "#475569", "weight": 1, "fillColor": "#facc15", "fillOpacity": 0.08},
     },
     "Road": {
         "label": "道路",
@@ -127,6 +142,11 @@ MAPPABLE_OBJECTS = {
         "role": "forecast",
         "style": {"type": "fill", "fillColor": "#7c3aed", "fillOpacity": 0.34, "color": "#7c3aed", "weight": 0.5},
     },
+    "HydrodynamicCell": {
+        "label": "水动力模型网格",
+        "role": "forecast",
+        "style": {"type": "fill", "fillColor": "#dc2626", "fillOpacity": 0.42, "color": "#991b1b", "weight": 0.35},
+    },
 }
 
 
@@ -173,6 +193,7 @@ def id_field(object_type: str) -> str:
         "River": "river_id",
         "Watershed": "watershed_id",
         "Waterway": "waterway_id",
+        "HydrodynamicBoundary": "boundary_id",
         "County": "county_id",
         "Town": "town_id",
         "Reservoir": "reservoir_id",
@@ -192,6 +213,7 @@ def id_field(object_type: str) -> str:
         "HistoricalFloodMark": "mark_id",
         "ForecastRun": "forecast_id",
         "ForecastCell": "forecast_cell_id",
+        "HydrodynamicCell": "hydrodynamic_cell_id",
         "Hydrology": "hydrology_id",
     }.get(object_type, f"{object_type.lower()}_id")
 

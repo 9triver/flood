@@ -6,7 +6,32 @@ from typing import Any
 from oag.tools.registry import ToolDef, ToolPolicy, ToolRegistry
 
 from domains.flood.runtime.common import MAPPABLE_OBJECTS
-from frontend_server.map_planner import OBJECT_LABELS
+from domains.flood.runtime.hydrodynamic_grid import hydrodynamic_grid_stats
+
+
+OBJECT_LABELS = {
+    "River": "珊瑚河",
+    "Watershed": "珊瑚河流域",
+    "Waterway": "河道水系",
+    "HydrodynamicBoundary": "水动力边界",
+    "County": "行政边界",
+    "Town": "乡镇边界",
+    "Road": "道路",
+    "Reservoir": "水库",
+    "Sluice": "水闸",
+    "Bridge": "桥梁",
+    "Facility": "重要设施",
+    "HydraulicStructure": "水利工程",
+    "Place": "安置地点",
+    "Transfer": "转移对象",
+    "Route": "转移路线",
+    "Risk": "危险区",
+    "HydroStation": "水文测站",
+    "HistoricalFloodMark": "历史洪痕",
+    "Cell": "淹没范围",
+    "ForecastCell": "预测淹没",
+    "HydrodynamicCell": "水动力网格",
+}
 
 
 UI_TOOL_NAMES = {"ui_show_objects", "ui_clear_map", "ui_focus_object", "ui_show_event_marker"}
@@ -49,7 +74,7 @@ def register_map_tools(tools: ToolRegistry, resolver, registry) -> None:
                             "filters": {"type": "object", "description": "对象过滤条件，例如学校为 {\"facility_type\":\"school\"}"},
                             "label": {"type": "string", "description": "地图图层显示名称，可选"},
                             "fit": {"type": "boolean", "description": "是否缩放到该对象范围"},
-                            "simplify_tolerance": {"type": "number", "description": "大型面对象简化容差，通常仅 Cell 使用"},
+                            "simplify_tolerance": {"type": "number", "description": "大型面对象简化容差，通常仅旧 Cell GeoJSON 使用"},
                         },
                         "required": ["object_type"],
                     },
@@ -63,12 +88,15 @@ def register_map_tools(tools: ToolRegistry, resolver, registry) -> None:
         handler=lambda args: _show_objects(args, resolver, registry),
         usage_prompt=(
             "常用映射：珊瑚河/主河道/河道中心线 => River；河道/水系/河网 => Waterway；"
+            "水动力边界/模型边界/入流边界/断面位置/河口水位/坝址边界 => HydrodynamicBoundary；"
             "流域/小流域 => Watershed；行政边界 => County；危险区/风险点 => Risk；"
+            "乡镇/乡镇边界/镇界 => Town；"
             "学校/医院/政府机构 => Facility 并分别过滤 facility_type=school/hospital/government；"
             "水文站/测站/雨量站/水位站/气象站 => HydroStation；"
             "水利设施/水利工程 => Reservoir、Sluice、HydraulicStructure；道路交通 => Road、Bridge；"
-            "转移安置 => Transfer、Place、Route；淹没范围/洪水情景 => Cell，并传 scenario_id 或先调用 get_scenario_summary；"
-            "预测淹没/未来淹没/实时预测 => ForecastCell，并传 forecast_id=latest 或先调用 run_flood_forecast。"
+            "转移安置 => Transfer、Place、Route；设计洪水/年一遇/洪水情景淹没范围 => HydrodynamicCell，并传 scenario_id 或 return_period_year；"
+            "预测淹没/未来淹没/实时预测 => 先调用 run_flood_forecast，再用 HydrodynamicCell 并传 forecast_id=latest；"
+            "水动力网格/模型网格/全部 cell/GT.txt 网格 => HydrodynamicCell。"
         ),
         category="ui",
         policy=policy,
@@ -77,10 +105,18 @@ def register_map_tools(tools: ToolRegistry, resolver, registry) -> None:
 
     tools.register(ToolDef(
         name="ui_clear_map",
-        description="清空或重置前端 GIS 地图显示。当用户说清空、重置、恢复基础图时调用。",
+        description=(
+            "清空或重置前端 GIS 地图显示。"
+            "当用户只要求清除、不显示、隐藏淹没范围或预测结果时，target 必须传 inundation。"
+        ),
         parameters={
             "type": "object",
             "properties": {
+                "target": {
+                    "type": "string",
+                    "enum": ["map", "inundation"],
+                    "description": "map 表示重置地图；inundation 表示只清除淹没范围/水动力结果，不改变地图视野",
+                },
                 "context": {"type": "string", "description": "地图上下文短标题"},
                 "note": {"type": "string", "description": "给用户的简短说明"},
             },
@@ -179,22 +215,34 @@ def _show_objects(args: dict[str, Any], resolver, registry) -> str:
         filters = item.get("filters") or {}
         if not isinstance(filters, dict):
             return _error(f"filters for {object_type} must be an object")
-        if object_type == "Cell" and not filters.get("scenario_id") and not filters.get("return_period_year"):
-            return _error("Cell requires filters.scenario_id or filters.return_period_year")
-        if object_type == "ForecastCell" and not filters.get("forecast_id"):
-            filters["forecast_id"] = "latest"
-
-        label = str(item.get("label") or OBJECT_LABELS.get(object_type) or object_type)
-        action = {
-            "type": "load_object",
-            "object_type": object_type,
-            "label": label,
-            "filters": filters,
-            "fit": bool(item.get("fit")) if "fit" in item else index == 0,
-        }
-        if item.get("simplify_tolerance") is not None:
-            action["simplify_tolerance"] = item.get("simplify_tolerance")
-        actions.append(action)
+        label = str(item.get("label") or _default_object_label(object_type, filters) or object_type)
+        fit = bool(item.get("fit")) if "fit" in item else index == 0
+        if is_hydrodynamic_result_request(object_type, filters):
+            result_filters = hydrodynamic_result_filters(object_type, filters)
+            actions.append({"type": "show_hydrodynamic_mesh", "fit": False})
+            actions.append({
+                "type": "apply_hydrodynamic_result",
+                "filters": result_filters,
+                "label": label,
+                "fit": False,
+                "refresh": bool(item.get("refresh", True)),
+            })
+            object_type = "HydrodynamicCell"
+            filters = result_filters
+        elif object_type == "HydrodynamicCell":
+            actions.append({"type": "show_hydrodynamic_mesh", "fit": fit, "mesh_only": True})
+            filters = {"result": "mesh"}
+        else:
+            action = {
+                "type": "load_object",
+                "object_type": object_type,
+                "label": label,
+                "filters": filters,
+                "fit": fit,
+            }
+            if item.get("simplify_tolerance") is not None:
+                action["simplify_tolerance"] = item.get("simplify_tolerance")
+            actions.append(action)
 
         cards.append({
             "title": label,
@@ -208,6 +256,11 @@ def _show_objects(args: dict[str, Any], resolver, registry) -> str:
 
 
 def _clear_map(args: dict[str, Any]) -> str:
+    target = str(args.get("target") or "map")
+    if target == "inundation":
+        context = str(args.get("context") or "淹没结果 · 已隐藏")
+        note = str(args.get("note") or "已隐藏淹没范围。")
+        return _payload(context=context, actions=[{"type": "clear_hydrodynamic_result"}], cards=[], note=note)
     context = str(args.get("context") or "基础态 · 领域对象地图")
     note = str(args.get("note") or "已重置地图显示。")
     return _payload(context=context, actions=[{"type": "reset"}], cards=[], note=note)
@@ -277,15 +330,69 @@ def _error(message: str) -> str:
 
 
 def _count_mappable(resolver, registry, object_type: str, filters: dict[str, Any]) -> int:
-    if object_type == "Cell":
-        return int(resolver.count("Cell", filters))
+    if is_hydrodynamic_result_request(object_type, filters):
+        result_id = _hydrodynamic_result_id(resolver, filters)
+        stats = hydrodynamic_grid_stats(result_id)
+        return int((stats.get("forecast") or {}).get("flooded_count") or stats.get("feature_count") or 0)
+    if object_type == "HydrodynamicCell":
+        stats = hydrodynamic_grid_stats("mesh")
+        return int(stats.get("feature_count") or 0)
     if object_type == "ForecastCell":
         return int(resolver.count("ForecastCell", filters or {"forecast_id": "latest"}))
     return int(resolver.count(object_type, filters))
 
 
+def _default_object_label(object_type: str, filters: dict[str, Any]) -> str:
+    if object_type in {"HydrodynamicCell", "Cell", "ForecastCell"}:
+        if filters.get("return_period_year"):
+            return f"{filters['return_period_year']} 年一遇淹没范围"
+        if filters.get("scenario_id"):
+            return f"{filters['scenario_id']} 淹没范围"
+        if object_type == "ForecastCell" or filters.get("forecast_id") == "latest":
+            return "预测淹没结果"
+        if filters.get("forecast_id") and filters.get("forecast_id") != "latest":
+            return f"{filters['forecast_id']} 水动力结果"
+    return OBJECT_LABELS.get(object_type, object_type)
+
+
+def _hydrodynamic_result_id(resolver, filters: dict[str, Any]) -> str:
+    if filters.get("scenario_id"):
+        return str(filters["scenario_id"])
+    if filters.get("return_period_year"):
+        try:
+            period = int(filters["return_period_year"])
+        except (TypeError, ValueError):
+            period = 0
+        scenario = next((row for row in resolver.scenarios if row.get("return_period_year") == period), None)
+        if scenario:
+            return str(scenario.get("scenario_id") or "latest")
+    return str(filters.get("forecast_id") or "latest")
+
+
+def is_hydrodynamic_result_request(object_type: str, filters: dict[str, Any]) -> bool:
+    return (
+        object_type == "ForecastCell"
+        or (object_type in {"HydrodynamicCell", "Cell"} and bool(
+            filters.get("forecast_id") or filters.get("scenario_id") or filters.get("return_period_year")
+        ))
+    )
+
+
+def hydrodynamic_result_filters(object_type: str, filters: dict[str, Any]) -> dict[str, Any]:
+    if object_type == "ForecastCell" and not filters.get("forecast_id"):
+        return {**filters, "forecast_id": "latest"}
+    return dict(filters)
+
+
 def _default_context(actions: list[dict[str, Any]]) -> str:
     types = {action.get("object_type") for action in actions}
+    action_types = {action.get("type") for action in actions}
+    if "apply_hydrodynamic_result" in action_types:
+        return "淹没结果 · 珊瑚河流域"
+    if "show_hydrodynamic_mesh" in action_types:
+        return "水动力网格 · 珊瑚河流域"
+    if "HydrodynamicCell" in types:
+        return "水动力模型网格 · 珊瑚河流域"
     if "ForecastCell" in types:
         return "实时预测 · 珊瑚河流域"
     if "Cell" in types:
@@ -298,7 +405,10 @@ def _default_context(actions: list[dict[str, Any]]) -> str:
 
 
 def _default_note(actions: list[dict[str, Any]]) -> str:
-    labels = [str(action.get("label") or action.get("object_type")) for action in actions]
+    labels = [
+        str(action.get("label") or action.get("object_type") or "水动力网格")
+        for action in actions
+    ]
     return f"已在地图上显示：{'、'.join(labels)}。" if labels else "地图动作已执行。"
 
 

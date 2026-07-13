@@ -19,6 +19,7 @@ from .forecast import (
     query_forecast_cells,
     query_forecast_runs,
 )
+from .hydrodynamic_grid import count_hydrodynamic_cells, query_hydrodynamic_cells
 
 
 class FloodRepository:
@@ -34,6 +35,8 @@ class FloodRepository:
             return query_forecast_runs(self, filters, limit, order_by, offset)
         if object_type == "ForecastCell":
             return query_forecast_cells(self, filters, limit, order_by, offset)
+        if object_type == "HydrodynamicCell":
+            return query_hydrodynamic_cells(filters, limit, order_by, offset)
         rows = [dict(row) for row in self._rows(object_type)]
         rows = apply_filters(rows, filters)
         rows = apply_order(rows, order_by)
@@ -46,6 +49,8 @@ class FloodRepository:
             return count_forecast_runs(self, filters)
         if object_type == "ForecastCell":
             return count_forecast_cells(self, filters)
+        if object_type == "HydrodynamicCell":
+            return count_hydrodynamic_cells(filters)
         return len(self.query(object_type, filters))
 
     def query_by_id(self, object_type: str, id_value: Any) -> dict | None:
@@ -59,7 +64,7 @@ class FloodRepository:
         results = []
         searchable_types = object_types or [
             item for item in OBJECT_LIBRARY_FILES
-            if item not in {"Cell", "ForecastRun", "ForecastCell"}
+            if item not in {"Cell", "ForecastRun", "ForecastCell", "HydrodynamicCell"}
         ]
         for object_type in searchable_types:
             for row in self._rows(object_type):

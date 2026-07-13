@@ -19,6 +19,7 @@ OBJECT_TYPES = [
     "River",
     "Watershed",
     "Waterway",
+    "HydrodynamicBoundary",
     "County",
     "Town",
     "Reservoir",

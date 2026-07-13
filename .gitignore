@@ -1,5 +1,6 @@
 .env
 .env.*
+.DS_Store
 __pycache__/
 *.py[cod]
 *.pyo
@@ -9,8 +10,13 @@ __pycache__/
 agent/.venv/
 .oag_data/
 
+# Local workbench: source data, reference docs, model experiments
+local/
+
 # Domain/runtime generated outputs
 domains/flood/data/generated/
+domains/flood/data/hydrodynamic/*.sqlite
+domains/flood/data/hydrodynamic/*.sqlite.tmp
 domains/flood/data/spatial/
 domains/flood/data/sources/hydrolakes/*.zip
 domains/flood/data/sources/esa_worldcover/*.tif
@@ -20,19 +26,13 @@ domains/flood/data/sources/jrc_gsw/*.tif
 # Local domain tool secrets
 domains/tools/.env
 
-# Local planning notes
+# Legacy local files if they are kept at repository root
 水库下游洪水-交通基础设施联动应急预警智能体.md
-
-# Local source data
 珊瑚河数据/
-
-# Local reference documents and converted media
 *.docx
 *_media/
 45050092_珊瑚河洪水风险图成果报告（附审查意见）.md
 洪水风险图水文分析专题（珊瑚河）.md
-
-# Local hydrodynamic model workspace
 hydrodynamic_model/
 
 # Local reference repos

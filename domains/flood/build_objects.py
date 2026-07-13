@@ -92,6 +92,69 @@ class FloodObjectBuilder:
             })
         return rows
 
+    def _build_hydrodynamicboundary(self) -> list[dict]:
+        directory = DATA_DIR / "珊瑚河边界位置"
+        if not directory.exists():
+            return []
+
+        rows = []
+        section_path = directory / "断面位置.shp"
+        for i, feature in enumerate(_features(section_path), 1):
+            props = feature.get("properties") or {}
+            group = _first_non_empty(props, "group_key") or ""
+            flow_type = _first_non_empty(props, "flow_type") or ""
+            flow_name = _first_non_empty(props, "flow_name") or _boundary_group_label(group)
+            section_code = _code(_first_non_empty(props, "SCD"))
+            rows.append({
+                "boundary_id": f"section_{section_code or i}",
+                "river_id": "shanhu",
+                "name": flow_name,
+                "boundary_group": group,
+                "boundary_type": flow_type,
+                "boundary_role": _boundary_role(group, flow_type),
+                "display_role": "auxiliary_boundary",
+                "is_model_input_boundary": False,
+                "source_layer": "section_position",
+                "section_code": section_code,
+                "data_path": rel(section_path),
+                **_geometry_fields(feature),
+            })
+
+        specs = [
+            ("校核后-1-坝址.shp", "upstream", "verified_boundary"),
+            ("校核后-1-区间1.shp", "interval1", "verified_boundary"),
+            ("校核后-1-区间2.shp", "interval2", "verified_boundary"),
+            ("校核后-1-同古河.shp", "tonggu", "verified_boundary"),
+            ("河口水位.shp", "waterlevel", "verified_boundary"),
+        ]
+        for filename, default_group, source_layer in specs:
+            path = directory / filename
+            for i, feature in enumerate(_features(path), 1):
+                props = feature.get("properties") or {}
+                name = _first_non_empty(props, "Name", "TmName") or path.stem
+                type_desc = _first_non_empty(props, "TypeDesc") or ""
+                data_type = _code(_first_non_empty(props, "DataType"))
+                group = _boundary_group_from_name(str(name), default_group)
+                is_model_input = _is_model_input_boundary(group, data_type, type_desc)
+                rows.append({
+                    "boundary_id": f"{source_layer}_{group}_{i}",
+                    "river_id": "shanhu",
+                    "name": name,
+                    "boundary_group": group,
+                    "boundary_type": type_desc,
+                    "boundary_role": _boundary_role(group, type_desc),
+                    "display_role": "model_input_boundary" if is_model_input else "auxiliary_boundary",
+                    "is_model_input_boundary": is_model_input,
+                    "source_layer": source_layer,
+                    "flow_node": _code(_first_non_empty(props, "FlowNode")),
+                    "data_type": data_type,
+                    "type_desc": type_desc,
+                    "point_count": int(_float(_first_non_empty(props, "PtCount"))),
+                    "data_path": rel(path),
+                    **_geometry_fields(feature),
+                })
+        return rows
+
     def _build_waterway(self) -> list[dict]:
         watershed = self.build("Watershed")[0]
         basin_geometry = json.loads(watershed["geometry"])
@@ -155,6 +218,7 @@ class FloodObjectBuilder:
 
     def _build_town(self) -> list[dict]:
         path = DATA_DIR / "7.灾前&灾损数据/珊瑚河灾前信息.xlsx"
+        boundary_by_name = _load_town_boundaries()
         wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
         ws = wb[wb.sheetnames[0]]
         rows = []
@@ -162,7 +226,8 @@ class FloodObjectBuilder:
             if not row or not row[0]:
                 continue
             name = str(row[0])
-            rows.append({
+            boundary = boundary_by_name.get(name)
+            record = {
                 "town_id": _slug_id(name),
                 "name": name,
                 "county_id": "451122",
@@ -172,7 +237,15 @@ class FloodObjectBuilder:
                 "housing_property_10k_cny": _float(row[4]),
                 "transport_industry_10k_cny": _float(row[5]),
                 "commerce_10k_cny": _float(row[6]),
-            })
+            }
+            if boundary:
+                record.update({
+                    "adcode": boundary["adcode"],
+                    "geometry_source": "ruiduobao_2023_town_boundary",
+                    "data_path": boundary["data_path"],
+                    **_geometry_fields(boundary["feature"]),
+                })
+            rows.append(record)
         wb.close()
         return rows
 
@@ -685,6 +758,34 @@ def _features(path: Path) -> list[dict]:
         feature["_source_crs"] = source_crs
         feature["_geometry_crs"] = "EPSG:4326"
     return features
+
+
+def _load_town_boundaries() -> dict[str, dict]:
+    directory = SOURCES_DIR / "ruiduobao_town_boundaries"
+    rows: dict[str, dict] = {}
+    for path in sorted(directory.glob("*.geojson")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for feature in data.get("features", []):
+            props = feature.get("properties") or {}
+            name = _first_non_empty(props, "name")
+            adcode = _code(_first_non_empty(props, "code"))
+            if not name:
+                continue
+            rows[str(name)] = {
+                "adcode": adcode,
+                "data_path": rel(path),
+                "feature": {
+                    "type": "Feature",
+                    "properties": {
+                        "name": name,
+                        "code": adcode,
+                    },
+                    "geometry": feature.get("geometry"),
+                    "_source_crs": "EPSG:4326",
+                    "_geometry_crs": "EPSG:4326",
+                },
+            }
+    return rows
 
 
 def _source_crs(path: Path) -> str:
@@ -1634,9 +1735,54 @@ def _slug_id(value: str) -> str:
         "凤翔镇": "451122106",
         "珊瑚镇": "451122107",
         "同古镇": "451122108",
+        "公安镇": "451122109",
         "清塘镇": "451122111",
     }
     return mapping.get(value, value)
+
+
+def _boundary_group_from_name(name: str, default: str) -> str:
+    if "坝址" in name:
+        return "upstream"
+    if "区间1" in name:
+        return "interval1"
+    if "区间2" in name:
+        return "interval2"
+    if "同古河" in name:
+        return "tonggu"
+    if "河口" in name or "水位" in name:
+        return "waterlevel"
+    return default
+
+
+def _boundary_group_label(group: str) -> str:
+    return {
+        "upstream": "坝址上游入流",
+        "interval1": "区间1沿程入流",
+        "interval2": "区间2沿程入流",
+        "tonggu": "同古河旁侧入流",
+        "waterlevel": "河口水位",
+    }.get(group, group or "水动力边界")
+
+
+def _boundary_role(group: str, boundary_type: str) -> str:
+    if group == "upstream" or "Discharge" in boundary_type:
+        return "upstream_inflow"
+    if group == "tonggu":
+        return "tributary_inflow"
+    if group in {"interval1", "interval2"} or "SideInflow" in boundary_type:
+        return "lateral_inflow"
+    if group == "waterlevel" or "WaterLevel" in boundary_type:
+        return "downstream_water_level"
+    return "hydrodynamic_boundary"
+
+
+def _is_model_input_boundary(group: str, data_type: str, boundary_type: str) -> bool:
+    if group not in {"upstream", "interval1", "interval2", "tonggu"}:
+        return False
+    if data_type in {"", "0"} or boundary_type in {"", "0"}:
+        return False
+    return True
 
 
 def _facility_type_cn(value: str) -> str:

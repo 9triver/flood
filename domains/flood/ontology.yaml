@@ -78,6 +78,37 @@ objects:
       geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
       data_path: {type: str, description: "缓存的 OSM 原始响应路径"}
 
+  HydrodynamicBoundary:
+    kind: entity
+    data_source: external_api
+    mutability: read_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: boundary_id
+    summary: "水动力模型边界和断面位置"
+    description: "表达水动力模型中上游入流、沿程入流、支流入流、下游水位边界以及断面位置。对象携带边界线或断面线 geometry，用于在 GIS 中解释模型输入边界与计算断面的空间位置。"
+    properties:
+      boundary_id: {type: str, required: true, description: "水动力边界对象编号"}
+      river_id: {type: str, description: "所属河流编号"}
+      name: {type: str, description: "边界或断面名称"}
+      boundary_group: {type: str, description: "边界分组: upstream/interval1/interval2/tonggu/waterlevel"}
+      boundary_type: {type: str, description: "原始边界类型或水动力输入类型"}
+      boundary_role: {type: str, description: "业务角色: upstream_inflow/lateral_inflow/tributary_inflow/downstream_water_level"}
+      display_role: {type: str, description: "地图展示角色: model_input_boundary/auxiliary_boundary"}
+      is_model_input_boundary: {type: bool, description: "是否为 CNN 水动力模型的 4 个流量输入边界之一"}
+      source_layer: {type: str, description: "来源层: section_position/verified_boundary"}
+      section_code: {type: str, description: "断面编号，若来源为断面位置"}
+      flow_node: {type: str, description: "水动力模型 FlowNode 编号，若源数据提供"}
+      data_type: {type: str, description: "水动力边界 DataType，若源数据提供"}
+      type_desc: {type: str, description: "水动力边界类型说明，若源数据提供"}
+      point_count: {type: int, description: "边界点数，若源数据提供"}
+      source_crs: {type: str, description: "源空间数据坐标系"}
+      geometry_crs: {type: str, description: "当前 geometry 坐标系，前端绘制统一为 EPSG:4326"}
+      geometry_type: {type: str, description: "GeoJSON 几何类型"}
+      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
+      data_path: {type: str, description: "对应空间数据路径"}
+
   County:
     kind: entity
     data_source: external_api
@@ -111,12 +142,18 @@ objects:
       town_id: {type: str, required: true, description: "乡镇编码或稳定ID"}
       name: {type: str, description: "乡镇名称"}
       county_id: {type: str, description: "所属县编码"}
+      adcode: {type: str, description: "乡镇行政区划代码"}
       population: {type: int, description: "常住人口"}
       gdp_10k_cny: {type: float, description: "GDP，万元"}
       agriculture_10k_cny: {type: float, description: "农林牧渔业产值，万元"}
       housing_property_10k_cny: {type: float, description: "居民房屋及室内财产，万元"}
       transport_industry_10k_cny: {type: float, description: "交通运输业产值，万元"}
       commerce_10k_cny: {type: float, description: "商贸服务业产值，万元"}
+      geometry_type: {type: str, description: "GeoJSON 几何类型"}
+      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
+      geometry_crs: {type: str, description: "几何坐标系，当前为 EPSG:4326"}
+      geometry_source: {type: str, description: "乡镇边界来源"}
+      data_path: {type: str, description: "乡镇边界源数据路径"}
 
   Reservoir:
     kind: entity
@@ -503,6 +540,24 @@ objects:
       area_m2: {type: float, description: "单元面积，平方米"}
       geometry_type: {type: str, description: "GeoJSON 几何类型"}
       geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
+
+  HydrodynamicCell:
+    kind: entity
+    data_source: external_api
+    mutability: read_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: hydrodynamic_cell_id
+    summary: "水动力模型网格单元"
+    description: "HydrodynamicCell 是水动力模型 GT.txt 中的静态三角网格计算单元；前端将它与某个 forecast_id、scenario_id 或 return_period_year 对应的动态 max depth 结果合并绘制。干单元透明、有水单元按水深着色。"
+    properties:
+      hydrodynamic_cell_id: {type: str, required: true, description: "水动力网格单元ID"}
+      cell_id: {type: int, description: "模型原始 cell 编号"}
+      depth_m: {type: float, description: "模型输出最大水深，米；0 表示无水"}
+      is_flooded: {type: bool, description: "是否有水深"}
+      geometry_type: {type: str, description: "几何类型，固定为 Polygon"}
+      geometry_crs: {type: str, description: "地图绘制坐标系，EPSG:4326"}
 
   Hydrology:
     kind: entity
@@ -946,18 +1001,18 @@ functions:
     summary: "列出可用于前端 GIS 绘制的领域对象类型"
     description: "返回哪些领域对象带有地理信息、对象数量、几何类型和推荐样式。前端应按对象类型绘制，而不是依赖领域模型中的图层对象。"
     function_type: lookup
-    involves_objects: [Watershed, Waterway, County, Road, Reservoir, Sluice, HydraulicStructure, Bridge, Facility, Place, Transfer, Route, Risk, HydroStation, HistoricalFloodMark, Cell, ForecastCell]
+    involves_objects: [Watershed, Waterway, County, Road, Reservoir, Sluice, HydraulicStructure, Bridge, Facility, Place, Transfer, Route, Risk, HydroStation, HistoricalFloodMark, Cell, ForecastCell, HydrodynamicCell]
     params:
       object_type: {type: str, description: "可选，按领域对象类型过滤", default: ""}
 
   export_objects_geojson:
     summary: "按领域对象导出前端地图可加载的 GeoJSON"
-    description: "从领域对象数据导出 EPSG:4326 GeoJSON。点、线、面几何来自对象自身的 geometry 字段；大型 Cell 对象可直接从对应情景源数据导出并可简化；ForecastCell 来自预测模型输出。"
-    usage_prompt: "当前端需要绘制学校、医院、桥梁、路线、道路、某个洪水情景或预测淹没结果等对象时调用。传 object_type 而不是图层名；绘制洪水情景时 object_type=Cell 并传 scenario_id；绘制最新预测时 object_type=ForecastCell 并传 forecast_id=latest。"
+    description: "从领域对象数据导出 EPSG:4326 GeoJSON。点、线、面几何来自对象自身的 geometry 字段；ForecastCell 来自预测模型输出；HydrodynamicCell 由前端使用专门的网格瓦片接口绘制，并可叠加 forecast_id、scenario_id 或 return_period_year 对应的 max depth 结果。"
+    usage_prompt: "当前端需要绘制学校、医院、桥梁、路线、道路、乡镇边界、某个洪水情景或预测淹没结果等对象时调用。传 object_type 而不是图层名；绘制乡镇边界时 object_type=Town；绘制洪水情景/年一遇淹没范围时 object_type=HydrodynamicCell 并传 scenario_id 或 return_period_year；绘制最新预测时 object_type=ForecastCell 并传 forecast_id=latest；绘制水动力模型全部网格时 object_type=HydrodynamicCell。"
     function_type: lookup
-    involves_objects: [Watershed, Waterway, County, Road, Reservoir, Sluice, HydraulicStructure, Bridge, Facility, Place, Transfer, Route, Risk, HydroStation, HistoricalFloodMark, Cell, ForecastCell]
+    involves_objects: [Watershed, Waterway, County, Road, Reservoir, Sluice, HydraulicStructure, Bridge, Facility, Place, Transfer, Route, Risk, HydroStation, HistoricalFloodMark, Cell, ForecastCell, HydrodynamicCell]
     params:
-      object_type: {type: str, description: "领域对象类型，如 Facility、Bridge、Route、Cell"}
+      object_type: {type: str, description: "领域对象类型，如 Facility、Bridge、Route、Town、Cell"}
       filters: {type: dict, description: "对象过滤条件；Cell 可用 scenario_id", default: {}}
       simplify_tolerance: {type: float, description: "可选简化容差，单位为源坐标系单位；0 表示不简化", default: 0}
       force: {type: bool, description: "是否强制重新导出", default: false}

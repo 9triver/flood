@@ -3,6 +3,7 @@ from __future__ import annotations
 from .cell import find_scenario, ogr_metadata, scenario_path
 from .common import MAPPABLE_OBJECTS
 from .forecast import ensure_latest_forecast
+from .hydrodynamic_grid import hydrodynamic_grid_stats
 
 
 def list_mappable_objects(resolver, object_type: str = "") -> list[dict]:
@@ -20,6 +21,10 @@ def list_mappable_objects(resolver, object_type: str = "") -> list[dict]:
             objects = resolver.query(item)
             count = len(objects)
             geometry_type = "Polygon"
+        elif item == "HydrodynamicCell":
+            stats = hydrodynamic_grid_stats()
+            count = stats.get("feature_count", 0)
+            geometry_type = stats.get("geometry_type", "Polygon")
         else:
             objects = resolver.query(item)
             count = len(objects)

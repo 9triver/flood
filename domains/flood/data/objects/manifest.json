@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-29T12:19:07.921675+00:00",
+  "generated_at": "2026-07-02T12:05:43.203223+00:00",
   "notes": [
     "Cell inundation geometries are intentionally not materialized as JSONL; they remain scenario spatial sources exported on demand."
   ],
@@ -31,6 +31,10 @@
     "HydroStation": {
       "count": 4,
       "path": "domains/flood/data/objects/hydro_station.jsonl"
+    },
+    "HydrodynamicBoundary": {
+      "count": 286,
+      "path": "domains/flood/data/objects/hydrodynamic_boundary.jsonl"
     },
     "Hydrology": {
       "count": 20,
@@ -89,5 +93,5 @@
       "path": "domains/flood/data/objects/waterway.jsonl"
     }
   },
-  "source_data": "珊瑚河数据"
+  "source_data": "local/source_data/珊瑚河数据"
 }

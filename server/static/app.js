@@ -15,6 +15,8 @@ const state = {
   autonomyStream: null,
   autonomyPhase: "",
   eventMarkers: new Map(),
+  hydrodynamicGridMeta: null,
+  hydrodynamicResultMeta: null,
   lastTrace: null,
 };
 
@@ -22,7 +24,9 @@ const OBJECT_CONFIG = {
   River: { label: "珊瑚河", color: "#0e7490", swatch: "line" },
   Watershed: { label: "珊瑚河流域", color: "#1f2937", swatch: "fill" },
   Waterway: { label: "河道水系", color: "#0e7490", swatch: "line" },
+  HydrodynamicBoundary: { label: "水动力边界", color: "#e11d48", swatch: "line" },
   County: { label: "行政边界", color: "#7b8794", swatch: "line" },
+  Town: { label: "乡镇边界", color: "#7a6a22", swatch: "fill" },
   Road: { label: "道路", color: "#5f6772", swatch: "line" },
   Reservoir: { label: "水库", color: "#2f80c9", swatch: "point" },
   Sluice: { label: "水闸", color: "#158a8a", swatch: "point" },
@@ -36,14 +40,18 @@ const OBJECT_CONFIG = {
   HydroStation: { label: "水文测站", color: "#0284c7", swatch: "point" },
   HistoricalFloodMark: { label: "历史洪痕", color: "#be123c", swatch: "point" },
   Cell: { label: "淹没范围", color: "#2f80c9", swatch: "fill" },
-  ForecastCell: { label: "预测淹没", color: "#7c3aed", swatch: "fill" },
+  ForecastCell: { label: "预测淹没", color: "#dc2626", swatch: "fill" },
+  HydrodynamicCell: { label: "水动力网格", color: "#64748b", swatch: "fill" },
+  ForecastResult: { label: "预测淹没结果", color: "#dc2626", swatch: "fill" },
 };
 
 const ID_FIELDS = {
   River: "river_id",
   Watershed: "watershed_id",
   Waterway: "waterway_id",
+  HydrodynamicBoundary: "boundary_id",
   County: "county_id",
+  Town: "town_id",
   Road: "road_id",
   Reservoir: "reservoir_id",
   Sluice: "sluice_id",
@@ -59,6 +67,7 @@ const ID_FIELDS = {
   HistoricalFloodMark: "mark_id",
   Cell: "cell_id",
   ForecastCell: "forecast_cell_id",
+  HydrodynamicCell: "hydrodynamic_cell_id",
 };
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -67,6 +76,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   await bootstrap();
   await loadObject("Watershed", {}, { fit: true });
   await loadObject("County", {}, { fit: false });
+  await loadObject("HydrodynamicBoundary", {}, { fit: false });
   addMessage("agent", "基础对象已加载。");
   startAutonomyStream();
   renderIcons();
@@ -94,12 +104,13 @@ async function bootstrap() {
 
 function renderObjectList(items) {
   const list = document.getElementById("objectList");
-  const visible = ["River", "Watershed", "Waterway", "County", "ForecastCell", "HydroStation", "Road", "Reservoir", "Sluice", "Bridge", "HydraulicStructure", "Risk", "Place", "Route"];
+  const visible = ["River", "Watershed", "Waterway", "HydrodynamicBoundary", "County", "Town", "HydrodynamicCell", "ForecastResult", "HydroStation", "Road", "Reservoir", "Sluice", "Bridge", "HydraulicStructure", "Risk", "Place", "Route"];
   list.innerHTML = "";
 
   visible.forEach((objectType) => {
     const item = items.find((entry) => entry.object_type === objectType) || {};
     const config = OBJECT_CONFIG[objectType];
+    if (!config) return;
     const btn = document.createElement("button");
     btn.className = "object-row";
     btn.dataset.objectType = objectType;
@@ -131,7 +142,33 @@ function bindEvents() {
 }
 
 async function toggleObject(objectType) {
-  const filters = objectType === "ForecastCell" ? { forecast_id: "latest" } : {};
+  if (objectType === "HydrodynamicCell") {
+    const key = layerKey("HydrodynamicCell", { result: "mesh" });
+    if (state.layerGroups.has(key)) {
+      removeLayer(key);
+      return;
+    }
+    clearHydrodynamicResults();
+    await showHydrodynamicMesh({
+      fit: true,
+    });
+    return;
+  }
+  if (objectType === "ForecastResult") {
+    const key = layerKey("HydrodynamicResult", { forecast_id: "latest" });
+    if (state.layerGroups.has(key)) {
+      removeLayer(key);
+      return;
+    }
+    await showHydrodynamicMesh({ fit: false });
+    await applyHydrodynamicResult({
+      filters: { forecast_id: "latest" },
+      label: OBJECT_CONFIG[objectType].label,
+      buttonType: objectType,
+    });
+    return;
+  }
+  const filters = defaultObjectFilters(objectType);
   const key = layerKey(objectType, filters);
   if (state.layerGroups.has(key)) {
     removeLayer(key);
@@ -140,7 +177,18 @@ async function toggleObject(objectType) {
   await loadObject(objectType, filters, { fit: false });
 }
 
+function defaultObjectFilters(objectType) {
+  if (objectType === "ForecastCell") return { forecast_id: "latest" };
+  return {};
+}
+
 async function loadObject(objectType, filters = {}, options = {}) {
+  if (objectType === "HydrodynamicCell") {
+    if (filters && Object.keys(filters).some((key) => ["forecast_id", "scenario_id", "return_period_year"].includes(key))) {
+      throw new Error("Hydrodynamic results must use apply_hydrodynamic_result.");
+    }
+    return showHydrodynamicMesh(options);
+  }
   const key = layerKey(objectType, filters);
   if (options.refresh && state.layerGroups.has(key)) {
     removeLayer(key);
@@ -178,14 +226,118 @@ async function loadObject(objectType, filters = {}, options = {}) {
   return layer;
 }
 
+async function showHydrodynamicMesh(options = {}) {
+  const objectType = "HydrodynamicCell";
+  const resultFilters = { result: "mesh" };
+  const key = layerKey(objectType, resultFilters);
+  if (options.meshOnly) clearHydrodynamicResults();
+  if (options.refresh && state.layerGroups.has(key)) removeLayer(key);
+  if (state.layerGroups.has(key)) {
+    const existing = state.layerGroups.get(key);
+    if (!state.map.hasLayer(existing)) existing.addTo(state.map);
+    setObjectButtonActive(objectType, true);
+    if (options.fit) fitHydrodynamicGrid();
+    return existing;
+  }
+
+  const metaParams = new URLSearchParams(resultFilters);
+  const metaRes = await fetch(`/api/hydrodynamic-grid/meta?${metaParams.toString()}`);
+  if (!metaRes.ok) throw new Error(await metaRes.text());
+  state.hydrodynamicGridMeta = await metaRes.json();
+  const layer = L.gridLayer.hydrodynamicGrid({
+    tileSize: 256,
+    opacity: 1,
+    pane: "overlayPane",
+    resultFilters,
+    renderMode: "mesh",
+    minTileZoom: Math.max(state.hydrodynamicGridMeta?.min_tile_zoom || 13, 15),
+  }).addTo(state.map);
+  state.layerGroups.set(key, layer);
+  state.layerMeta.set(key, {
+    objectType,
+    buttonType: "HydrodynamicCell",
+    filters: resultFilters,
+    label: options.label || OBJECT_CONFIG[objectType].label,
+  });
+  setObjectButtonActive(objectType, true);
+  if (options.fit) fitHydrodynamicGrid();
+  return layer;
+}
+
+async function applyHydrodynamicResult(options = {}) {
+  const filters = options.filters || {};
+  if (!Object.keys(filters).length) throw new Error("apply_hydrodynamic_result requires filters.");
+  const key = layerKey("HydrodynamicResult", filters);
+  if (options.refresh && state.layerGroups.has(key)) removeLayer(key);
+  if (state.layerGroups.has(key)) {
+    const existing = state.layerGroups.get(key);
+    if (!state.map.hasLayer(existing)) existing.addTo(state.map);
+    setObjectButtonActive(options.buttonType || "ForecastResult", true);
+    return existing;
+  }
+
+  const metaParams = new URLSearchParams(filters);
+  const metaRes = await fetch(`/api/hydrodynamic-grid/meta?${metaParams.toString()}`);
+  if (!metaRes.ok) throw new Error(await metaRes.text());
+  state.hydrodynamicResultMeta = await metaRes.json();
+  const layer = L.gridLayer.hydrodynamicGrid({
+    tileSize: 256,
+    opacity: 1,
+    pane: "overlayPane",
+    resultFilters: filters,
+    renderMode: "result",
+    wetOnly: true,
+    minTileZoom: state.hydrodynamicResultMeta?.min_tile_zoom || 13,
+  }).addTo(state.map);
+  state.layerGroups.set(key, layer);
+  state.layerMeta.set(key, {
+    objectType: "HydrodynamicResult",
+    buttonType: options.buttonType || "ForecastResult",
+    filters,
+    label: options.label || "水动力结果",
+  });
+  setObjectButtonActive(options.buttonType || "ForecastResult", true);
+  return layer;
+}
+
+function fitHydrodynamicGrid() {
+  const bbox = state.hydrodynamicGridMeta?.bbox;
+  if (!bbox) return;
+  const bounds = L.latLngBounds(
+    [bbox.min_lat, bbox.min_lon],
+    [bbox.max_lat, bbox.max_lon],
+  );
+  state.map.flyToBounds(bounds.pad(0.06), {
+    animate: true,
+    duration: 0.85,
+    easeLinearity: 0.22,
+    maxZoom: 13,
+  });
+}
+
+function fitHydrodynamicResult() {
+  const bbox = state.hydrodynamicResultMeta?.bbox || state.hydrodynamicGridMeta?.bbox;
+  if (!bbox) return;
+  const bounds = L.latLngBounds(
+    [bbox.min_lat, bbox.min_lon],
+    [bbox.max_lat, bbox.max_lon],
+  );
+  state.map.flyToBounds(bounds.pad(0.06), {
+    animate: true,
+    duration: 0.85,
+    easeLinearity: 0.22,
+    maxZoom: 13,
+  });
+}
+
 function removeLayer(key) {
   const layer = state.layerGroups.get(key);
   const meta = state.layerMeta.get(key);
-  if (meta) unindexLayer(meta.objectType, layer);
+  if (meta && !["HydrodynamicCell", "HydrodynamicResult"].includes(meta.objectType)) unindexLayer(meta.objectType, layer);
   if (layer) state.map.removeLayer(layer);
   state.layerGroups.delete(key);
   state.layerMeta.delete(key);
-  if (meta) setObjectButtonActive(meta.objectType, hasObjectType(meta.objectType));
+  if (meta) setObjectButtonActive(meta.buttonType || meta.objectType, hasLayerButtonType(meta.buttonType || meta.objectType));
 }
 
 function resetMap() {
@@ -200,6 +352,15 @@ function resetMap() {
   }
   document.getElementById("contextPill").textContent = "基础态 · 领域对象地图";
   fitAll();
+}
+
+function clearHydrodynamicResults() {
+  for (const [key, meta] of Array.from(state.layerMeta.entries())) {
+    if (meta?.objectType === "HydrodynamicResult") {
+      removeLayer(key);
+    }
+  }
+  document.getElementById("contextPill").textContent = "淹没结果 · 已隐藏";
 }
 
 function clearEventMarkers() {
@@ -359,14 +520,27 @@ function featureStyle(objectType, feature) {
   if (objectType === "Cell" || objectType === "ForecastCell") {
     const depth = Number(feature.properties?.depth_m || feature.properties?.YMSS || 0);
     const color = objectType === "ForecastCell"
-      ? depth > 1.2 ? "#4c1d95" : depth > 0.6 ? "#7c3aed" : "#c084fc"
+      ? depth > 1.2 ? "#7f1d1d" : depth > 0.6 ? "#dc2626" : "#fecaca"
       : depth > 1 ? "#14539a" : depth > 0.5 ? "#2f80c9" : "#7ab6df";
-    return { color, weight: 0.5, fillColor: color, fillOpacity: objectType === "ForecastCell" ? 0.38 : 0.34 };
+    return { color, weight: 0.5, fillColor: color, fillOpacity: 0.34 };
+  }
+  if (objectType === "HydrodynamicCell") {
+    const depth = Number(feature.properties?.depth_m || 0);
+    return hydrodynamicCellStyle(depth);
   }
   if (objectType === "Watershed") return { color: "#1f2937", weight: 1.3, fillColor: "#9bc4df", fillOpacity: 0.1 };
   if (objectType === "River") return { color: "#0e7490", weight: 4, opacity: 0.95 };
   if (objectType === "Waterway") return { color: "#0e7490", weight: 2.4, opacity: 0.9 };
+  if (objectType === "HydrodynamicBoundary") return {
+    color: boundaryColor(feature),
+    weight: boundaryWeight(feature),
+    opacity: boundaryOpacity(feature),
+    dashArray: boundaryDash(feature),
+    lineCap: "round",
+    lineJoin: "round",
+  };
   if (objectType === "County") return { color: "#7b8794", weight: 1.2, fillOpacity: 0 };
+  if (objectType === "Town") return { color: "#7a6a22", weight: 1, fillColor: "#facc15", fillOpacity: 0.08 };
   if (objectType === "Road") return { color: "#5f6772", weight: 2, opacity: 0.82 };
   if (objectType === "Route") return { color: "#d44a3a", weight: 3, opacity: 0.92 };
   if (objectType === "HydraulicStructure") return { color: "#0f766e", weight: 2, opacity: 0.9 };
@@ -389,6 +563,33 @@ function pointStyle(objectType, feature) {
     fillColor: color,
     fillOpacity: objectType === "Risk" ? 0.78 : 0.88,
   };
+}
+
+function boundaryColor(feature) {
+  if (!isModelInputBoundary(feature)) return "#64748b";
+  const role = feature?.properties?.boundary_role || "";
+  return {
+    upstream_inflow: "#b42318",
+    lateral_inflow: "#b7791f",
+    tributary_inflow: "#047481",
+    downstream_water_level: "#1d4ed8",
+  }[role] || "#475569";
+}
+
+function boundaryWeight(feature) {
+  return isModelInputBoundary(feature) ? 4.2 : 1.4;
+}
+
+function boundaryOpacity(feature) {
+  return isModelInputBoundary(feature) ? 0.95 : 0.48;
+}
+
+function boundaryDash(feature) {
+  return isModelInputBoundary(feature) ? "" : "5 6";
+}
+
+function isModelInputBoundary(feature) {
+  return feature?.properties?.is_model_input_boundary === true;
 }
 
 function pointRadius(objectType) {
@@ -674,12 +875,32 @@ async function executeActions(actions) {
     if (action.type === "reset") {
       resetMap();
     }
+    if (action.type === "clear_hydrodynamic_result") {
+      clearHydrodynamicResults();
+    }
     if (action.type === "load_object") {
       await loadObject(action.object_type, action.filters || {}, {
         fit: action.fit,
         label: action.label,
         simplify_tolerance: action.simplify_tolerance,
         refresh: action.refresh,
+      });
+    }
+    if (action.type === "show_hydrodynamic_mesh") {
+      await showHydrodynamicMesh({
+        fit: action.fit,
+        refresh: action.refresh,
+        label: action.label,
+        meshOnly: action.mesh_only || action.meshOnly,
+      });
+    }
+    if (action.type === "apply_hydrodynamic_result") {
+      await applyHydrodynamicResult({
+        filters: action.filters || {},
+        fit: action.fit,
+        refresh: action.refresh,
+        label: action.label,
+        buttonType: action.button_type || action.buttonType || "ForecastResult",
       });
     }
     if (action.type === "clear_highlights") {
@@ -698,6 +919,130 @@ async function executeActions(actions) {
       showEventMarker(action.event || {}, action);
     }
   }
+}
+
+L.GridLayer.HydrodynamicGrid = L.GridLayer.extend({
+  createTile(coords, done) {
+    const tile = document.createElement("canvas");
+    const size = this.getTileSize();
+    tile.width = size.x;
+    tile.height = size.y;
+    const minZoom = this.options.minTileZoom || 13;
+    if (coords.z < minZoom) {
+      window.setTimeout(() => done(null, tile), 0);
+      return tile;
+    }
+    const ctx = tile.getContext("2d");
+    const params = new URLSearchParams({
+      z: String(coords.z),
+      x: String(coords.x),
+      y: String(coords.y),
+    });
+    Object.entries(this.options.resultFilters || { result: "mesh" }).forEach(([name, value]) => {
+      params.set(name, value);
+    });
+    if (this.options.wetOnly) {
+      params.set("wet_only", "1");
+    }
+    fetch(`/api/hydrodynamic-grid/tile?${params.toString()}`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`tile ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        drawHydrodynamicTile(ctx, size, coords, data, this.options.renderMode || "mesh");
+        done(null, tile);
+      })
+      .catch((error) => {
+        console.warn("hydrodynamic grid tile failed", error);
+        done(null, tile);
+      });
+    return tile;
+  },
+});
+
+L.gridLayer.hydrodynamicGrid = function hydrodynamicGrid(options) {
+  return new L.GridLayer.HydrodynamicGrid(options);
+};
+
+function drawHydrodynamicTile(ctx, size, coords, data, renderMode = "mesh") {
+  ctx.clearRect(0, 0, size.x, size.y);
+  if (!data || data.too_coarse || !Array.isArray(data.cells)) return;
+  const origin = tilePoint(coords.x, coords.y, coords.z);
+  data.cells.forEach((cell) => {
+    const depth = Number(cell[1] || 0);
+    const p1 = latLngToTilePixel(Number(cell[3]), Number(cell[2]), coords.z, origin);
+    const p2 = latLngToTilePixel(Number(cell[5]), Number(cell[4]), coords.z, origin);
+    const p3 = latLngToTilePixel(Number(cell[7]), Number(cell[6]), coords.z, origin);
+    const style = renderMode === "result" ? hydrodynamicCellStyle(depth) : hydrodynamicMeshStyle();
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.lineTo(p3.x, p3.y);
+    ctx.closePath();
+    ctx.fillStyle = style.fillColor;
+    ctx.globalAlpha = style.fillOpacity;
+    ctx.fill();
+    ctx.globalAlpha = style.opacity || 1;
+    ctx.strokeStyle = style.color;
+    ctx.lineWidth = style.weight;
+    ctx.stroke();
+  });
+  ctx.globalAlpha = 1;
+}
+
+function hydrodynamicMeshStyle() {
+  return {
+    color: "rgba(100, 116, 139, 0.34)",
+    weight: 0.35,
+    fillColor: "rgba(255, 255, 255, 0)",
+    fillOpacity: 0,
+    opacity: 0.65,
+  };
+}
+
+function hydrodynamicCellStyle(depth) {
+  if (!depth || depth <= 0.0001) {
+    return {
+      color: "rgba(100, 116, 139, 0.34)",
+      weight: 0.35,
+      fillColor: "rgba(255, 255, 255, 0)",
+      fillOpacity: 0,
+      opacity: 0.65,
+    };
+  }
+  const t = Math.max(0, Math.min(1, depth / 4.2));
+  const color = interpolateColor([254, 226, 226], [127, 29, 29], Math.pow(t, 0.58));
+  return {
+    color: "rgba(127, 29, 29, 0.46)",
+    weight: 0.35,
+    fillColor: color,
+    fillOpacity: 0.24 + t * 0.55,
+    opacity: 0.82,
+  };
+}
+
+function interpolateColor(start, end, t) {
+  const rgb = start.map((value, index) => Math.round(value + (end[index] - value) * t));
+  return `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+}
+
+function tilePoint(x, y, z) {
+  return {
+    x: x * 256,
+    y: y * 256,
+    scale: 256 * 2 ** z,
+  };
+}
+
+function latLngToTilePixel(lat, lon, z, origin) {
+  const sinLat = Math.sin((lat * Math.PI) / 180);
+  const worldX = ((lon + 180) / 360) * origin.scale;
+  const worldY = (0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI)) * origin.scale;
+  return {
+    x: worldX - origin.x,
+    y: worldY - origin.y,
+  };
 }
 
 function showEventMarker(event, action = {}) {
@@ -887,6 +1232,7 @@ function readableTool(name, args) {
   const parts = [];
   if (args.object_type) parts.push(args.object_type);
   if (Array.isArray(args.objects)) parts.push(args.objects.map((item) => item.object_type).filter(Boolean).join(", "));
+  if (args.target) parts.push(args.target);
   if (args.scenario_id) parts.push(args.scenario_id);
   if (args.return_period_year) parts.push(`${args.return_period_year}年一遇`);
   return `${labels[name] || name}${parts.length ? ` (${parts.join(", ")})` : ""}`;
@@ -959,6 +1305,10 @@ function setObjectButtonActive(objectType, active) {
 
 function hasObjectType(objectType) {
   return Array.from(state.layerMeta.values()).some((meta) => meta.objectType === objectType);
+}
+
+function hasLayerButtonType(buttonType) {
+  return Array.from(state.layerMeta.values()).some((meta) => (meta.buttonType || meta.objectType) === buttonType);
 }
 
 function layerKey(objectType, filters) {
