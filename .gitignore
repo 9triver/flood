@@ -17,6 +17,7 @@ local/
 domains/flood/data/generated/
 domains/flood/data/hydrodynamic/*.sqlite
 domains/flood/data/hydrodynamic/*.sqlite.tmp
+domains/flood/data/hydrodynamic/forecasts/
 domains/flood/data/spatial/
 domains/flood/data/sources/hydrolakes/*.zip
 domains/flood/data/sources/esa_worldcover/*.tif

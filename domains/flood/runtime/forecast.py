@@ -2,18 +2,22 @@ from __future__ import annotations
 
 import json
 import math
+import csv
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .cell import query_cells
-from .common import GENERATED_DIR, apply_filters, apply_order, apply_window, rel
+from .common import DOMAIN_DATA_DIR, GENERATED_DIR, apply_filters, apply_order, apply_window, rel
+from .mock_hydrology import evaluate_forecast_trigger, read_latest_boundary_flow
 
 
 FORECAST_DIR = GENERATED_DIR / "forecast"
 FORECAST_RUNS_PATH = FORECAST_DIR / "forecast_runs.jsonl"
 FORECAST_CELLS_PATH = FORECAST_DIR / "forecast_cells_latest.jsonl"
 FORECAST_CYCLE_PATH = FORECAST_DIR / "emergency_cycle_latest.json"
+HYDRODYNAMIC_FORECAST_DEPTH_PATH = DOMAIN_DATA_DIR / "hydrodynamic" / "forecasts" / "latest" / "max_depth.csv"
+SCENARIO_DEPTH_DIR = DOMAIN_DATA_DIR / "hydrodynamic" / "scenarios"
 LATEST_FORECAST_ID = "forecast_latest"
 
 
@@ -128,13 +132,40 @@ def ensure_latest_forecast(resolver, force: bool = False) -> dict[str, Any]:
 
 
 def generate_forecast(resolver) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    boundary_flow = read_latest_boundary_flow()
+    trigger = evaluate_forecast_trigger(boundary_flow) if boundary_flow else None
+    if trigger and not trigger.get("should_run_forecast"):
+        generated_at = datetime.now(timezone.utc).isoformat()
+        write_hydrodynamic_depth_csv({}, HYDRODYNAMIC_FORECAST_DEPTH_PATH)
+        run = {
+            "forecast_id": LATEST_FORECAST_ID,
+            "name": "珊瑚河实时预测演算",
+            "status": "skipped_dry_condition",
+            "model_name": "shanhu_boundary_flow_gate",
+            "model_description": "领域规则判断四边界流量未达到水动力模型触发条件，本轮不运行 CNN。",
+            "generated_at": generated_at,
+            "lead_time_h": 0.0,
+            "mesh_source_scenario_id": "",
+            "mesh_source_path": "",
+            "hydrology_inputs": json.dumps(boundary_flow.get("summary") if boundary_flow else {}, ensure_ascii=False),
+            "forcing_index": 0.0,
+            "forecast_cell_count": 0,
+            "inundated_area_km2": 0.0,
+            "max_depth_m": 0.0,
+            "mean_depth_m": 0.0,
+            "forecast_trigger": json.dumps(trigger, ensure_ascii=False),
+            "data_path": rel(HYDRODYNAMIC_FORECAST_DEPTH_PATH),
+        }
+        return run, []
+
     grid_scenario = next(
         (row for row in resolver.scenarios if row.get("return_period_year") == 5),
         resolver.scenarios[0],
     )
     mesh_cells = query_cells(resolver, {"scenario_id": grid_scenario["scenario_id"]})
     river_model = RiverModel.from_resolver(resolver)
-    forcing = forcing_index(MOCK_HYDROLOGY)
+    hydrology_inputs = hydrology_inputs_from_boundary_flow(boundary_flow) if boundary_flow else MOCK_HYDROLOGY
+    forcing = forcing_index(hydrology_inputs)
     generated_at = datetime.now(timezone.utc).isoformat()
     cells = []
 
@@ -179,25 +210,79 @@ def generate_forecast(resolver) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     total_area_km2 = sum(float(row.get("area_m2") or 0) for row in cells) / 1_000_000
     max_depth = max((float(row["depth_m"]) for row in cells), default=0.0)
     avg_depth = sum(float(row["depth_m"]) for row in cells) / len(cells) if cells else 0.0
+    hydrodynamic_depth_stats = write_mock_hydrodynamic_depths(boundary_flow, forcing)
     run = {
         "forecast_id": LATEST_FORECAST_ID,
         "name": "珊瑚河实时预测演算",
         "status": "completed",
-        "model_name": "shanhu_mock_2d_hydrodynamic",
-        "model_description": "简化二维水动力原型：以淹没计算单元作为网格，按模拟雨量、水库出流、河道边界流量逐格计算水深、流速、到达和退水时间。",
+        "model_name": "shanhu_mock_boundary_driven_2d",
+        "model_description": "边界流量驱动的水动力 mock：使用四边界过程线生成本轮预测水深，输出为水动力网格 max_depth 格式。",
         "generated_at": generated_at,
         "lead_time_h": 3.0,
         "mesh_source_scenario_id": grid_scenario["scenario_id"],
         "mesh_source_path": grid_scenario.get("data_path", ""),
-        "hydrology_inputs": json.dumps(MOCK_HYDROLOGY, ensure_ascii=False),
+        "hydrology_inputs": json.dumps(hydrology_inputs, ensure_ascii=False),
+        "boundary_flow": json.dumps(boundary_flow.get("summary") if boundary_flow else {}, ensure_ascii=False),
+        "forecast_trigger": json.dumps(trigger or {}, ensure_ascii=False),
         "forcing_index": round(forcing, 3),
-        "forecast_cell_count": len(cells),
+        "forecast_cell_count": hydrodynamic_depth_stats["flooded_count"] or len(cells),
         "inundated_area_km2": round(total_area_km2, 4),
-        "max_depth_m": round(max_depth, 3),
+        "max_depth_m": round(hydrodynamic_depth_stats["max_depth_m"] or max_depth, 3),
         "mean_depth_m": round(avg_depth, 3),
         "data_path": rel(FORECAST_CELLS_PATH),
+        "hydrodynamic_depth_path": rel(HYDRODYNAMIC_FORECAST_DEPTH_PATH),
     }
     return run, cells
+
+
+def hydrology_inputs_from_boundary_flow(boundary_flow: dict[str, Any] | None) -> dict[str, float]:
+    summary = (boundary_flow or {}).get("summary") or {}
+    boundaries = summary.get("boundaries") or {}
+    total_peak = sum(float(row.get("peak_flow_m3s") or 0) for row in boundaries.values())
+    flow_index_value = float(summary.get("flow_index") or 0)
+    return {
+        "observed_rainfall_6h_mm": min(220.0, 42.0 + total_peak * 0.22),
+        "forecast_rainfall_3h_mm": min(110.0, 18.0 + flow_index_value * 11.0),
+        "reservoir_water_level_m": 190.8 + flow_index_value * 0.55,
+        "reservoir_flood_limit_level_m": 191.2,
+        "reservoir_outflow_m3s": float((boundaries.get("upstream") or {}).get("peak_flow_m3s") or 0) * 2.8,
+        "river_boundary_flow_m3s": total_peak,
+    }
+
+
+def write_mock_hydrodynamic_depths(boundary_flow: dict[str, Any] | None,
+                                   forcing: float) -> dict[str, Any]:
+    summary = (boundary_flow or {}).get("summary") or {}
+    scenario_id = str(summary.get("template_scenario_id") or "45050092hsfx0003")
+    base_path = SCENARIO_DEPTH_DIR / f"{scenario_id}_max_depth.csv"
+    if not base_path.exists():
+        write_hydrodynamic_depth_csv({}, HYDRODYNAMIC_FORECAST_DEPTH_PATH)
+        return {"depth_count": 0, "flooded_count": 0, "max_depth_m": 0.0}
+    flow_index_value = float(summary.get("flow_index") or 1.0)
+    scale = max(0.05, min(2.2, 0.32 + forcing * 0.34 + flow_index_value * 0.08))
+    depths: dict[int, float] = {}
+    with base_path.open(newline="", encoding="utf-8") as file:
+        reader = csv.DictReader(file)
+        for row in reader:
+            depth = float(row.get("max_depth") or row.get("max_depth_m") or 0)
+            adjusted = round(max(0.0, depth * scale), 6)
+            if adjusted > 0:
+                depths[int(row["cell_id"])] = adjusted
+    write_hydrodynamic_depth_csv(depths, HYDRODYNAMIC_FORECAST_DEPTH_PATH)
+    return {
+        "depth_count": len(depths),
+        "flooded_count": sum(1 for depth in depths.values() if depth > 0),
+        "max_depth_m": max(depths.values(), default=0.0),
+    }
+
+
+def write_hydrodynamic_depth_csv(depths: dict[int, float], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=["cell_id", "max_depth"])
+        writer.writeheader()
+        for cell_id, depth in sorted(depths.items()):
+            writer.writerow({"cell_id": cell_id, "max_depth": depth})
 
 
 def predicted_depth(base: dict[str, Any], distance_m: float,

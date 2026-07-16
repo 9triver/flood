@@ -969,8 +969,8 @@ functions:
 
   run_flood_forecast:
     summary: "运行或读取最新洪水预测"
-    description: "读取模拟水文观测和预测雨量，驱动简化二维水动力模型，直接输出 ForecastCell 淹没单元。该函数不把 severity 或综合指标映射为 5/10/20/50/100 年一遇情景。"
-    usage_prompt: "当用户要求运行预测、查看实时预测、显示未来淹没、自动观测水文并预测时调用。返回 ForecastRun 汇总和可绘制的 ForecastCell 对象。"
+    description: "读取最新四边界流量 mock 过程线，先执行干态门控规则；达到触发条件时生成水动力网格 max_depth 预测结果和 ForecastRun 汇总。该函数不把 severity 或综合指标映射为 5/10/20/50/100 年一遇情景。"
+    usage_prompt: "当用户要求运行预测、查看实时预测、显示未来淹没，或水文异常事件中的 forecast_trigger.should_run_forecast 为 true 且需要推演时调用。返回 ForecastRun 汇总；前端通过 HydrodynamicCell + forecast_id=latest 绘制动态水深结果。"
     function_type: lookup
     involves_objects: [ForecastRun, ForecastCell, River, Reservoir, Cell]
     params:
