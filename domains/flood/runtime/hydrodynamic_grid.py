@@ -8,12 +8,12 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-from .common import DOMAIN_DATA_DIR, PROJECT_DIR, apply_filters, apply_order, apply_window
+from .common import DOMAIN_DATA_DIR, DOMAIN_DIR, PROJECT_DIR, apply_filters, apply_order, apply_window
 
 
-MODEL_DIR = PROJECT_DIR / "local/hydrodynamic"
+MODEL_DIR = DOMAIN_DIR / "model" / "cnn_v2"
 GT_PATH = MODEL_DIR / "GT.txt"
-DEFAULT_DEPTH_PATH = MODEL_DIR / "OUTPUT/TEST_RESULTS/45050092hsfx0003/45050092hsfx0003_max_depth.csv"
+DEFAULT_DEPTH_PATH = DOMAIN_DATA_DIR / "hydrodynamic" / "scenarios" / "45050092hsfx0003_max_depth.csv"
 HYDRODYNAMIC_DATA_DIR = DOMAIN_DATA_DIR / "hydrodynamic"
 SCENARIO_DEPTH_DIR = HYDRODYNAMIC_DATA_DIR / "scenarios"
 LATEST_FORECAST_DEPTH_PATH = HYDRODYNAMIC_DATA_DIR / "forecasts" / "latest" / "max_depth.csv"

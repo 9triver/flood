@@ -29,6 +29,7 @@ domains/tools/.env
 
 # Legacy local files if they are kept at repository root
 水库下游洪水-交通基础设施联动应急预警智能体.md
+**/水库下游洪水-交通基础设施联动应急预警智能体.md
 珊瑚河数据/
 *.docx
 *_media/

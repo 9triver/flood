@@ -63,7 +63,7 @@ MAPPABLE_OBJECTS = {
         "style": {"type": "line", "color": "#64748b", "weight": 1},
     },
     "County": {
-        "label": "县级行政区",
+        "label": "县级边界",
         "role": "base",
         "style": {"type": "line", "color": "#64748b", "weight": 1},
     },

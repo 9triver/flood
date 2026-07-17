@@ -48,10 +48,16 @@
       <main class="map-stage">
         <div class="map-toolbar">
           <div class="context-pill" id="contextPill">基础态 · 领域对象地图</div>
-          <button class="tool-button" id="clearBtn" title="恢复基础对象">
-            <i data-lucide="rotate-ccw"></i>
-            <span>重置</span>
-          </button>
+          <div class="toolbar-actions">
+            <button class="tool-button mock-toggle" id="mockToggleBtn" title="启动边界流量 mock 服务" aria-pressed="false">
+              <i data-lucide="play"></i>
+              <span>启动 Mock</span>
+            </button>
+            <button class="tool-button" id="clearBtn" title="恢复基础对象">
+              <i data-lucide="rotate-ccw"></i>
+              <span>重置</span>
+            </button>
+          </div>
         </div>
         <div id="map"></div>
       </main>

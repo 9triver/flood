@@ -118,7 +118,7 @@ objects:
       resolver: flood_repository
       id_field: county_id
     summary: "县级行政区"
-    description: "县界图层表达的是 County 的行政边界，领域分析时以县为行政责任和统计单元。"
+    description: "县界图层表达的是 County 的县级行政边界，领域分析时以县为行政责任和统计单元。"
     properties:
       county_id: {type: str, required: true, description: "县级行政区编码"}
       river_id: {type: str, description: "关联河流编号，当前用于表达珊瑚河流域涉及的县"}
@@ -969,7 +969,7 @@ functions:
 
   run_flood_forecast:
     summary: "运行或读取最新洪水预测"
-    description: "读取最新四边界流量 mock 过程线，先执行干态门控规则；达到触发条件时生成水动力网格 max_depth 预测结果和 ForecastRun 汇总。该函数不把 severity 或综合指标映射为 5/10/20/50/100 年一遇情景。"
+    description: "读取最新四边界流量过程线，先执行干态门控规则；达到触发条件时调用 CNN_V2 水动力模型生成水动力网格 max_depth 预测结果和 ForecastRun 汇总。该函数不把 severity 或综合指标映射为 5/10/20/50/100 年一遇情景。"
     usage_prompt: "当用户要求运行预测、查看实时预测、显示未来淹没，或水文异常事件中的 forecast_trigger.should_run_forecast 为 true 且需要推演时调用。返回 ForecastRun 汇总；前端通过 HydrodynamicCell + forecast_id=latest 绘制动态水深结果。"
     function_type: lookup
     involves_objects: [ForecastRun, ForecastCell, River, Reservoir, Cell]

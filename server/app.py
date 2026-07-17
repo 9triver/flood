@@ -31,7 +31,7 @@ from oag.runtime import HarnessConfig  # noqa: E402
 from oag.runtime.events import event_to_dict  # noqa: E402
 from oag.runtime.hooks import HookResult  # noqa: E402
 from domains.flood.runtime.hydrodynamic_grid import hydrodynamic_grid_stats, hydrodynamic_grid_tile  # noqa: E402
-from domains.flood.runtime.mock_hydrology import HydroMockService  # noqa: E402
+from domains.flood.runtime.mock_boundary_flow import BoundaryFlowMockService  # noqa: E402
 
 
 ID_FIELDS = {
@@ -61,11 +61,10 @@ ID_FIELDS = {
     "HydrodynamicCell": "hydrodynamic_cell_id",
 }
 
-HYDRO_EVENT_DEBUG_TOOLS = frozenset({
+BOUNDARY_FLOW_EVENT_TOOLS = frozenset({
     "inspect",
     "query",
     "count",
-    "ui_show_event_marker",
     "ui_show_objects",
     "run_flood_forecast",
 })
@@ -451,47 +450,79 @@ class EventRuntime:
         self.outputs: list[dict[str, Any]] = []
         self.condition = threading.Condition()
         self._started = False
+        self._mock_running = False
         self._event_queue: collections.deque[tuple[dict[str, Any], int]] = collections.deque()
         self._event_queue_condition = threading.Condition()
         self._generation = 0
         self._published_inundation_sources: set[str] = set()
-        self._stations = {
-            row["station_id"]: row
-            for row in self.app.resolver.query("HydroStation")
-        }
-        self._hydro_mock = HydroMockService(self._stations)
+        self._boundary_flow_mock = BoundaryFlowMockService()
 
-    def reset(self) -> None:
+    def reset(self, *, clear_map: bool = True) -> None:
         with self.condition:
             self._generation += 1
             self.events.clear()
             self.outputs.clear()
-            self._hydro_mock.reset()
+            self._boundary_flow_mock.reset()
             self._published_inundation_sources.clear()
+            self._clear_event_queue()
             self.outputs.append({"event": "runtime_status", "data": {
                 "type": "runtime_status",
-                "label": "事件驱动闭环已启动",
-                "detail": "后台水文站 mock 服务正在推送观测；超阈值事件会携带四边界流量过程线并进入单 worker 队列。",
+                "label": "边界流量 mock 服务已启动",
+                "detail": "后台边界流量 mock 服务正在生成四边界过程线；事件进入单 worker 队列交给智能体处理。",
             }})
-            self.outputs.append({"event": "map_actions", "data": {
-                "type": "map_actions",
-                "context": "调试 · 水文事件到智能体",
-                "map_actions": [
-                    {"type": "reset"},
-                ],
-                "result_cards": [
-                    {"title": "调试范围", "value": "水文事件", "detail": "水文异常事件由 LLM 决定地图展示和是否启动水动力预测。"},
-                ],
-            }})
+            if clear_map:
+                self.outputs.append({"event": "map_actions", "data": {
+                    "type": "map_actions",
+                    "context": "调试 · 边界流量到智能体",
+                    "map_actions": [
+                        {"type": "reset"},
+                    ],
+                    "result_cards": [
+                        {"title": "调试范围", "value": "边界流量", "detail": "四边界流量事件由 LLM 判断是否启动水动力预测。"},
+                    ],
+                }})
             self.condition.notify_all()
 
     def ensure_started(self) -> None:
         if self._started:
             return
         self._started = True
-        self.reset()
-        threading.Thread(target=self._hydro_station_loop, daemon=True).start()
+        threading.Thread(target=self._boundary_flow_loop, daemon=True).start()
         threading.Thread(target=self._event_worker_loop, daemon=True).start()
+
+    def start_mock(self) -> dict[str, Any]:
+        self.ensure_started()
+        with self.condition:
+            if self._mock_running:
+                return self.status()
+            self._mock_running = True
+        self.reset()
+        return self.status()
+
+    def stop_mock(self) -> dict[str, Any]:
+        self.ensure_started()
+        with self.condition:
+            if not self._mock_running:
+                return self.status()
+            self._mock_running = False
+            self._generation += 1
+            self._clear_event_queue()
+            self.outputs.append({"event": "runtime_status", "data": {
+                "type": "runtime_status",
+                "label": "边界流量 mock 服务已停止",
+                "detail": "后台不再生成新的边界流量事件；已清空待处理事件队列。",
+            }})
+            self.condition.notify_all()
+        return self.status()
+
+    def status(self) -> dict[str, Any]:
+        with self.condition:
+            return {
+                "running": self._mock_running,
+                "started": self._started,
+                "event_count": len(self.events),
+                "output_count": len(self.outputs),
+            }
 
     def stream(self, interval: int):
         self.ensure_started()
@@ -505,35 +536,63 @@ class EventRuntime:
                     if len(self.outputs) <= next_seq:
                         yield Handler._format_sse("runtime_status", {
                             "type": "runtime_status",
-                            "label": "等待水文事件",
-                            "detail": "后台服务继续观测水文站 mock 数据。",
+                            "label": "等待启动 mock 服务",
+                            "detail": "点击前端按钮后，后台才会生成边界流量 mock 数据。",
                         })
                 pending = self.outputs[next_seq:]
                 next_seq = len(self.outputs)
             for item in pending:
                 yield Handler._format_sse(item["event"], item["data"])
 
-    def _hydro_station_loop(self) -> None:
-        time.sleep(1.0)
+    def _boundary_flow_loop(self) -> None:
         while True:
-            observation = self._hydro_mock.next_observation()
-            self._publish_observation_status(observation)
-            event = self._hydro_mock.threshold_event(observation)
-            if event:
-                self._publish_event(event)
-            time.sleep(5)
+            generation = self._wait_until_mock_running()
+            time.sleep(1.0)
+            if not self._is_mock_running(generation):
+                continue
+            event = self._boundary_flow_mock.next_event()
+            if not self._is_mock_running(generation):
+                continue
+            self._publish_boundary_flow_status(event)
+            self._publish_event(event)
+            self._sleep_while_mock_running(15, generation)
 
-    def _publish_observation_status(self, observation: dict[str, Any]) -> None:
-        label = (
-            f"{observation.get('station_name')}{observation.get('metric_label')}"
-            f" {observation.get('value')} {observation.get('unit')}"
-        )
-        detail = "正常观测" if observation.get("status") == "normal" else "超过阈值，准备发布领域事件"
+    def _wait_until_mock_running(self) -> int:
+        with self.condition:
+            while not self._mock_running:
+                self.condition.wait()
+            return self._generation
+
+    def _is_mock_running(self, generation: int) -> bool:
+        with self.condition:
+            return self._mock_running and generation == self._generation
+
+    def _sleep_while_mock_running(self, seconds: float, generation: int) -> None:
+        deadline = time.time() + seconds
+        with self.condition:
+            while self._mock_running and generation == self._generation:
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    return
+                self.condition.wait(timeout=min(remaining, 0.5))
+
+    def _clear_event_queue(self) -> None:
+        with self._event_queue_condition:
+            self._event_queue.clear()
+            self._event_queue_condition.notify_all()
+
+    def _publish_boundary_flow_status(self, event: dict[str, Any]) -> None:
+        payload = event.get("payload") or {}
+        boundary_flow = payload.get("boundary_flow") or {}
+        trigger = payload.get("forecast_trigger") or {}
         with self.condition:
             self.outputs.append({"event": "runtime_status", "data": {
                 "type": "runtime_status",
-                "label": label,
-                "detail": detail,
+                "label": event.get("title", "边界流量过程线已生成"),
+                "detail": (
+                    f"{boundary_flow_detail(boundary_flow)}；"
+                    f"规则建议={trigger.get('decision', 'unknown')}"
+                ),
             }})
             self.condition.notify_all()
 
@@ -546,7 +605,7 @@ class EventRuntime:
                 "type": "agent_trace",
                 "tag": "EVENT",
                 "label": event["title"],
-                "detail": hydro_event_detail(event),
+                "detail": boundary_flow_event_detail(event),
                 "event_id": event["event_id"],
             }})
             boundary_flow = ((event.get("payload") or {}).get("boundary_flow") or {})
@@ -590,9 +649,9 @@ class EventRuntime:
     def _handle_event(self, event: dict[str, Any], generation: int) -> None:
         if generation != self._generation:
             return
-        if event.get("event_type") == "HydroThresholdExceeded":
-            agent_result = self._run_agent_for_hydro_event(event, generation)
-            trace = self._reason_about_hydro_event(event)
+        if event.get("event_type") == "BoundaryFlowSeriesGenerated":
+            agent_result = self._run_agent_for_boundary_flow_event(event, generation)
+            trace = self._reason_about_boundary_flow_event(event)
             self._append_output("agent_trace", trace, generation)
             forecast_result = agent_result.get("forecast_result")
             if not forecast_result and agent_result.get("forecast_requested"):
@@ -605,20 +664,19 @@ class EventRuntime:
             self._run_agent_for_inundation_event(event, generation)
             return
 
-    def _run_agent_for_hydro_event(self, event: dict[str, Any], generation: int) -> dict[str, Any]:
+    def _run_agent_for_boundary_flow_event(self, event: dict[str, Any], generation: int) -> dict[str, Any]:
         if not self.app.agent:
             return {}
         session_id = f"event-{event['event_id']}"
         prompt = (
             "/no_think\n"
             "你正在作为珊瑚河洪水应急智能体接收后台事件。"
-            "本轮链路调试放开到水动力预测：你需要判断该水文异常事件的意义。"
-            "如果你认为该事件需要用户在地图上感知，必须调用 ui_show_event_marker 展示事件 marker，"
-            "并设置 show_source=true、fit=true。"
+            "本轮链路调试放开到水动力预测：你需要判断这组四边界流量过程线是否需要驱动水动力模型。"
+            "如果你认为该事件需要用户在地图上感知，可以调用 ui_show_objects 展示 HydrodynamicBoundary，filters 使用 {\"is_model_input_boundary\": true}，fit=false。"
             "事件 payload 中包含 boundary_flow 和 forecast_trigger。"
             "只有当 forecast_trigger.should_run_forecast 为 true，且你判断确需推演时，才调用 run_flood_forecast，forecast_id 使用 latest。"
             "禁止调用 run_emergency_cycle；影响评估和防洪响应预案仍然切断。"
-            "请用简短结论说明：事件来源、指标值、阈值、是否调用了预测模型。"
+            "请用简短结论说明：边界流量峰值、规则建议、是否调用了预测模型。"
             "原始事件如下：\n"
             f"{json.dumps(event, ensure_ascii=False, indent=2)}"
         )
@@ -629,7 +687,7 @@ class EventRuntime:
             for raw_event in self.app.agent.chat_stream(
                 prompt,
                 session_id=session_id,
-                allowed_tools=HYDRO_EVENT_DEBUG_TOOLS,
+                allowed_tools=BOUNDARY_FLOW_EVENT_TOOLS,
             ):
                 if generation != self._generation:
                     return agent_result
@@ -725,7 +783,7 @@ class EventRuntime:
         forecast_result = agent_result.get("forecast_result")
         if not forecast_result or agent_result.get("forecast_event_published") or forecast_was_skipped(forecast_result):
             return
-        trace = self._reason_about_hydro_event(source_event)
+        trace = self._reason_about_boundary_flow_event(source_event)
         inundation_event = self._make_inundation_event(
             source_event,
             forecast_result,
@@ -845,12 +903,13 @@ class EventRuntime:
             self.condition.notify_all()
         self._enqueue_event(event, generation, priority=True)
 
-    def _reason_about_hydro_event(self, event: dict[str, Any]) -> dict[str, Any]:
+    def _reason_about_boundary_flow_event(self, event: dict[str, Any]) -> dict[str, Any]:
         payload = event.get("payload") or {}
         trigger = payload.get("forecast_trigger") or {}
+        boundary_flow = payload.get("boundary_flow") or {}
         should_run = bool(trigger.get("should_run_forecast"))
         if self.app.agent:
-            detail = "智能体接收水文异常事件；LLM 可调用地图工具，并依据四边界流量判断是否调用 run_flood_forecast。"
+            detail = "智能体接收边界流量事件；LLM 可调用地图工具，并依据四边界流量判断是否调用 run_flood_forecast。"
         else:
             detail = "未启用 LLM，按四边界流量规则决定是否启动水动力模型。"
         return {
@@ -858,8 +917,7 @@ class EventRuntime:
             "tag": "SYSTEM",
             "label": "领域规则提示",
             "detail": (
-                f"{detail} {payload.get('metric_label')}={payload.get('value')} {payload.get('unit')}，"
-                f"阈值={payload.get('threshold')} {payload.get('unit')}；"
+                f"{detail} {boundary_flow_detail(boundary_flow)}；"
                 f"规则建议={trigger.get('decision', 'unknown')}，原因={trigger.get('reason', '')}"
             ),
             "should_run_model": should_run,
@@ -899,15 +957,6 @@ def parse_tool_json_result(value: Any) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def hydro_event_detail(event: dict[str, Any]) -> str:
-    payload = event.get("payload") or {}
-    return (
-        f"{payload.get('station_name')}: {payload.get('metric_label')} "
-        f"{payload.get('value')} {payload.get('unit')} > 阈值 "
-        f"{payload.get('threshold')} {payload.get('unit')}"
-    )
-
-
 def boundary_flow_detail(summary: dict[str, Any]) -> str:
     boundaries = summary.get("boundaries") or {}
     parts = []
@@ -920,6 +969,15 @@ def boundary_flow_detail(summary: dict[str, Any]) -> str:
         f"模板={summary.get('template_scenario_id')}，"
         f"flow_index={format_float(summary.get('flow_index'), 2)}；"
         + "，".join(parts)
+    )
+
+
+def boundary_flow_event_detail(event: dict[str, Any]) -> str:
+    payload = event.get("payload") or {}
+    trigger = payload.get("forecast_trigger") or {}
+    return (
+        f"{boundary_flow_detail(payload.get('boundary_flow') or {})}；"
+        f"规则建议={trigger.get('decision', 'unknown')}"
     )
 
 
@@ -1020,6 +1078,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._chat_stream(parsed.query)
             if parsed.path == "/api/autonomy/stream":
                 return self._autonomy_stream(parsed.query)
+            if parsed.path == "/api/autonomy/status":
+                return self._json(EVENT_RUNTIME.status())
             if parsed.path == "/api/agent/runs/active":
                 return self._active_run(parsed.query)
             if parsed.path == "/api/hydrodynamic-grid/meta":
@@ -1051,12 +1111,14 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         try:
             payload = self._read_json()
+            if parsed.path == "/api/autonomy/start":
+                return self._json(EVENT_RUNTIME.start_mock())
+            if parsed.path == "/api/autonomy/stop":
+                return self._json(EVENT_RUNTIME.stop_mock())
             if parsed.path == "/api/agent/confirm":
                 return self._confirm(payload)
             if parsed.path == "/api/autonomy/reset":
-                EVENT_RUNTIME.reset()
-                EVENT_RUNTIME.ensure_started()
-                return self._json({"ok": True})
+                return self._json(EVENT_RUNTIME.start_mock())
             if parsed.path.startswith("/api/agent/runs/") and parsed.path.endswith("/cancel"):
                 run_id = parsed.path.split("/")[-2]
                 return self._json({"ok": RUNS.cancel(run_id), "run_id": run_id})

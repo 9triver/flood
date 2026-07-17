@@ -1,0 +1,4 @@
+24	#flow_history
+1.0	#csv_time_step
+0.5	#train_sample_interval_hours
+0.5	#output_interval_hours

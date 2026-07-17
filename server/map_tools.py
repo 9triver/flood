@@ -14,7 +14,7 @@ OBJECT_LABELS = {
     "Watershed": "珊瑚河流域",
     "Waterway": "河道水系",
     "HydrodynamicBoundary": "水动力边界",
-    "County": "行政边界",
+    "County": "县级边界",
     "Town": "乡镇边界",
     "Road": "道路",
     "Reservoir": "水库",
@@ -89,7 +89,7 @@ def register_map_tools(tools: ToolRegistry, resolver, registry) -> None:
         usage_prompt=(
             "常用映射：珊瑚河/主河道/河道中心线 => River；河道/水系/河网 => Waterway；"
             "水动力边界/模型边界/入流边界/断面位置/河口水位/坝址边界 => HydrodynamicBoundary；"
-            "流域/小流域 => Watershed；行政边界 => County；危险区/风险点 => Risk；"
+            "流域/小流域 => Watershed；县级边界/行政边界 => County；危险区/风险点 => Risk；"
             "乡镇/乡镇边界/镇界 => Town；"
             "学校/医院/政府机构 => Facility 并分别过滤 facility_type=school/hospital/government；"
             "水文站/测站/雨量站/水位站/气象站 => HydroStation；"
@@ -154,7 +154,7 @@ def register_map_tools(tools: ToolRegistry, resolver, registry) -> None:
         name="ui_show_event_marker",
         description=(
             "在前端 GIS 地图中显示一个领域事件 marker。"
-            "当后台水文异常、淹没异常、告警事件需要被用户在地图上直接感知时调用。"
+            "当后台事件自带 longitude/latitude，且需要被用户在地图上直接感知时调用。"
             "该工具只改变前端显示，不改变领域数据。"
         ),
         parameters={
@@ -173,8 +173,8 @@ def register_map_tools(tools: ToolRegistry, resolver, registry) -> None:
         },
         handler=lambda args: _show_event_marker(args),
         usage_prompt=(
-            "HydroThresholdExceeded 这类水文异常事件通常应调用 ui_show_event_marker，"
-            "让前端用 marker 标出异常发生位置；如果需要同时看到测站对象，可设置 show_source=true。"
+            "只有事件对象包含明确经纬度时才调用 ui_show_event_marker。"
+            "BoundaryFlowSeriesGenerated 这类边界流量事件没有单点位置，通常应改用 ui_show_objects 展示 HydrodynamicBoundary。"
         ),
         category="ui",
         policy=policy,

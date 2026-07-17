@@ -69,27 +69,8 @@ class FloodObjectBuilder:
             "data_path": rel(path),
         })
 
-        guijiang_path = DATA_DIR / "广西西江水系桂江053小流域/广西西江水系桂江053.shp"
-        for feature in _features(guijiang_path):
-            props = feature.get("properties") or {}
-            rows.append({
-                "watershed_id": _code(_first_non_empty(props, "WSCD")) or "guijiang_053",
-                "river_id": "shanhu",
-                "name": _first_non_empty(props, "WSNM") or "广西西江水系桂江053小流域",
-                "watershed_type": "small_watershed",
-                "area_km2": _float(_first_non_empty(props, "WSAREA")),
-                "districts": _first_non_empty(props, "区县") or "",
-                "town_count": int(_float(_first_non_empty(props, "乡镇"))),
-                "village_count": int(_float(_first_non_empty(props, "行政村"))),
-                "natural_village_count": int(_float(_first_non_empty(props, "自然村"))),
-                "enterprise_count": int(_float(_first_non_empty(props, "企业"))),
-                "danger_area_count": int(_float(_first_non_empty(props, "危险区"))),
-                "population": int(_float(_first_non_empty(props, "人口"))),
-                "household_count": int(_float(_first_non_empty(props, "家庭"))),
-                "high_risk_flag": _first_non_empty(props, "高风险") or "",
-                **_geometry_fields(feature),
-                "data_path": rel(guijiang_path),
-            })
+        # The external small-watershed unit overlaps the basin context and is
+        # intentionally kept out of the domain object library for now.
         return rows
 
     def _build_hydrodynamicboundary(self) -> list[dict]:

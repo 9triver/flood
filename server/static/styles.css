@@ -234,6 +234,14 @@ h2 {
   pointer-events: none;
 }
 
+.toolbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  pointer-events: auto;
+}
+
 .context-pill,
 .tool-button {
   pointer-events: auto;
@@ -254,6 +262,78 @@ h2 {
   font-weight: 700;
 }
 
+.boundary-flow-marker {
+  filter: drop-shadow(0 2px 5px rgba(15, 23, 42, 0.24));
+}
+
+.boundary-flow-chart-icon {
+  pointer-events: auto;
+}
+
+.boundary-flow-chart {
+  width: 178px;
+  height: 86px;
+  display: grid;
+  grid-template-rows: auto 48px auto;
+  gap: 2px;
+  padding: 7px 9px 6px;
+  border: 1px solid rgba(148, 163, 184, 0.72);
+  border-left: 4px solid var(--flow-color);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.16);
+  color: #17202a;
+  backdrop-filter: blur(8px);
+}
+
+.flow-chart-head {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.flow-chart-head span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-chart-head strong {
+  color: var(--flow-color);
+  font-size: 13px;
+}
+
+.boundary-flow-chart svg {
+  width: 154px;
+  height: 48px;
+  overflow: visible;
+}
+
+.flow-chart-grid {
+  fill: none;
+  stroke: rgba(148, 163, 184, 0.32);
+  stroke-width: 1;
+}
+
+.flow-chart-line {
+  fill: none;
+  stroke: var(--flow-color);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.flow-chart-unit {
+  color: var(--subtle);
+  font-size: 10px;
+  font-weight: 700;
+  text-align: right;
+}
+
 .tool-button {
   display: inline-flex;
   align-items: center;
@@ -261,6 +341,12 @@ h2 {
   height: 38px;
   padding: 0 11px;
   color: var(--ink);
+}
+
+.mock-toggle.is-running {
+  border-color: rgba(36, 137, 93, 0.5);
+  background: rgba(232, 246, 239, 0.94);
+  color: #17633f;
 }
 
 .status-dot {

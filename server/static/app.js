@@ -18,6 +18,9 @@ const state = {
   hydrodynamicGridMeta: null,
   hydrodynamicResultMeta: null,
   lastTrace: null,
+  boundaryFlowLayer: null,
+  boundaryFlowFeatures: null,
+  mockRunning: false,
 };
 
 const OBJECT_CONFIG = {
@@ -25,7 +28,7 @@ const OBJECT_CONFIG = {
   Watershed: { label: "珊瑚河流域", color: "#1f2937", swatch: "fill" },
   Waterway: { label: "河道水系", color: "#0e7490", swatch: "line" },
   HydrodynamicBoundary: { label: "水动力边界", color: "#e11d48", swatch: "line" },
-  County: { label: "行政边界", color: "#7b8794", swatch: "line" },
+  County: { label: "县级边界", color: "#7b8794", swatch: "line" },
   Town: { label: "乡镇边界", color: "#7a6a22", swatch: "fill" },
   Road: { label: "道路", color: "#5f6772", swatch: "line" },
   Reservoir: { label: "水库", color: "#2f80c9", swatch: "point" },
@@ -70,6 +73,8 @@ const ID_FIELDS = {
   HydrodynamicCell: "hydrodynamic_cell_id",
 };
 
+const MAP_NON_SELECTABLE_OBJECTS = new Set(["Watershed", "County", "Town"]);
+
 document.addEventListener("DOMContentLoaded", async () => {
   initMap();
   bindEvents();
@@ -79,6 +84,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   await loadObject("HydrodynamicBoundary", {}, { fit: false });
   addMessage("agent", "基础对象已加载。");
   startAutonomyStream();
+  await refreshMockStatus();
   renderIcons();
 });
 
@@ -127,6 +133,7 @@ function renderObjectList(items) {
 function bindEvents() {
   document.getElementById("fitAllBtn").addEventListener("click", fitAll);
   document.getElementById("clearBtn").addEventListener("click", resetMap);
+  document.getElementById("mockToggleBtn").addEventListener("click", toggleMockService);
   document.querySelectorAll("[data-panel-toggle]").forEach((btn) => {
     btn.addEventListener("click", () => activateAgentPane(btn.dataset.panelToggle));
   });
@@ -208,10 +215,13 @@ async function loadObject(objectType, filters = {}, options = {}) {
   const res = await fetch(`/api/geojson?${params.toString()}`);
   if (!res.ok) throw new Error(await res.text());
   const geojson = await res.json();
+  const mapSelectable = !MAP_NON_SELECTABLE_OBJECTS.has(objectType);
   const layer = L.geoJSON(geojson, {
+    interactive: mapSelectable,
     style: (feature) => featureStyle(objectType, feature),
     pointToLayer: (feature, latlng) => L.circleMarker(latlng, pointStyle(objectType, feature)),
     onEachFeature: (feature, layerItem) => {
+      if (!mapSelectable) return;
       indexFeature(objectType, feature, layerItem);
       layerItem.on("click", () => selectFeature(objectType, feature, layerItem));
       layerItem.bindPopup(popupHtml(objectType, feature));
@@ -344,6 +354,7 @@ function resetMap() {
   clearFocus();
   clearHighlights();
   clearEventMarkers();
+  clearBoundaryFlowLayer();
   for (const key of Array.from(state.layerGroups.keys())) {
     const meta = state.layerMeta.get(key);
     if (!["Watershed", "County"].includes(meta?.objectType)) {
@@ -368,14 +379,23 @@ function clearEventMarkers() {
   state.eventMarkers.clear();
 }
 
+function clearBoundaryFlowLayer() {
+  if (state.boundaryFlowLayer) {
+    state.map.removeLayer(state.boundaryFlowLayer);
+    state.boundaryFlowLayer = null;
+  }
+}
+
 function startAutonomyStream() {
   if (state.autonomyStream) state.autonomyStream.close();
-  const es = new EventSource("/api/autonomy/stream?interval=5");
+  const es = new EventSource("/api/autonomy/stream?interval=15");
   state.autonomyStream = es;
 
   es.addEventListener("runtime_status", (event) => {
     const data = parseEvent(event);
-    if (data.label === "等待水文事件") return;
+    if (["等待水文事件", "等待边界流量事件", "等待启动 mock 服务"].includes(data.label)) return;
+    if (data.label === "边界流量 mock 服务已启动") setMockButtonState(true);
+    if (data.label === "边界流量 mock 服务已停止") setMockButtonState(false);
     addTrace("AUTO", data.label || "事件运行时", data.detail || "");
   });
 
@@ -405,15 +425,74 @@ function startAutonomyStream() {
   };
 }
 
+async function refreshMockStatus() {
+  try {
+    const res = await fetch("/api/autonomy/status");
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    setMockButtonState(Boolean(data.running));
+  } catch (error) {
+    console.warn("mock status failed", error);
+    setMockButtonState(false);
+  }
+}
+
+async function toggleMockService() {
+  const nextRunning = !state.mockRunning;
+  const btn = document.getElementById("mockToggleBtn");
+  btn.disabled = true;
+  try {
+    const res = await fetch(nextRunning ? "/api/autonomy/start" : "/api/autonomy/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    setMockButtonState(Boolean(data.running));
+    addTrace(
+      "AUTO",
+      data.running ? "边界流量 mock 服务已启动" : "边界流量 mock 服务已停止",
+      data.running ? "后台开始每 15 秒生成四边界流量过程线。" : "后台已停止生成新的边界流量事件。",
+    );
+  } catch (error) {
+    addTrace("ERR", "mock 服务切换失败", error.message || String(error));
+    setMockButtonState(state.mockRunning);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function setMockButtonState(running) {
+  state.mockRunning = running;
+  const btn = document.getElementById("mockToggleBtn");
+  if (!btn) return;
+  btn.classList.toggle("is-running", running);
+  btn.setAttribute("aria-pressed", String(running));
+  btn.title = running ? "停止边界流量 mock 服务" : "启动边界流量 mock 服务";
+  btn.innerHTML = running
+    ? '<i data-lucide="pause"></i><span>停止 Mock</span>'
+    : '<i data-lucide="play"></i><span>启动 Mock</span>';
+  renderIcons();
+}
+
 function renderDomainEvent(data) {
   if (!data || !data.event_type) return;
-  const tag = data.event_type === "HydroThresholdExceeded" ? "HYDRO" : "EVENT";
+  const tag = data.event_type === "BoundaryFlowSeriesGenerated" ? "FLOW" : (data.event_type === "HydroThresholdExceeded" ? "HYDRO" : "EVENT");
   addTrace(tag, data.title || data.event_type, eventDetail(data));
   setCyclePhase(eventPhase(data.event_type));
+  if (data.event_type === "BoundaryFlowSeriesGenerated") {
+    renderBoundaryFlowLayer(data).catch((error) => console.warn("boundary flow render failed", error));
+  }
 }
 
 function eventDetail(data) {
   const payload = data.payload || {};
+  if (data.event_type === "BoundaryFlowSeriesGenerated") {
+    const flow = payload.boundary_flow || {};
+    const trigger = payload.forecast_trigger || {};
+    return `${boundaryFlowSummary(flow)}；规则建议 ${trigger.decision || "unknown"}`;
+  }
   if (data.event_type === "HydroThresholdExceeded") {
     return `${payload.station_name || data.source_id}: ${payload.metric_label || payload.metric} ${payload.value} ${payload.unit} / 阈值 ${payload.threshold} ${payload.unit}`;
   }
@@ -423,8 +502,147 @@ function eventDetail(data) {
   return data.severity || "";
 }
 
+function boundaryFlowSummary(flow) {
+  const boundaries = flow.boundaries || {};
+  const labels = ["interval1", "interval2", "tonggu", "upstream"].map((key) => {
+    const item = boundaries[key] || {};
+    if (!item.label) return "";
+    return `${item.label}${Number(item.peak_flow_m3s || 0).toFixed(1)}m³/s`;
+  }).filter(Boolean);
+  return `${flow.boundary_flow_id || "boundary_flow"} ${labels.join("，")}`;
+}
+
+async function renderBoundaryFlowLayer(event) {
+  const payload = event.payload || {};
+  const flow = payload.boundary_flow || {};
+  const boundaries = flow.boundaries || {};
+  const features = await getModelBoundaryFeatures();
+  clearBoundaryFlowLayer();
+
+  const layer = L.layerGroup();
+  const maxFlow = Math.max(
+    1,
+    ...Object.values(boundaries).flatMap((item) => (item.series || []).map((point) => Number(point.flow_m3s || 0))),
+  );
+
+  ["interval1", "interval2", "tonggu", "upstream"].forEach((key) => {
+    const item = boundaries[key];
+    const feature = features.find((entry) => entry.properties?.boundary_group === key);
+    if (!item || !feature) return;
+    const center = featureCenter(feature);
+    if (!center) return;
+
+    const color = boundaryFlowColor(key);
+    const marker = L.circleMarker(center, {
+      radius: 6,
+      color: "#ffffff",
+      weight: 2,
+      fillColor: color,
+      fillOpacity: 0.96,
+      className: "boundary-flow-marker",
+    });
+    marker.bindTooltip(`${item.label} 峰值 ${Number(item.peak_flow_m3s || 0).toFixed(1)} m³/s`, {
+      direction: "top",
+      offset: [0, -8],
+    });
+    marker.bindPopup(boundaryFlowPopupHtml(item, flow));
+    marker.addTo(layer);
+
+    L.marker(center, {
+      interactive: true,
+      icon: L.divIcon({
+        className: "boundary-flow-chart-icon",
+        html: boundaryFlowChartHtml(key, item, maxFlow),
+        iconSize: [178, 86],
+        iconAnchor: [-12, 72],
+      }),
+    }).addTo(layer);
+  });
+
+  layer.addTo(state.map);
+  state.boundaryFlowLayer = layer;
+}
+
+async function getModelBoundaryFeatures() {
+  if (state.boundaryFlowFeatures) return state.boundaryFlowFeatures;
+  const params = new URLSearchParams({
+    object_type: "HydrodynamicBoundary",
+    is_model_input_boundary: "true",
+  });
+  const res = await fetch(`/api/geojson?${params.toString()}`);
+  if (!res.ok) throw new Error(await res.text());
+  const geojson = await res.json();
+  state.boundaryFlowFeatures = geojson.features || [];
+  return state.boundaryFlowFeatures;
+}
+
+function featureCenter(feature) {
+  const coords = collectCoordinates(feature.geometry?.coordinates || []);
+  if (!coords.length) return null;
+  const mid = coords[Math.floor(coords.length / 2)];
+  return [mid[1], mid[0]];
+}
+
+function collectCoordinates(value) {
+  if (!Array.isArray(value)) return [];
+  if (value.length >= 2 && typeof value[0] === "number" && typeof value[1] === "number") {
+    return [[value[0], value[1]]];
+  }
+  return value.flatMap((item) => collectCoordinates(item));
+}
+
+function boundaryFlowChartHtml(key, item, maxFlow) {
+  const series = item.series || [];
+  const color = boundaryFlowColor(key);
+  const points = sparklinePoints(series, maxFlow, 142, 40);
+  const peak = Number(item.peak_flow_m3s || 0).toFixed(1);
+  const label = escapeHtml(item.label || key);
+  return `
+    <div class="boundary-flow-chart" style="--flow-color:${color}">
+      <div class="flow-chart-head">
+        <span>${label}</span>
+        <strong>${peak}</strong>
+      </div>
+      <svg viewBox="0 0 154 48" aria-hidden="true">
+        <path class="flow-chart-grid" d="M6 8 H148 M6 24 H148 M6 40 H148" />
+        <polyline class="flow-chart-line" points="${points}" />
+      </svg>
+      <div class="flow-chart-unit">m³/s</div>
+    </div>
+  `;
+}
+
+function sparklinePoints(series, maxFlow, width, height) {
+  if (!series.length) return "";
+  const maxTime = Math.max(...series.map((point) => Number(point.time_h || 0)), 1);
+  return series.map((point) => {
+    const x = 6 + (Number(point.time_h || 0) / maxTime) * width;
+    const y = 6 + height - (Number(point.flow_m3s || 0) / maxFlow) * height;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+}
+
+function boundaryFlowColor(key) {
+  return {
+    interval1: "#b7791f",
+    interval2: "#c05621",
+    tonggu: "#047481",
+    upstream: "#b42318",
+  }[key] || "#475569";
+}
+
+function boundaryFlowPopupHtml(item, flow) {
+  return `
+    <div class="popup-title">${escapeHtml(item.label || "边界流量")}</div>
+    <div class="popup-meta">过程线: ${escapeHtml(flow.boundary_flow_id || "")}</div>
+    <div class="popup-meta">峰值: ${escapeHtml(Number(item.peak_flow_m3s || 0).toFixed(2))} m³/s</div>
+    <div class="popup-meta">均值: ${escapeHtml(Number(item.mean_flow_m3s || 0).toFixed(2))} m³/s</div>
+  `;
+}
+
 function eventPhase(eventType) {
   return {
+    BoundaryFlowSeriesGenerated: "observe",
     HydroThresholdExceeded: "observe",
     InundationGenerated: "compute",
     ExposureAnalyzed: "decide",
@@ -653,6 +871,10 @@ async function focusObject(action = {}) {
   const selected = state.selected || {};
   const objectType = action.object_type || selected.object_type;
   const objectId = action.object_id || action.id || selected.id;
+  if (MAP_NON_SELECTABLE_OBJECTS.has(objectType)) {
+    await loadObject(objectType, action.filters || {}, { fit: false, label: action.label });
+    return false;
+  }
   if (!objectType || !objectId) {
     fitAll();
     return false;
@@ -729,6 +951,10 @@ function clearHighlights() {
 async function highlightObjects(action = {}) {
   const objectType = action.object_type;
   const objectIds = (action.object_ids || []).map(String).filter(Boolean);
+  if (MAP_NON_SELECTABLE_OBJECTS.has(objectType)) {
+    await loadObject(objectType, action.filters || {}, { fit: false, label: action.label });
+    return false;
+  }
   if (!objectType || !objectIds.length) return false;
   await loadObject(objectType, action.filters || {}, { fit: false, label: action.label });
   objectIds.forEach((objectId) => {
