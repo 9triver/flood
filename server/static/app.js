@@ -31,6 +31,7 @@ const state = {
     playing: false,
   },
   impactAnalysis: null,
+  pendingImpactObjectTypes: new Set(),
   impactRefreshTimer: null,
   impactRefreshSeq: 0,
   applyingImpactRefresh: false,
@@ -546,6 +547,7 @@ function clearImpactAnalysisState() {
   state.impactRefreshTimer = null;
   state.impactRefreshSeq += 1;
   state.impactAnalysis = null;
+  state.pendingImpactObjectTypes.clear();
 }
 
 function clearEventMarkers() {
@@ -669,6 +671,9 @@ function setMockButtonState(running) {
 
 function renderDomainEvent(data) {
   if (!data || !data.event_type) return;
+  if (data.event_type === "ImpactAnalyzed") {
+    registerImpactAnalysisResult(data.payload || null, { preserveVisibleTypes: false });
+  }
   const tag = data.event_type === "BoundaryFlowSeriesGenerated" ? "ALERT" : (data.event_type === "HydroThresholdExceeded" ? "HYDRO" : "EVENT");
   const label = data.event_type === "BoundaryFlowSeriesGenerated" ? "警戒事件进入智能体" : (data.title || data.event_type);
   addTrace(tag, label, eventDetail(data));
@@ -1758,21 +1763,37 @@ function registerImpactAnalysisResult(result, options = {}) {
   if (!result || typeof result !== "object") return;
   if (!["completed", "no_forecast_cells"].includes(result.status)) return;
   const previous = state.impactAnalysis;
+  const visibleTypes = options.preserveVisibleTypes && previous?.visibleTypes
+    ? previous.visibleTypes
+    : visibleImpactObjectTypes(result);
   const params = result.parameters || {};
   state.impactAnalysis = {
     forecastId: result.forecast_id || "latest",
     targetType: result.target_type || "all",
     minDepthM: Number(params.min_depth_m ?? 0.15),
     maxDistanceM: Number(params.max_distance_m ?? 120),
-    visibleTypes: options.preserveVisibleTypes && previous?.visibleTypes ? previous.visibleTypes : new Set(),
+    visibleTypes,
     lastResult: result,
   };
+  state.pendingImpactObjectTypes.clear();
+  if (!options.preserveVisibleTypes) scheduleImpactAnalysisRefresh();
 }
 
 function rememberImpactObjectLayer(objectType) {
-  if (!state.impactAnalysis || !objectType || state.applyingImpactRefresh) return;
+  if (!objectType || state.applyingImpactRefresh) return;
+  if (!state.impactAnalysis) {
+    state.pendingImpactObjectTypes.add(objectType);
+    return;
+  }
   state.impactAnalysis.visibleTypes.add(objectType);
   scheduleImpactAnalysisRefresh();
+}
+
+function visibleImpactObjectTypes(result) {
+  const affected = result?.affected_object_ids || {};
+  const types = Object.keys(affected).filter((objectType) => Array.isArray(affected[objectType]) && affected[objectType].length);
+  const visible = types.filter((objectType) => state.pendingImpactObjectTypes.has(objectType) || hasObjectType(objectType));
+  return new Set(visible);
 }
 
 function scheduleImpactAnalysisRefresh() {
