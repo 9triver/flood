@@ -21,6 +21,19 @@ const state = {
   boundaryFlowLayer: null,
   boundaryFlowFeatures: null,
   mockRunning: false,
+  hydrodynamicTimeline: {
+    hours: [],
+    index: 0,
+    layer: null,
+    key: null,
+    baseFilters: null,
+    timer: null,
+    playing: false,
+  },
+  impactAnalysis: null,
+  impactRefreshTimer: null,
+  impactRefreshSeq: 0,
+  applyingImpactRefresh: false,
 };
 
 const OBJECT_CONFIG = {
@@ -141,6 +154,10 @@ function bindEvents() {
   document.getElementById("agentDrawerBtn").addEventListener("click", () => setAgentDrawerOpen(true));
   document.getElementById("agentCloseBtn").addEventListener("click", () => setAgentDrawerOpen(false));
   document.getElementById("mockToggleBtn").addEventListener("click", toggleMockService);
+  document.getElementById("hydroPlayBtn").addEventListener("click", toggleHydrodynamicTimelinePlayback);
+  document.getElementById("hydroTimeSlider").addEventListener("input", (event) => {
+    setHydrodynamicTimelineIndex(Number(event.target.value || 0));
+  });
   document.querySelectorAll("[data-panel-toggle]").forEach((btn) => {
     btn.addEventListener("click", () => activateAgentPane(btn.dataset.panelToggle));
   });
@@ -314,6 +331,7 @@ async function applyHydrodynamicResult(options = {}) {
   if (state.layerGroups.has(key)) {
     const existing = state.layerGroups.get(key);
     if (!state.map.hasLayer(existing)) existing.addTo(state.map);
+    showHydrodynamicTimeline(state.hydrodynamicResultMeta, existing, key, filters);
     setObjectButtonActive(options.buttonType || "ForecastResult", true);
     return existing;
   }
@@ -338,8 +356,102 @@ async function applyHydrodynamicResult(options = {}) {
     filters,
     label: options.label || "水动力结果",
   });
+  showHydrodynamicTimeline(state.hydrodynamicResultMeta, layer, key, filters);
   setObjectButtonActive(options.buttonType || "ForecastResult", true);
   return layer;
+}
+
+function showHydrodynamicTimeline(meta, layer, key, filters) {
+  const hours = (((meta || {}).forecast || {}).time_steps_h || [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+  if (hours.length < 2) {
+    hideHydrodynamicTimeline();
+    return;
+  }
+  stopHydrodynamicTimelinePlayback();
+  state.hydrodynamicTimeline = {
+    ...state.hydrodynamicTimeline,
+    hours,
+    index: 0,
+    layer,
+    key,
+    baseFilters: { ...(filters || {}) },
+  };
+  const control = document.getElementById("hydroTimeline");
+  const slider = document.getElementById("hydroTimeSlider");
+  slider.min = "0";
+  slider.max = String(hours.length);
+  slider.value = "0";
+  control.classList.remove("is-hidden");
+  setHydrodynamicTimelineIndex(0);
+}
+
+function hideHydrodynamicTimeline() {
+  stopHydrodynamicTimelinePlayback();
+  state.hydrodynamicTimeline.hours = [];
+  state.hydrodynamicTimeline.index = 0;
+  state.hydrodynamicTimeline.layer = null;
+  state.hydrodynamicTimeline.key = null;
+  state.hydrodynamicTimeline.baseFilters = null;
+  document.getElementById("hydroTimeline")?.classList.add("is-hidden");
+}
+
+function setHydrodynamicTimelineIndex(index) {
+  const timeline = state.hydrodynamicTimeline;
+  if (!timeline.layer || !timeline.hours.length) return;
+  const nextIndex = Math.max(0, Math.min(timeline.hours.length, Math.round(index)));
+  timeline.index = nextIndex;
+  const slider = document.getElementById("hydroTimeSlider");
+  const label = document.getElementById("hydroTimeLabel");
+  if (slider) slider.value = String(nextIndex);
+  const filters = { ...(timeline.baseFilters || {}) };
+  if (nextIndex === 0) {
+    label.textContent = "最大水深";
+  } else {
+    const hour = timeline.hours[nextIndex - 1];
+    filters.time_h = formatHydrodynamicHour(hour);
+    label.textContent = `${formatHydrodynamicHour(hour)} h`;
+  }
+  timeline.layer.options.resultFilters = filters;
+  timeline.layer.redraw();
+  scheduleImpactAnalysisRefresh();
+}
+
+function toggleHydrodynamicTimelinePlayback() {
+  const timeline = state.hydrodynamicTimeline;
+  if (!timeline.layer || !timeline.hours.length) return;
+  if (timeline.playing) {
+    stopHydrodynamicTimelinePlayback();
+    return;
+  }
+  timeline.playing = true;
+  setHydrodynamicPlayIcon(true);
+  timeline.timer = window.setInterval(() => {
+    const next = timeline.index >= timeline.hours.length ? 1 : timeline.index + 1;
+    setHydrodynamicTimelineIndex(next);
+  }, 850);
+}
+
+function stopHydrodynamicTimelinePlayback() {
+  const timeline = state.hydrodynamicTimeline;
+  if (timeline.timer) window.clearInterval(timeline.timer);
+  timeline.timer = null;
+  timeline.playing = false;
+  setHydrodynamicPlayIcon(false);
+}
+
+function setHydrodynamicPlayIcon(playing) {
+  const btn = document.getElementById("hydroPlayBtn");
+  if (!btn) return;
+  btn.innerHTML = `<i data-lucide="${playing ? "pause" : "play"}"></i>`;
+  btn.title = playing ? "暂停预测过程" : "播放预测过程";
+  btn.setAttribute("aria-label", btn.title);
+  renderIcons();
+}
+
+function formatHydrodynamicHour(hour) {
+  return Number(hour).toFixed(2).replace(/\.?0+$/, "");
 }
 
 function fitHydrodynamicGrid() {
@@ -375,6 +487,9 @@ function fitHydrodynamicResult() {
 function removeLayer(key) {
   const layer = state.layerGroups.get(key);
   const meta = state.layerMeta.get(key);
+  if (meta?.objectType === "HydrodynamicResult" && state.hydrodynamicTimeline.key === key) {
+    hideHydrodynamicTimeline();
+  }
   if (meta && !["HydrodynamicCell", "HydrodynamicResult"].includes(meta.objectType)) unindexLayer(meta.objectType, layer);
   if (layer) state.map.removeLayer(layer);
   state.layerGroups.delete(key);
@@ -402,6 +517,7 @@ function filtersWithObjectIds(objectType, filters = {}, objectIds = []) {
 function resetMap() {
   clearFocus();
   clearHighlights();
+  clearImpactAnalysisState();
   clearEventMarkers();
   clearBoundaryFlowLayer();
   for (const key of Array.from(state.layerGroups.keys())) {
@@ -415,12 +531,21 @@ function resetMap() {
 }
 
 function clearHydrodynamicResults() {
+  hideHydrodynamicTimeline();
+  clearImpactAnalysisState();
   for (const [key, meta] of Array.from(state.layerMeta.entries())) {
     if (meta?.objectType === "HydrodynamicResult") {
       removeLayer(key);
     }
   }
   document.getElementById("contextPill").textContent = "淹没结果 · 已隐藏";
+}
+
+function clearImpactAnalysisState() {
+  if (state.impactRefreshTimer) window.clearTimeout(state.impactRefreshTimer);
+  state.impactRefreshTimer = null;
+  state.impactRefreshSeq += 1;
+  state.impactAnalysis = null;
 }
 
 function clearEventMarkers() {
@@ -1111,6 +1236,7 @@ async function highlightObjects(action = {}) {
     const entry = state.featureIndex.get(featureIndexKey(objectType, objectId));
     if (entry) applyHighlight(entry.layer, objectType);
   });
+  rememberImpactObjectLayer(objectType);
   if (action.fit) fitHighlighted();
   return true;
 }
@@ -1166,7 +1292,7 @@ function connectChatStream({ message = "", assistant, runId = "", since = 0 }) {
     params.set("run_id", runId);
   } else {
     params.set("message", message);
-    params.set("selected", JSON.stringify(state.selected || {}));
+    params.set("selected", JSON.stringify(frontendAgentContext()));
   }
   const es = new EventSource(`/api/agent/chat/stream?${params.toString()}`);
   state.activeStream = es;
@@ -1198,6 +1324,9 @@ function connectChatStream({ message = "", assistant, runId = "", since = 0 }) {
   es.addEventListener("tool_result", (event) => {
     const data = parseEvent(event);
     addTrace(data.blocked ? "BLOCK" : "RESULT", data.name || "tool result", compactText(data.result || ""));
+    if (!data.blocked && data.name === "analyze_inundation_impacts") {
+      registerImpactAnalysisResult(parseToolJsonResult(data.result), { preserveVisibleTypes: false });
+    }
   });
 
   es.addEventListener("reasoning", () => {});
@@ -1579,6 +1708,130 @@ function activateAgentPane(name) {
   });
   if (active === "chat") {
     scrollChat();
+  }
+}
+
+function frontendAgentContext() {
+  const selected = state.selected || {};
+  return {
+    ...selected,
+    hydrodynamic_timeline: currentHydrodynamicTimelineContext(),
+  };
+}
+
+function currentHydrodynamicTimelineContext() {
+  const timeline = state.hydrodynamicTimeline;
+  if (!timeline.layer || !timeline.key) {
+    return {
+      active: false,
+      mode: "none",
+      current_hydrodynamic_time_h: null,
+    };
+  }
+  if (!timeline.hours.length || timeline.index === 0) {
+    return {
+      active: true,
+      mode: "max_depth",
+      current_hydrodynamic_time_h: null,
+    };
+  }
+  const hour = Number(timeline.hours[timeline.index - 1]);
+  return {
+    active: true,
+    mode: "time_slice",
+    current_hydrodynamic_time_h: Number.isFinite(hour) ? Number(formatHydrodynamicHour(hour)) : null,
+  };
+}
+
+function parseToolJsonResult(value) {
+  if (!value) return null;
+  if (typeof value === "object") return value;
+  try {
+    const parsed = JSON.parse(String(value));
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function registerImpactAnalysisResult(result, options = {}) {
+  if (!result || typeof result !== "object") return;
+  if (!["completed", "no_forecast_cells"].includes(result.status)) return;
+  const previous = state.impactAnalysis;
+  const params = result.parameters || {};
+  state.impactAnalysis = {
+    forecastId: result.forecast_id || "latest",
+    targetType: result.target_type || "all",
+    minDepthM: Number(params.min_depth_m ?? 0.15),
+    maxDistanceM: Number(params.max_distance_m ?? 120),
+    visibleTypes: options.preserveVisibleTypes && previous?.visibleTypes ? previous.visibleTypes : new Set(),
+    lastResult: result,
+  };
+}
+
+function rememberImpactObjectLayer(objectType) {
+  if (!state.impactAnalysis || !objectType || state.applyingImpactRefresh) return;
+  state.impactAnalysis.visibleTypes.add(objectType);
+  scheduleImpactAnalysisRefresh();
+}
+
+function scheduleImpactAnalysisRefresh() {
+  if (!state.impactAnalysis || !state.impactAnalysis.visibleTypes?.size) return;
+  if (state.impactRefreshTimer) window.clearTimeout(state.impactRefreshTimer);
+  state.impactRefreshTimer = window.setTimeout(refreshImpactAnalysisForTimeline, 260);
+}
+
+async function refreshImpactAnalysisForTimeline() {
+  const analysis = state.impactAnalysis;
+  if (!analysis || !analysis.visibleTypes?.size) return;
+  const timeline = currentHydrodynamicTimelineContext();
+  const params = new URLSearchParams({
+    forecast_id: analysis.forecastId || "latest",
+    target_type: analysis.targetType || "all",
+    min_depth_m: String(Number.isFinite(analysis.minDepthM) ? analysis.minDepthM : 0.15),
+    max_distance_m: String(Number.isFinite(analysis.maxDistanceM) ? analysis.maxDistanceM : 120),
+  });
+  if (timeline.mode === "time_slice" && timeline.current_hydrodynamic_time_h != null) {
+    params.set("time_h", String(timeline.current_hydrodynamic_time_h));
+  }
+  const seq = ++state.impactRefreshSeq;
+  try {
+    const res = await fetch(`/api/impact-analysis?${params.toString()}`);
+    if (!res.ok) throw new Error(await res.text());
+    const result = await res.json();
+    if (seq !== state.impactRefreshSeq) return;
+    registerImpactAnalysisResult(result, { preserveVisibleTypes: true });
+    await renderImpactAnalysisObjects(result, Array.from(analysis.visibleTypes));
+  } catch (error) {
+    console.warn("impact analysis refresh failed", error);
+  }
+}
+
+async function renderImpactAnalysisObjects(result, objectTypes) {
+  const affected = result?.affected_object_ids || {};
+  state.applyingImpactRefresh = true;
+  clearHighlights();
+  try {
+    for (const objectType of objectTypes) {
+      removeObjectTypeLayers(objectType);
+      const objectIds = (affected[objectType] || []).map(String).filter(Boolean);
+      if (!objectIds.length) continue;
+      const label = `${OBJECT_CONFIG[objectType]?.label || objectType}受影响对象`;
+      await loadObject(objectType, {}, {
+        fit: false,
+        label,
+        objectIds,
+      });
+      await highlightObjects({
+        object_type: objectType,
+        object_ids: objectIds,
+        filters: {},
+        label,
+        fit: false,
+      });
+    }
+  } finally {
+    state.applyingImpactRefresh = false;
   }
 }
 

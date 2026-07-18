@@ -159,18 +159,30 @@ class EventRuntime:
         with self.condition:
             next_seq = max(0, len(self.outputs) - 80)
         while True:
-            pending = []
+            pending: list[dict[str, Any]] = []
+            heartbeat: dict[str, Any] | None = None
             with self.condition:
-                while len(self.outputs) <= next_seq:
+                if len(self.outputs) < next_seq:
+                    next_seq = 0
+                if len(self.outputs) <= next_seq:
                     self.condition.wait(timeout=max(1, interval))
+                    if len(self.outputs) < next_seq:
+                        next_seq = 0
                     if len(self.outputs) <= next_seq:
-                        yield format_sse("runtime_status", {
-                            "type": "runtime_status",
-                            "label": "等待启动 mock 服务",
-                            "detail": "点击前端按钮后，后台才会生成边界流量 mock 数据。",
-                        })
-                pending = self.outputs[next_seq:]
-                next_seq = len(self.outputs)
+                        if not self._mock_running:
+                            heartbeat = {
+                                "type": "runtime_status",
+                                "label": "等待启动 mock 服务",
+                                "detail": "点击前端按钮后，后台才会生成边界流量 mock 数据。",
+                            }
+                    else:
+                        pending = self.outputs[next_seq:]
+                        next_seq = len(self.outputs)
+                else:
+                    pending = self.outputs[next_seq:]
+                    next_seq = len(self.outputs)
+            if heartbeat:
+                yield format_sse("runtime_status", heartbeat)
             for item in pending:
                 yield format_sse(item["event"], item["data"])
 

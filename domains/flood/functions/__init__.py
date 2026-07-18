@@ -20,6 +20,6 @@ def register(registry: FunctionRegistry, repository: ObjectRepository,
     registry.register("run_emergency_cycle", lambda force_forecast=False: run_emergency_cycle(
         resolver, force_forecast,
     ), ontology.functions["run_emergency_cycle"])
-    registry.register("analyze_inundation_impacts", lambda forecast_id="latest", target_type="all", min_depth_m=0.15, max_distance_m=120: analyze_inundation_impacts(
-        resolver, forecast_id, target_type, min_depth_m, max_distance_m,
+    registry.register("analyze_inundation_impacts", lambda forecast_id="latest", target_type="all", min_depth_m=0.15, max_distance_m=120, time_h=None: analyze_inundation_impacts(
+        resolver, forecast_id, target_type, min_depth_m, max_distance_m, time_h,
     ), ontology.functions["analyze_inundation_impacts"])

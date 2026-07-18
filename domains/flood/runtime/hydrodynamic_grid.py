@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import csv
+import json
 import math
 import sqlite3
 import threading
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 from .common import DOMAIN_DATA_DIR, DOMAIN_DIR, PROJECT_DIR, apply_filters, apply_order, apply_window
 
@@ -15,13 +18,16 @@ MODEL_DIR = DOMAIN_DIR / "model" / "cnn_v2"
 GT_PATH = MODEL_DIR / "GT.txt"
 HYDRODYNAMIC_DATA_DIR = DOMAIN_DATA_DIR / "hydrodynamic"
 LATEST_FORECAST_DEPTH_PATH = HYDRODYNAMIC_DATA_DIR / "forecasts" / "latest" / "max_depth.csv"
+LATEST_FORECAST_SERIES_PATH = HYDRODYNAMIC_DATA_DIR / "forecasts" / "latest" / "depth_series.npy"
+LATEST_FORECAST_TIME_STEPS_PATH = HYDRODYNAMIC_DATA_DIR / "forecasts" / "latest" / "time_steps.json"
 MESH_DB_PATH = HYDRODYNAMIC_DATA_DIR / "mesh.sqlite"
 MIN_TILE_ZOOM = 13
 SUPPORTED_TILE_ZOOMS = (13, 14, 15)
 LATEST_FORECAST_ID = "latest"
 MESH_ONLY_ID = "mesh"
 _DEPTH_CACHE_LOCK = threading.Lock()
-_DEPTH_CACHE: dict[str, dict[str, Any]] = {}
+_DEPTH_CACHE_MAX = 8
+_DEPTH_CACHE: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
 _TILE_CACHE_LOCK = threading.Lock()
 _TILE_CACHE_MAX = 1024
 _TILE_CACHE: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
@@ -69,7 +75,8 @@ class HydrodynamicMeshStore:
 
     def tile(self, z: int, x: int, y: int,
              forecast_id: str = LATEST_FORECAST_ID,
-             wet_only: bool = False) -> dict[str, Any]:
+             wet_only: bool = False,
+             time_h: float | None = None) -> dict[str, Any]:
         self.ensure_ready()
         if z < MIN_TILE_ZOOM:
             return {
@@ -78,9 +85,9 @@ class HydrodynamicMeshStore:
                 "min_tile_zoom": MIN_TILE_ZOOM,
             }
         forecast_id = normalize_forecast_id(forecast_id)
-        depth_entry = forecast_depth_entry(forecast_id)
+        depth_entry = forecast_depth_entry(forecast_id, time_h=time_h)
         depths = depth_entry["depths"]
-        cache_key = (z, x, y, forecast_id, bool(wet_only), depth_entry["stat_key"])
+        cache_key = (z, x, y, forecast_id, depth_entry.get("time_h"), bool(wet_only), depth_entry["stat_key"])
         with _TILE_CACHE_LOCK:
             cached = _TILE_CACHE.get(cache_key)
             if cached:
@@ -108,6 +115,8 @@ class HydrodynamicMeshStore:
             "cells": cells,
             "count": len(cells),
             "forecast_id": forecast_id,
+            "time_h": depth_entry.get("time_h"),
+            "time_index": depth_entry.get("time_index"),
             "z": z,
             "x": x,
             "y": y,
@@ -152,13 +161,15 @@ class HydrodynamicMeshStore:
               offset: int | None = None) -> list[dict[str, Any]]:
         self.ensure_ready()
         forecast_id = str((filters or {}).get("forecast_id") or LATEST_FORECAST_ID)
-        depths = read_forecast_depths(forecast_id)
+        time_h = coerce_optional_float((filters or {}).get("time_h"))
+        depths = read_forecast_depths(forecast_id, time_h=time_h)
         with self._connect() as conn:
             rows = [
                 {
                     "hydrodynamic_cell_id": f"hydro_cell_{row['cell_id']}",
                     "cell_id": row["cell_id"],
                     "forecast_id": normalize_forecast_id(forecast_id),
+                    "time_h": time_h,
                     "depth_m": depths.get(int(row["cell_id"]), 0.0),
                     "is_flooded": depths.get(int(row["cell_id"]), 0.0) > 0,
                     "geometry_type": "Polygon",
@@ -278,8 +289,9 @@ def hydrodynamic_grid_stats(forecast_id: str = LATEST_FORECAST_ID) -> dict[str, 
 
 def hydrodynamic_grid_tile(z: int, x: int, y: int,
                            forecast_id: str = LATEST_FORECAST_ID,
-                           wet_only: bool = False) -> dict[str, Any]:
-    return STORE.tile(z, x, y, forecast_id, wet_only)
+                           wet_only: bool = False,
+                           time_h: float | None = None) -> dict[str, Any]:
+    return STORE.tile(z, x, y, forecast_id, wet_only, time_h)
 
 
 def query_hydrodynamic_cells(filters: dict[str, Any] | None = None,
@@ -374,20 +386,27 @@ def forecast_stats(forecast_id: str = LATEST_FORECAST_ID) -> dict[str, Any]:
         }
     path = forecast_depth_path(forecast_id)
     entry = forecast_depth_entry(forecast_id)
+    series_path = forecast_series_path(forecast_id)
+    time_steps = forecast_time_steps(forecast_id)
     return {
         "forecast_id": normalize_forecast_id(forecast_id),
         "depth_path": str(path.relative_to(PROJECT_DIR)) if path.exists() else "",
+        "series_path": str(series_path.relative_to(PROJECT_DIR)) if series_path.exists() else "",
         "depth_count": entry["depth_count"],
         "flooded_count": entry["flooded_count"],
         "max_depth_m": round(entry["max_depth_m"], 4),
+        "time_steps_h": time_steps,
+        "time_step_count": len(time_steps),
     }
 
 
-def read_forecast_depths(forecast_id: str = LATEST_FORECAST_ID) -> dict[int, float]:
-    return forecast_depth_entry(forecast_id)["depths"]
+def read_forecast_depths(forecast_id: str = LATEST_FORECAST_ID,
+                         time_h: float | None = None) -> dict[int, float]:
+    return forecast_depth_entry(forecast_id, time_h=time_h)["depths"]
 
 
-def forecast_depth_entry(forecast_id: str = LATEST_FORECAST_ID) -> dict[str, Any]:
+def forecast_depth_entry(forecast_id: str = LATEST_FORECAST_ID,
+                         time_h: float | None = None) -> dict[str, Any]:
     if normalize_forecast_id(forecast_id) == MESH_ONLY_ID:
         return {
             "stat_key": None,
@@ -395,13 +414,18 @@ def forecast_depth_entry(forecast_id: str = LATEST_FORECAST_ID) -> dict[str, Any
             "depth_count": 0,
             "flooded_count": 0,
             "max_depth_m": 0.0,
+            "time_h": None,
+            "time_index": None,
         }
+    if time_h is not None:
+        return forecast_time_depth_entry(forecast_id, float(time_h))
     path = forecast_depth_path(forecast_id)
-    cache_key = str(path.resolve())
     stat_key = file_stat_key(path)
+    cache_key = ("max", normalize_forecast_id(forecast_id), str(path.resolve()), stat_key)
     with _DEPTH_CACHE_LOCK:
         cached = _DEPTH_CACHE.get(cache_key)
         if cached and cached.get("stat_key") == stat_key:
+            _DEPTH_CACHE.move_to_end(cache_key)
             return cached
 
     entry = load_forecast_depth_entry(path, stat_key)
@@ -409,9 +433,38 @@ def forecast_depth_entry(forecast_id: str = LATEST_FORECAST_ID) -> dict[str, Any
     with _DEPTH_CACHE_LOCK:
         cached = _DEPTH_CACHE.get(cache_key)
         if cached and cached.get("stat_key") == stat_key:
+            _DEPTH_CACHE.move_to_end(cache_key)
             return cached
-        _DEPTH_CACHE[cache_key] = entry
-        return entry
+        return cache_depth_entry(cache_key, entry)
+
+
+def forecast_time_depth_entry(forecast_id: str, time_h: float) -> dict[str, Any]:
+    series_path = forecast_series_path(forecast_id)
+    steps = forecast_time_steps(forecast_id)
+    stat_key = (file_stat_key(series_path), file_stat_key(forecast_time_steps_path(forecast_id)), nearest_time_key(steps, time_h))
+    cache_key = ("time", normalize_forecast_id(forecast_id), str(series_path.resolve()), stat_key)
+    with _DEPTH_CACHE_LOCK:
+        cached = _DEPTH_CACHE.get(cache_key)
+        if cached and cached.get("stat_key") == stat_key:
+            _DEPTH_CACHE.move_to_end(cache_key)
+            return cached
+
+    entry = load_forecast_time_depth_entry(series_path, steps, time_h, stat_key)
+
+    with _DEPTH_CACHE_LOCK:
+        cached = _DEPTH_CACHE.get(cache_key)
+        if cached and cached.get("stat_key") == stat_key:
+            _DEPTH_CACHE.move_to_end(cache_key)
+            return cached
+        return cache_depth_entry(cache_key, entry)
+
+
+def cache_depth_entry(cache_key: tuple[Any, ...], entry: dict[str, Any]) -> dict[str, Any]:
+    _DEPTH_CACHE[cache_key] = entry
+    _DEPTH_CACHE.move_to_end(cache_key)
+    while len(_DEPTH_CACHE) > _DEPTH_CACHE_MAX:
+        _DEPTH_CACHE.popitem(last=False)
+    return entry
 
 
 def file_stat_key(path: Path) -> tuple[int, int] | None:
@@ -447,6 +500,39 @@ def load_forecast_depth_entry(path: Path, stat_key: tuple[int, int] | None) -> d
         "depth_count": len(depths),
         "flooded_count": flooded_count,
         "max_depth_m": max_depth,
+        "time_h": None,
+        "time_index": None,
+    }
+
+
+def load_forecast_time_depth_entry(path: Path, steps: list[float],
+                                   requested_time_h: float,
+                                   stat_key: tuple[Any, ...]) -> dict[str, Any]:
+    if not path.exists() or not steps:
+        return {
+            "stat_key": stat_key,
+            "depths": {},
+            "depth_count": 0,
+            "flooded_count": 0,
+            "max_depth_m": 0.0,
+            "time_h": None,
+            "time_index": None,
+        }
+    array = np.load(path, mmap_mode="r")
+    index = nearest_time_index(steps, requested_time_h)
+    if index >= int(array.shape[0]):
+        index = int(array.shape[0]) - 1
+    values = np.asarray(array[index], dtype=np.float32)
+    wet_indices = np.flatnonzero(values > 0)
+    depths = {int(item) + 1: float(values[item]) for item in wet_indices}
+    return {
+        "stat_key": stat_key,
+        "depths": depths,
+        "depth_count": int(values.shape[0]),
+        "flooded_count": int(wet_indices.size),
+        "max_depth_m": float(values.max()) if values.size else 0.0,
+        "time_h": steps[index] if index < len(steps) else None,
+        "time_index": index,
     }
 
 
@@ -457,6 +543,56 @@ def forecast_depth_path(forecast_id: str = LATEST_FORECAST_ID) -> Path:
     if forecast_id == LATEST_FORECAST_ID:
         return LATEST_FORECAST_DEPTH_PATH
     return HYDRODYNAMIC_DATA_DIR / "forecasts" / forecast_id / "max_depth.csv"
+
+
+def forecast_series_path(forecast_id: str = LATEST_FORECAST_ID) -> Path:
+    forecast_id = normalize_forecast_id(forecast_id)
+    if forecast_id == MESH_ONLY_ID:
+        return Path("")
+    if forecast_id == LATEST_FORECAST_ID:
+        return LATEST_FORECAST_SERIES_PATH
+    return HYDRODYNAMIC_DATA_DIR / "forecasts" / forecast_id / "depth_series.npy"
+
+
+def forecast_time_steps_path(forecast_id: str = LATEST_FORECAST_ID) -> Path:
+    forecast_id = normalize_forecast_id(forecast_id)
+    if forecast_id == MESH_ONLY_ID:
+        return Path("")
+    if forecast_id == LATEST_FORECAST_ID:
+        return LATEST_FORECAST_TIME_STEPS_PATH
+    return HYDRODYNAMIC_DATA_DIR / "forecasts" / forecast_id / "time_steps.json"
+
+
+def forecast_time_steps(forecast_id: str = LATEST_FORECAST_ID) -> list[float]:
+    path = forecast_time_steps_path(forecast_id)
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    return [float(value) for value in data.get("time_steps_h") or []]
+
+
+def nearest_time_index(steps: list[float], time_h: float) -> int:
+    if not steps:
+        return 0
+    return min(range(len(steps)), key=lambda index: abs(float(steps[index]) - time_h))
+
+
+def nearest_time_key(steps: list[float], time_h: float) -> float | None:
+    if not steps:
+        return None
+    return steps[nearest_time_index(steps, time_h)]
+
+
+def coerce_optional_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def normalize_forecast_id(forecast_id: str = LATEST_FORECAST_ID) -> str:

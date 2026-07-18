@@ -55,6 +55,13 @@
           </section>
         </div>
         <div id="map"></div>
+        <div class="hydro-timeline is-hidden" id="hydroTimeline" aria-label="预测淹没时间轴">
+          <button class="icon-button" id="hydroPlayBtn" type="button" title="播放预测过程" aria-label="播放预测过程">
+            <i data-lucide="play"></i>
+          </button>
+          <input id="hydroTimeSlider" type="range" min="0" max="0" value="0" step="1" aria-label="预测时刻" />
+          <div class="hydro-time-label" id="hydroTimeLabel">最大水深</div>
+        </div>
       </main>
 
       <button class="agent-drawer-tab" id="agentDrawerBtn" type="button" title="打开 Agent" aria-label="打开 Agent" aria-expanded="false">

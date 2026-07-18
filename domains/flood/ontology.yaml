@@ -598,8 +598,8 @@ functions:
 
   analyze_inundation_impacts:
     summary: "根据预测淹没范围分析受影响对象"
-    description: "读取最新或指定 ForecastCell 预测淹没网格，对道路、桥梁、重要设施、转移单元、安置地点和转移路线执行确定性空间邻近分析，返回受影响对象清单、风险等级和按类型汇总。"
-    usage_prompt: "收到 InundationGenerated 事件后应优先调用本函数，forecast_id 默认 latest，target_type 默认 all。该函数是本体层确定性空间分析入口：LLM 只能根据返回结果说明哪些对象受影响，不要自行猜测学校、医院、道路、桥梁、转移路线或安置点是否受淹。需要在地图展示影响分析结果时，LLM 应在本函数返回后再调用 ui_show_objects：先显示 HydrodynamicCell 且 filters={\"forecast_id\":\"latest\"}、label=预测淹没结果、fit=false、refresh=true；再优先使用 affected_object_ids 中按对象类型汇总的 ID，分别传给对应对象类型并设置 highlight=true、show_only_object_ids=true，只显示并高亮这些受影响对象，不要额外加载同类型全量对象。需要缩窄范围时 target_type 可传 Road、Bridge、Facility、Route、Transfer、Place 或 all；min_depth_m 默认 0.15，max_distance_m 默认 120。"
+    description: "读取最新或指定 ForecastCell 预测淹没网格，可按指定 time_h 分析某个预测时刻，也可默认使用最大水深包络；对道路、桥梁、重要设施、转移单元、安置地点和转移路线执行确定性空间邻近分析，返回受影响对象清单、风险等级和按类型汇总。"
+    usage_prompt: "收到 InundationGenerated 事件后应优先调用本函数，forecast_id 默认 latest，target_type 默认 all。该函数是本体层确定性空间分析入口：LLM 只能根据返回结果说明哪些对象受影响，不要自行猜测学校、医院、道路、桥梁、转移路线或安置点是否受淹。当前端上下文包含 current_hydrodynamic_time_h，或用户明确询问某个时间点/当前时间轴位置的影响时，必须把该值作为 time_h 传入；用户询问总体/最大影响时不要传 time_h，默认使用最大水深包络。需要在地图展示影响分析结果时，LLM 应在本函数返回后再调用 ui_show_objects：先显示 HydrodynamicCell 且 filters={\"forecast_id\":\"latest\"}、label=预测淹没结果、fit=false、refresh=true；再优先使用 affected_object_ids 中按对象类型汇总的 ID，分别传给对应对象类型并设置 highlight=true、show_only_object_ids=true，只显示并高亮这些受影响对象，不要额外加载同类型全量对象。需要缩窄范围时 target_type 可传 Road、Bridge、Facility、Route、Transfer、Place 或 all；min_depth_m 默认 0.15，max_distance_m 默认 120。"
     function_type: lookup
     involves_objects: [ForecastRun, ForecastCell, Road, Bridge, Facility, Route, Transfer, Place, Risk]
     params:
@@ -607,3 +607,4 @@ functions:
       target_type: {type: str, description: "分析目标类型: Road/Bridge/Facility/Route/Transfer/Place/all", default: "all"}
       min_depth_m: {type: float, description: "纳入影响判定的最低预测水深，单位 m", default: 0.15}
       max_distance_m: {type: float, description: "对象或采样点到预测淹没网格中心的最大匹配距离，单位 m", default: 120}
+      time_h: {type: float, description: "可选预测时刻，单位小时；不传表示使用最大水深包络", default: ""}

@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import random
 import time
 import uuid
 from dataclasses import dataclass
@@ -79,55 +80,22 @@ class BoundaryFlowMockService:
 
     def __init__(self):
         self._index = 0
-        self._samples = [
-            BoundaryFlowSample(
-                mode="dry",
-                template="twenty_year",
-                scale=0.035,
-                severity="normal",
-                title="四边界流量数据",
-            ),
-            BoundaryFlowSample(
-                mode="dry",
-                template="twenty_year",
-                scale=0.04,
-                severity="normal",
-                title="四边界流量数据",
-            ),
-            BoundaryFlowSample(
-                mode="dry",
-                template="twenty_year",
-                scale=0.12,
-                severity="watch",
-                title="四边界流量数据",
-            ),
-            BoundaryFlowSample(
-                mode="flood",
-                template="five_year",
-                scale=0.9,
-                severity="warning",
-                title="四边界流量数据",
-            ),
-            BoundaryFlowSample(
-                mode="flood",
-                template="ten_year",
-                scale=0.85,
-                severity="warning",
-                title="四边界流量数据",
-            ),
-        ]
+        self._rng = random.Random()
+        self._force_flood_at = self._rng.randint(4, 7)
 
     def reset(self) -> None:
         self._index = 0
+        self._force_flood_at = self._rng.randint(4, 7)
 
     def next_boundary_flow_data(self) -> dict[str, Any]:
-        sample = self._samples[self._index % len(self._samples)]
+        sample = self._next_sample()
         self._index += 1
         event_id = f"evt_{uuid.uuid4().hex[:10]}"
         boundary_flow = generate_boundary_flow_series({
             "mode": sample.mode,
             "template": sample.template,
             "scale": sample.scale,
+            "randomize": True,
         })
         trigger = evaluate_forecast_trigger(boundary_flow)
         return {
@@ -145,11 +113,48 @@ class BoundaryFlowMockService:
             "correlation_id": f"corr_{event_id}",
         }
 
+    def _next_sample(self) -> BoundaryFlowSample:
+        if self._index >= self._force_flood_at:
+            self._force_flood_at = self._index + self._rng.randint(4, 7)
+            return BoundaryFlowSample(
+                mode="flood",
+                template=self._rng.choice(["five_year", "ten_year", "check_flood"]),
+                scale=round(self._rng.uniform(0.72, 1.08), 4),
+                severity="warning",
+                title="四边界流量数据",
+            )
+
+        roll = self._rng.random()
+        if roll < 0.58:
+            return BoundaryFlowSample(
+                mode="dry",
+                template=self._rng.choice(["twenty_year", "ten_year", "five_year"]),
+                scale=round(self._rng.uniform(0.025, 0.16), 4),
+                severity="normal" if roll < 0.40 else "watch",
+                title="四边界流量数据",
+            )
+        if roll < 0.82:
+            return BoundaryFlowSample(
+                mode="rising",
+                template=self._rng.choice(["twenty_year", "ten_year", "five_year"]),
+                scale=round(self._rng.uniform(0.12, 0.42), 4),
+                severity="watch",
+                title="四边界流量数据",
+            )
+        return BoundaryFlowSample(
+            mode="flood",
+            template=self._rng.choice(["five_year", "ten_year", "two_year", "check_flood"]),
+            scale=round(self._rng.uniform(0.62, 1.15), 4),
+            severity="warning",
+            title="四边界流量数据",
+        )
+
 
 def generate_boundary_flow_series(observation: dict[str, Any]) -> dict[str, Any]:
     template_key = str(observation.get("template") or "twenty_year")
     scale = float(observation.get("scale") or 1.0)
     mode = str(observation.get("mode") or "flood")
+    randomize = bool(observation.get("randomize"))
     template = TRAINING_TEMPLATES.get(template_key, TRAINING_TEMPLATES["twenty_year"])
     series_id = f"boundary_flow_{uuid.uuid4().hex[:10]}"
     target_dir = BOUNDARY_FLOW_DIR / series_id
@@ -158,7 +163,7 @@ def generate_boundary_flow_series(observation: dict[str, Any]) -> dict[str, Any]
     boundaries: dict[str, dict[str, Any]] = {}
     for boundary_key, label in BOUNDARIES.items():
         rows = load_template_rows(template, label)
-        rows = transform_rows(rows, scale, mode, boundary_key)
+        rows = transform_rows(rows, scale, mode, boundary_key, randomize=randomize)
         csv_path = target_dir / f"{boundary_key}.csv"
         write_flow_csv(csv_path, rows)
         peaks = [row["flow_m3s"] for row in rows]
@@ -186,6 +191,7 @@ def generate_boundary_flow_series(observation: dict[str, Any]) -> dict[str, Any]
         "template_key": template_key,
         "template_label": template["template_label"],
         "scale": round(scale, 4),
+        "randomized": randomize,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "boundaries": boundaries,
         "flow_index": round(flow_index(boundaries), 4),
@@ -263,33 +269,61 @@ def load_template_rows(template: dict[str, Any], label: str) -> list[dict[str, f
 
 
 def transform_rows(rows: list[dict[str, float]], scale: float, mode: str,
-                   boundary_key: str) -> list[dict[str, float]]:
+                   boundary_key: str, *, randomize: bool = False) -> list[dict[str, float]]:
+    boundary_scale = scale * random.uniform(0.82, 1.18) if randomize else scale
+    time_shift = random.randint(-2, 2) if randomize else 0
+    noise = random.uniform(0.015, 0.08) if randomize else 0.0
+    source_rows = shift_rows(rows, time_shift) if time_shift else rows
     if mode == "dry":
         cap = DRY_PEAK_THRESHOLDS_M3S[boundary_key] * 0.72
         return [
             {
                 "time_s": row["time_s"],
-                "flow_m3s": round(min(row["flow_m3s"] * scale, cap), 6),
+                "flow_m3s": round(min(jitter_flow(row["flow_m3s"] * boundary_scale, noise), cap), 6),
             }
-            for row in rows
+            for row in source_rows
         ]
     if mode == "rising":
-        midpoint = max(1, len(rows) // 2)
+        midpoint = max(1, len(source_rows) // 2)
         result = []
-        for index, row in enumerate(rows):
+        for index, row in enumerate(source_rows):
             ramp = 0.35 + 0.65 * min(1.0, index / midpoint)
             result.append({
                 "time_s": row["time_s"],
-                "flow_m3s": round(row["flow_m3s"] * scale * ramp, 6),
+                "flow_m3s": round(jitter_flow(row["flow_m3s"] * boundary_scale * ramp, noise), 6),
             })
         return result
     return [
         {
             "time_s": row["time_s"],
-            "flow_m3s": round(row["flow_m3s"] * scale, 6),
+            "flow_m3s": round(jitter_flow(row["flow_m3s"] * boundary_scale, noise), 6),
         }
-        for row in rows
+        for row in source_rows
     ]
+
+
+def shift_rows(rows: list[dict[str, float]], shift: int) -> list[dict[str, float]]:
+    if not rows or shift == 0:
+        return rows
+    values = [row["flow_m3s"] for row in rows]
+    if shift > 0:
+        values = [values[0]] * shift + values[:-shift]
+    else:
+        offset = abs(shift)
+        values = values[offset:] + [values[-1]] * offset
+    return [
+        {
+            "time_s": row["time_s"],
+            "flow_m3s": values[index],
+        }
+        for index, row in enumerate(rows)
+    ]
+
+
+def jitter_flow(value: float, noise: float) -> float:
+    if noise <= 0:
+        return max(0.0, value)
+    return max(0.0, value * random.uniform(1.0 - noise, 1.0 + noise))
 
 
 def write_flow_csv(path: Path, rows: list[dict[str, float]]) -> None:

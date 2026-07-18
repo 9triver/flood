@@ -22,13 +22,16 @@ TARGET_TYPES = POINT_TARGET_TYPES + LINE_TARGET_TYPES
 def analyze_inundation_impacts(resolver, forecast_id: str = "latest",
                                target_type: str = "all",
                                min_depth_m: float = 0.15,
-                               max_distance_m: float = 120.0) -> dict[str, Any]:
+                               max_distance_m: float = 120.0,
+                               time_h: float | None = None) -> dict[str, Any]:
     forecast_key = LATEST_FORECAST_ID if forecast_id in ("", "latest") else forecast_id
+    analysis_time_h = coerce_time_h(time_h)
     target_types = resolve_target_types(target_type)
     if not target_types:
         return {
             "status": "invalid_target_type",
             "forecast_id": forecast_key,
+            "time_h": analysis_time_h,
             "target_type": target_type,
             "valid_target_types": ["all", *TARGET_TYPES],
             "summary": {},
@@ -36,16 +39,20 @@ def analyze_inundation_impacts(resolver, forecast_id: str = "latest",
             "impacts": [],
         }
 
-    cells = query_forecast_cells(resolver, {"forecast_id": forecast_key})
+    cell_filters: dict[str, Any] = {"forecast_id": forecast_key}
+    if analysis_time_h is not None:
+        cell_filters["time_h"] = analysis_time_h
+    cells = query_forecast_cells(resolver, cell_filters)
     if not cells:
         return {
             "status": "no_forecast_cells",
             "forecast_id": forecast_key,
+            "time_h": analysis_time_h,
             "target_type": target_type,
             "summary": {item: 0 for item in target_types},
             "total_impacts": 0,
             "impacts": [],
-            "basis": "未找到可用于叠加分析的预测淹没单元。",
+            "basis": analysis_basis(analysis_time_h, empty=True),
         }
 
     cell_index = compact_cell_index(cells, min_depth=float(min_depth_m or 0))
@@ -80,20 +87,52 @@ def analyze_inundation_impacts(resolver, forecast_id: str = "latest",
     return {
         "status": "completed",
         "forecast_id": forecast_key,
+        "time_h": actual_cell_time_h(cells, analysis_time_h),
         "target_type": target_type or "all",
         "parameters": {
             "min_depth_m": float(min_depth_m or 0),
             "max_distance_m": float(max_distance_m or 0),
+            "time_h": analysis_time_h,
         },
         "summary": summary,
         "affected_object_ids": affected_object_ids(target_types, impacts, limit=20),
         "total_impacts": len(impacts),
-        "basis": (
-            "使用最新 ForecastCell 预测淹没网格执行确定性空间邻近分析；"
-            "点对象按对象坐标匹配最近淹没网格，线对象按几何采样点匹配最深命中网格。"
-        ),
+        "basis": analysis_basis(actual_cell_time_h(cells, analysis_time_h)),
         "impacts": impacts[:80],
     }
+
+
+def coerce_time_h(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def actual_cell_time_h(cells: list[dict[str, Any]], fallback: float | None) -> float | None:
+    if fallback is None:
+        return None
+    for cell in cells:
+        value = coerce_time_h(cell.get("lead_time_h"))
+        if value is not None:
+            return round(value, 3)
+    return round(float(fallback), 3)
+
+
+def analysis_basis(time_h: float | None, empty: bool = False) -> str:
+    prefix = (
+        f"使用水动力模型 {time_h:.3f} h 时刻的 ForecastCell 预测淹没网格"
+        if time_h is not None
+        else "使用最新 ForecastCell 最大水深包络预测淹没网格"
+    )
+    if empty:
+        return f"{prefix}执行叠加分析；未找到满足水深阈值的预测淹没单元。"
+    return (
+        f"{prefix}执行确定性空间邻近分析；"
+        "点对象按对象坐标匹配最近淹没网格，线对象按几何采样点匹配最深命中网格。"
+    )
 
 
 def resolve_target_types(target_type: str) -> list[str]:

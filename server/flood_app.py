@@ -25,6 +25,7 @@ from oag.runtime.events import event_to_dict  # noqa: E402
 from oag.runtime.hooks import HookResult  # noqa: E402
 from domains.flood.runtime.geojson import export_objects_geojson  # noqa: E402
 from domains.flood.runtime.hydrodynamic_grid import hydrodynamic_grid_stats, hydrodynamic_grid_tile  # noqa: E402
+from domains.flood.runtime.impact_analysis import analyze_inundation_impacts  # noqa: E402
 from domains.flood.runtime.tools import list_mappable_objects  # noqa: E402
 
 
@@ -125,8 +126,23 @@ class FloodApp:
 
     def hydrodynamic_grid_tile(self, z: int, x: int, y: int,
                                forecast_id: str = "latest",
-                               wet_only: bool = False) -> dict[str, Any]:
-        return hydrodynamic_grid_tile(z, x, y, forecast_id, wet_only)
+                               wet_only: bool = False,
+                               time_h: float | None = None) -> dict[str, Any]:
+        return hydrodynamic_grid_tile(z, x, y, forecast_id, wet_only, time_h)
+
+    def analyze_inundation_impacts(self, forecast_id: str = "latest",
+                                   target_type: str = "all",
+                                   min_depth_m: float = 0.15,
+                                   max_distance_m: float = 120.0,
+                                   time_h: float | None = None) -> dict[str, Any]:
+        return analyze_inundation_impacts(
+            self.resolver,
+            forecast_id=forecast_id,
+            target_type=target_type,
+            min_depth_m=min_depth_m,
+            max_distance_m=max_distance_m,
+            time_h=time_h,
+        )
 
     def get_object(self, object_type: str, object_id: str) -> dict:
         row = self.resolver.query_by_id(object_type, object_id)
@@ -224,6 +240,9 @@ class FloodApp:
                     "不要只用文字说明将要显示什么。"
                     "当用户要求基于预测淹没范围判断学校、医院、道路、桥梁、转移路线或安置点是否受影响时，"
                     "必须调用 analyze_inundation_impacts；不要自行猜测对象级受淹结论。"
+                    "如果前端上下文 hydrodynamic_timeline.mode=time_slice，且用户询问当前时刻/当前画面/该时刻影响，"
+                    "调用 analyze_inundation_impacts 时必须传 current_hydrodynamic_time_h 作为 time_h；"
+                    "用户询问总体影响、最大影响或不限定时间时，不传 time_h，使用最大水深包络。"
                     "当用户要求运行预测、实时预测或未来淹没时，先调用 run_flood_forecast，再调用 ui_show_objects；地图工具会先显示水动力网格，再应用 forecast_id=latest 的水深结果。"
                     "当用户要求自主观测、持续预测、自动告警、闭环调度或避洪转移调度时，调用 run_emergency_cycle，"
                     "再用 ui_show_objects 展示 HydrodynamicCell、Risk、Transfer、Place、Route 等对象。"
@@ -256,7 +275,10 @@ class FloodApp:
             "以下是前端 GIS 的当前状态，只用于帮助你理解用户正在看的地图。"
             "不要把这些前端动作当作领域事实；领域事实必须通过 OAG 工具查询。"
             "如果用户请求地图展示，请调用 ui_* 工具；这些工具只改变前端显示，不改变领域数据。"
-            "如果需要对象级受淹判定，调用 analyze_inundation_impacts；不要自行猜测。\n"
+            "如果需要对象级受淹判定，调用 analyze_inundation_impacts；不要自行猜测。"
+            "如果 hydrodynamic_timeline.mode=time_slice 且用户询问当前时刻/当前画面/该时刻影响，"
+            "把 current_hydrodynamic_time_h 作为 analyze_inundation_impacts.time_h；"
+            "如果用户询问总体或最大影响，不传 time_h。\n"
             f"{json.dumps(frontend_context, ensure_ascii=False, indent=2)}"
         )
 

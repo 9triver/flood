@@ -47,6 +47,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._hydrodynamic_grid_meta(parsed.query)
             if parsed.path == "/api/hydrodynamic-grid/tile":
                 return self._hydrodynamic_grid_tile(parsed.query)
+            if parsed.path == "/api/impact-analysis":
+                return self._impact_analysis(parsed.query)
             if parsed.path == "/api/geojson":
                 return self._geojson(parsed.query)
             if parsed.path == "/api/object":
@@ -182,7 +184,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "z, x and y are required integers"}, status=400)
         forecast_id = self._hydrodynamic_result_id(params)
         wet_only = str((params.get("wet_only") or [""])[0]).lower() in {"1", "true", "yes", "on"}
-        data = APP.hydrodynamic_grid_tile(z, x, y, forecast_id, wet_only)
+        time_h = _coerce_optional_float((params.get("time_h") or [""])[0])
+        data = APP.hydrodynamic_grid_tile(z, x, y, forecast_id, wet_only, time_h)
         body = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -195,6 +198,17 @@ class Handler(BaseHTTPRequestHandler):
         params = parse_qs(query)
         forecast_id = self._hydrodynamic_result_id(params)
         return self._json(APP.hydrodynamic_grid_stats(forecast_id))
+
+    def _impact_analysis(self, query: str):
+        params = parse_qs(query)
+        result = APP.analyze_inundation_impacts(
+            forecast_id=(params.get("forecast_id") or ["latest"])[0],
+            target_type=(params.get("target_type") or ["all"])[0],
+            min_depth_m=_coerce_float((params.get("min_depth_m") or ["0.15"])[0], 0.15),
+            max_distance_m=_coerce_float((params.get("max_distance_m") or ["120"])[0], 120.0),
+            time_h=_coerce_optional_float((params.get("time_h") or [""])[0]),
+        )
+        return self._json(result)
 
     def _hydrodynamic_result_id(self, params: dict[str, list[str]]) -> str:
         result = (params.get("result") or [""])[0]
@@ -267,6 +281,22 @@ def _coerce_query_value(value: str) -> Any:
     if lowered == "false":
         return False
     return value
+
+
+def _coerce_optional_float(value: str) -> float | None:
+    if value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_float(value: str, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def main():
