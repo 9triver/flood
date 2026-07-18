@@ -41,7 +41,6 @@ const OBJECT_CONFIG = {
   Route: { label: "转移路线", color: "#d44a3a", swatch: "line" },
   Risk: { label: "危险区", color: "#b91c1c", swatch: "point" },
   HydroStation: { label: "水文测站", color: "#0284c7", swatch: "point" },
-  HistoricalFloodMark: { label: "历史洪痕", color: "#be123c", swatch: "point" },
   ForecastCell: { label: "预测淹没", color: "#dc2626", swatch: "fill" },
   HydrodynamicCell: { label: "水动力网格", color: "#64748b", swatch: "fill" },
   ForecastResult: { label: "预测淹没结果", color: "#dc2626", swatch: "fill" },
@@ -65,8 +64,6 @@ const ID_FIELDS = {
   Route: "route_id",
   Risk: "risk_id",
   HydroStation: "station_id",
-  HydroObservation: "observation_id",
-  HistoricalFloodMark: "mark_id",
   ForecastCell: "forecast_cell_id",
   HydrodynamicCell: "hydrodynamic_cell_id",
 };
@@ -81,7 +78,6 @@ const ICON_OBJECT_TYPES = new Set([
   "Transfer",
   "Risk",
   "HydroStation",
-  "HistoricalFloodMark",
 ]);
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -900,7 +896,6 @@ function objectIconInfo(objectType, feature) {
     Transfer: { key: "transfer", emoji: "👥", label: "转移对象" },
     Risk: { key: "risk", emoji: "⚠️", label: "危险区" },
     HydroStation: { key: "station", emoji: "📡", label: "水文测站" },
-    HistoricalFloodMark: { key: "flood-mark", emoji: "🚩", label: "历史洪痕" },
   }[objectType] || { key: "default", emoji: "📍", label: OBJECT_CONFIG[objectType]?.label || objectType };
 }
 

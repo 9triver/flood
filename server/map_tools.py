@@ -27,7 +27,6 @@ OBJECT_LABELS = {
     "Route": "转移路线",
     "Risk": "危险区",
     "HydroStation": "水文测站",
-    "HistoricalFloodMark": "历史洪痕",
     "HydrodynamicCell": "水动力网格",
 }
 

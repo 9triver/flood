@@ -34,8 +34,6 @@ OBJECT_LIBRARY_FILES = {
     "Route": "route.jsonl",
     "Risk": "risk.jsonl",
     "HydroStation": "hydro_station.jsonl",
-    "HydroObservation": "hydro_observation.jsonl",
-    "HistoricalFloodMark": "historical_flood_mark.jsonl",
     "Hydrology": "hydrology.jsonl",
 }
 
@@ -125,11 +123,6 @@ MAPPABLE_OBJECTS = {
         "role": "hydrology",
         "style": {"type": "circle", "color": "#0284c7", "radius": 5, "stroke": "#ffffff"},
     },
-    "HistoricalFloodMark": {
-        "label": "历史洪痕",
-        "role": "hydrology",
-        "style": {"type": "circle", "color": "#be123c", "radius": 4, "stroke": "#ffffff"},
-    },
     "HydrodynamicCell": {
         "label": "水动力模型网格",
         "role": "forecast",
@@ -206,8 +199,6 @@ def id_field(object_type: str) -> str:
         "Route": "route_id",
         "Risk": "risk_id",
         "HydroStation": "station_id",
-        "HydroObservation": "observation_id",
-        "HistoricalFloodMark": "mark_id",
         "ForecastRun": "forecast_id",
         "ForecastCell": "forecast_cell_id",
         "HydrodynamicCell": "hydrodynamic_cell_id",

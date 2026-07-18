@@ -431,51 +431,6 @@ objects:
       observation_items: {type: str, description: "观测项目，如 rainfall,water_level,outflow"}
       record_period: {type: str, description: "资料系列或可用时段说明"}
 
-  HydroObservation:
-    kind: event
-    data_source: mixed
-    mutability: append_only
-    source:
-      type: resolver
-      resolver: flood_repository
-      id_field: observation_id
-    summary: "水文观测或资料系列记录"
-    description: "表达测站观测资料的元数据、摘要值或未来接入的实时/历史时序。当前本地对象库主要记录资料系列说明和设计计算所用摘要，尚不包含逐日逐小时原始序列。"
-    properties:
-      observation_id: {type: str, required: true, description: "观测记录ID"}
-      station_id: {type: str, description: "所属测站ID"}
-      river_id: {type: str, description: "关联河流编号"}
-      observation_type: {type: str, description: "观测类型或资料系列类型"}
-      metric: {type: str, description: "指标名，如 rainfall/water_level/outflow"}
-      unit: {type: str, description: "单位"}
-      start_year: {type: int, description: "起始年份"}
-      end_year: {type: int, description: "结束年份"}
-      missing_years: {type: str, description: "缺测年份说明"}
-      value: {type: float, description: "摘要值"}
-      value_stat: {type: str, description: "摘要值类型，如 mean/multi_year_mean"}
-      description: {type: str, description: "资料说明"}
-
-  HistoricalFloodMark:
-    kind: event
-    data_source: mixed
-    mutability: read_only
-    source:
-      type: resolver
-      resolver: flood_repository
-      id_field: mark_id
-    summary: "历史洪水洪痕"
-    description: "表达现场调查或历史资料中的洪痕位置、高程和描述，用于模型率定验证和洪水记忆检索。"
-    properties:
-      mark_id: {type: str, required: true, description: "洪痕记录ID"}
-      river_id: {type: str, description: "关联河流编号"}
-      event_year: {type: int, description: "洪水发生年份"}
-      location: {type: str, description: "洪痕位置描述"}
-      description: {type: str, description: "洪水描述"}
-      elevation_m: {type: float, description: "洪痕高程"}
-      reliability: {type: str, description: "可靠度或资料类型"}
-      longitude: {type: float, description: "经度，若有"}
-      latitude: {type: float, description: "纬度，若有"}
-
   Risk:
     kind: entity
     data_source: mixed
@@ -572,22 +527,6 @@ links:
     join: {source_key: river_id, target_key: river_id}
     description: "河流关联的水文、雨量和气象测站"
     link_type: observes
-    cardinality: 1..n
-
-  hydro_station_observations:
-    source: HydroStation
-    target: HydroObservation
-    join: {source_key: station_id, target_key: station_id}
-    description: "测站对应的观测资料系列、摘要或未来实时记录"
-    link_type: observes
-    cardinality: 1..n
-
-  river_historical_flood_marks:
-    source: River
-    target: HistoricalFloodMark
-    join: {source_key: river_id, target_key: river_id}
-    description: "河流关联的历史洪水洪痕记录"
-    link_type: evidence
     cardinality: 1..n
 
   transfer_route:

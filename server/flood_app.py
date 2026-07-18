@@ -46,8 +46,6 @@ ID_FIELDS = {
     "Route": "route_id",
     "Risk": "risk_id",
     "HydroStation": "station_id",
-    "HydroObservation": "observation_id",
-    "HistoricalFloodMark": "mark_id",
     "ForecastRun": "forecast_id",
     "ForecastCell": "forecast_cell_id",
     "HydrodynamicCell": "hydrodynamic_cell_id",

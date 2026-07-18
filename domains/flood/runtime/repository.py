@@ -93,14 +93,6 @@ class FloodRepository:
         return self._rows("HydroStation")
 
     @cached_property
-    def hydro_observations(self) -> list[dict]:
-        return self._rows("HydroObservation")
-
-    @cached_property
-    def historical_flood_marks(self) -> list[dict]:
-        return self._rows("HistoricalFloodMark")
-
-    @cached_property
     def towns(self) -> list[dict]:
         return self._rows("Town")
 

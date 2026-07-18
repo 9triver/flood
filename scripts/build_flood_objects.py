@@ -33,8 +33,6 @@ OBJECT_TYPES = [
     "Route",
     "Risk",
     "HydroStation",
-    "HydroObservation",
-    "HistoricalFloodMark",
     "Hydrology",
 ]
 
