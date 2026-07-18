@@ -38,14 +38,7 @@ def run_flood_forecast(resolver, forecast_id: str = "latest",
     run = ensure_latest_forecast(resolver, force=force)
     if forecast_id not in ("", "latest", LATEST_FORECAST_ID, run["forecast_id"]):
         return {"error": "forecast not found", "forecast_id": forecast_id}
-    return {
-        "forecast": run,
-        "mappable": {
-            "object_type": "ForecastCell",
-            "filters": {"forecast_id": LATEST_FORECAST_ID},
-            "export_tool": "export_objects_geojson",
-        },
-    }
+    return {"forecast": run}
 
 
 def run_emergency_cycle(resolver, force_forecast: bool = False,
@@ -76,13 +69,6 @@ def run_emergency_cycle(resolver, force_forecast: bool = False,
         "road_impacts": road_impacts,
         "route_impacts": route_impacts,
         "recommendations": recommendations,
-        "mappable": [
-            {"object_type": "ForecastCell", "filters": {"forecast_id": LATEST_FORECAST_ID}},
-            {"object_type": "Risk", "filters": {"risk_type": "danger_area"}},
-            {"object_type": "Transfer", "filters": {}},
-            {"object_type": "Place", "filters": {}},
-            {"object_type": "Route", "filters": {}},
-        ],
     }
     write_cached_emergency_cycle(result)
     return result
@@ -755,6 +741,7 @@ def read_cached_emergency_cycle(forecast: dict[str, Any]) -> dict[str, Any] | No
         cached_forecast.get("forecast_id") == forecast.get("forecast_id")
         and cached_forecast.get("generated_at") == forecast.get("generated_at")
     ):
+        cached.pop("mappable", None)
         return cached
     return None
 

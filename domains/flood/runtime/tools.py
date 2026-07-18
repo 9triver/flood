@@ -56,11 +56,6 @@ def scenario_summary(resolver, scenario_id: str = "",
         "scenario": scenario,
         "impact": next((row for row in resolver.impacts if row["scenario_id"] == sid), None),
         "hydrology": [row for row in resolver.hydrology if row.get("scenario_id") == sid],
-        "mappable": {
-            "object_type": "Cell",
-            "filters": {"scenario_id": sid},
-            "export_tool": "export_objects_geojson",
-        },
     }
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
@@ -97,4 +98,8 @@ def export_key(object_type: str, filters: dict[str, Any]) -> str:
     for key in sorted(filters):
         value = str(filters[key]).replace("/", "_").replace(" ", "_")
         parts.append(f"{key}_{value}")
-    return "__".join(parts)
+    key = "__".join(parts)
+    if len(key) <= 160:
+        return key
+    digest = hashlib.sha1(json.dumps(filters, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
+    return f"{object_type.lower()}__filtered_{digest}"

@@ -961,6 +961,7 @@ functions:
   get_scenario_summary:
     summary: "查看洪水情景的水文和影响汇总"
     description: "按 scenario_id 或重现期查询情景说明、淹没面积、损失、人口、GDP 和水文成果。"
+    usage_prompt: "当用户询问某个设计洪水情景的水文过程、淹没面积或损失影响汇总时调用。该函数只返回情景事实；如需在 GIS 展示情景淹没范围，LLM 应在本函数返回后调用 ui_show_objects，object_type=HydrodynamicCell，并传 scenario_id 或 return_period_year。"
     function_type: lookup
     involves_objects: [Scenario, Impact, Hydrology]
     params:
@@ -970,7 +971,7 @@ functions:
   run_flood_forecast:
     summary: "运行或读取最新洪水预测"
     description: "读取最新四边界流量过程线，先执行干态门控规则；达到触发条件时调用 CNN_V2 水动力模型生成水动力网格 max_depth 预测结果和 ForecastRun 汇总。该函数不把 severity 或综合指标映射为 5/10/20/50/100 年一遇情景。"
-    usage_prompt: "当用户要求运行预测、查看实时预测、显示未来淹没，或水文异常事件中的 forecast_trigger.should_run_forecast 为 true 且需要推演时调用。返回 ForecastRun 汇总；前端通过 HydrodynamicCell + forecast_id=latest 绘制动态水深结果。"
+    usage_prompt: "当用户要求运行预测、查看实时预测、显示未来淹没，或水文异常事件中的 forecast_trigger.should_run_forecast 为 true 且需要推演时调用。该函数只返回 ForecastRun 汇总；如需在 GIS 展示预测淹没范围，LLM 应在本函数返回后调用 ui_show_objects，object_type=HydrodynamicCell，filters={\"forecast_id\":\"latest\"}，label=预测淹没结果，fit=false，refresh=true。"
     function_type: lookup
     involves_objects: [ForecastRun, ForecastCell, River, Reservoir, Cell]
     params:
@@ -980,7 +981,7 @@ functions:
   run_emergency_cycle:
     summary: "运行水文观测-预测-告警-调度闭环原型"
     description: "使用 mock 水文观测与规则，运行简化水动力预测，生成预警级别、受影响转移对象、道路/路线关注对象和调度建议。预测结果直接来自 ForecastCell，不通过重现期情景映射。"
-    usage_prompt: "当用户要求自主观测、持续预测、自动告警、闭环调度、避洪转移调度或应急循环时调用。返回可绘制对象和推荐动作；涉及发布预警、封路、转移等执行动作时必须说明需要人工审批。"
+    usage_prompt: "当用户要求自主观测、持续预测、自动告警、闭环调度、避洪转移调度或应急循环时调用。该函数只返回预测、预警、受影响对象和调度建议事实；如需 GIS 展示，LLM 应在本函数返回后调用 ui_show_objects 展示 HydrodynamicCell、Risk、Transfer、Place、Route 等领域对象。涉及发布预警、封路、转移等执行动作时必须说明需要人工审批。"
     function_type: lookup
     involves_objects: [ForecastRun, ForecastCell, Risk, Road, Route, Transfer, Place, Recommendation]
     params:
@@ -989,7 +990,7 @@ functions:
   analyze_inundation_impacts:
     summary: "根据预测淹没范围分析受影响对象"
     description: "读取最新或指定 ForecastCell 预测淹没网格，对道路、桥梁、重要设施、转移单元、安置地点和转移路线执行确定性空间邻近分析，返回受影响对象清单、风险等级和按类型汇总。"
-    usage_prompt: "收到 InundationGenerated 事件后应优先调用本函数，forecast_id 默认 latest，target_type 默认 all。该函数是本体层确定性空间分析入口：LLM 只能根据返回结果说明哪些对象受影响，不要自行猜测学校、医院、道路、桥梁、转移路线或安置点是否受淹。需要缩窄范围时 target_type 可传 Road、Bridge、Facility、Route、Transfer、Place 或 all；min_depth_m 默认 0.15，max_distance_m 默认 120。"
+    usage_prompt: "收到 InundationGenerated 事件后应优先调用本函数，forecast_id 默认 latest，target_type 默认 all。该函数是本体层确定性空间分析入口：LLM 只能根据返回结果说明哪些对象受影响，不要自行猜测学校、医院、道路、桥梁、转移路线或安置点是否受淹。需要在 GIS 展示影响分析结果时，LLM 应在本函数返回后再调用 ui_show_objects：先显示 HydrodynamicCell 且 filters={\"forecast_id\":\"latest\"}、label=预测淹没结果、fit=false、refresh=true；再优先使用 affected_object_ids 中按对象类型汇总的 ID，分别传给对应对象类型并设置 highlight=true、show_only_object_ids=true，只显示并高亮这些受影响对象，不要额外加载同类型全量对象图层。需要缩窄范围时 target_type 可传 Road、Bridge、Facility、Route、Transfer、Place 或 all；min_depth_m 默认 0.15，max_distance_m 默认 120。"
     function_type: lookup
     involves_objects: [ForecastRun, ForecastCell, Road, Bridge, Facility, Route, Transfer, Place, Risk]
     params:
@@ -1020,7 +1021,7 @@ functions:
   export_objects_geojson:
     summary: "按领域对象导出前端地图可加载的 GeoJSON"
     description: "从领域对象数据导出 EPSG:4326 GeoJSON。点、线、面几何来自对象自身的 geometry 字段；ForecastCell 来自预测模型输出；HydrodynamicCell 由前端使用专门的网格瓦片接口绘制，并可叠加 forecast_id、scenario_id 或 return_period_year 对应的 max depth 结果。"
-    usage_prompt: "当前端需要绘制学校、医院、桥梁、路线、道路、乡镇边界、某个洪水情景或预测淹没结果等对象时调用。传 object_type 而不是图层名；绘制乡镇边界时 object_type=Town；绘制洪水情景/年一遇淹没范围时 object_type=HydrodynamicCell 并传 scenario_id 或 return_period_year；绘制最新预测时 object_type=ForecastCell 并传 forecast_id=latest；绘制水动力模型全部网格时 object_type=HydrodynamicCell。"
+    usage_prompt: "该函数是底层 GeoJSON 导出接口，通常供前端服务或调试使用，不是交互式地图展示入口。用户要求显示、绘制、叠加、缩放或高亮地图对象时，LLM 应调用 ui_show_objects、ui_focus_object 或 ui_clear_map；只有在用户明确要求导出 GeoJSON 文件或排查导出结果时才调用本函数。"
     function_type: lookup
     involves_objects: [Watershed, Waterway, County, Road, Reservoir, Sluice, HydraulicStructure, Bridge, Facility, Place, Transfer, Route, Risk, HydroStation, HistoricalFloodMark, Cell, ForecastCell, HydrodynamicCell]
     params:

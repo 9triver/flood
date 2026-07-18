@@ -156,6 +156,9 @@ def apply_filters(rows: list[dict], filters: dict[str, Any] | None) -> list[dict
         field, op = key.split("__", 1) if "__" in key else (key, "eq")
         if op == "like":
             result = [row for row in result if str(value) in str(row.get(field, ""))]
+        elif op == "in":
+            values = {str(item) for item in filter_values(value)}
+            result = [row for row in result if str(row.get(field, "")) in values]
         elif op == "ne":
             result = [row for row in result if row.get(field) != value]
         elif op == "gt":
@@ -169,6 +172,14 @@ def apply_filters(rows: list[dict], filters: dict[str, Any] | None) -> list[dict
         else:
             result = [row for row in result if row.get(field) == value]
     return result
+
+
+def filter_values(value: Any) -> list[Any]:
+    if isinstance(value, (list, tuple, set)):
+        return list(value)
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    return [value]
 
 
 def apply_order(rows: list[dict], order_by: str | None) -> list[dict]:

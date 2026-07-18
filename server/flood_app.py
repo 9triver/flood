@@ -292,9 +292,16 @@ class FloodApp:
         if not event:
             return HookResult(action="allow")
         if session_id:
-            with self._pending_map_events_lock:
-                self._pending_map_events.setdefault(session_id, []).append(event)
+            self._queue_pending_map_event(session_id, event)
         return HookResult(action="allow")
+
+    def _queue_pending_map_event(self, session_id: str, event: dict[str, Any]) -> None:
+        with self._pending_map_events_lock:
+            queue = self._pending_map_events.setdefault(session_id, [])
+            signature = json.dumps(event.get("map_actions", []), sort_keys=True, ensure_ascii=False)
+            if any(json.dumps(item.get("map_actions", []), sort_keys=True, ensure_ascii=False) == signature for item in queue):
+                return
+            queue.append(event)
 
     def _pop_pending_map_events(self, session_id: str) -> list[dict[str, Any]]:
         with self._pending_map_events_lock:

@@ -74,6 +74,17 @@ const ID_FIELDS = {
 };
 
 const MAP_NON_SELECTABLE_OBJECTS = new Set(["Watershed", "County", "Town"]);
+const ICON_OBJECT_TYPES = new Set([
+  "Reservoir",
+  "Sluice",
+  "Bridge",
+  "Facility",
+  "Place",
+  "Transfer",
+  "Risk",
+  "HydroStation",
+  "HistoricalFloodMark",
+]);
 
 document.addEventListener("DOMContentLoaded", async () => {
   initMap();
@@ -132,12 +143,17 @@ function renderObjectList(items) {
 
 function bindEvents() {
   document.getElementById("fitAllBtn").addEventListener("click", fitAll);
-  document.getElementById("clearBtn").addEventListener("click", resetMap);
+  document.getElementById("layerPanelBtn").addEventListener("click", toggleLayerPanel);
+  document.getElementById("agentDrawerBtn").addEventListener("click", () => setAgentDrawerOpen(true));
+  document.getElementById("agentCloseBtn").addEventListener("click", () => setAgentDrawerOpen(false));
   document.getElementById("mockToggleBtn").addEventListener("click", toggleMockService);
   document.querySelectorAll("[data-panel-toggle]").forEach((btn) => {
     btn.addEventListener("click", () => activateAgentPane(btn.dataset.panelToggle));
   });
-  document.getElementById("chatInput").addEventListener("focus", () => activateAgentPane("chat"));
+  document.getElementById("chatInput").addEventListener("focus", () => {
+    setAgentDrawerOpen(true);
+    activateAgentPane("chat");
+  });
   document.querySelectorAll("[data-facility]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const type = btn.dataset.facility;
@@ -146,6 +162,23 @@ function bindEvents() {
     });
   });
   document.getElementById("chatForm").addEventListener("submit", onChatSubmit);
+}
+
+function toggleLayerPanel() {
+  const control = document.querySelector(".map-layer-control");
+  const btn = document.getElementById("layerPanelBtn");
+  const isOpen = !control.classList.contains("is-open");
+  control.classList.toggle("is-open", isOpen);
+  btn.classList.toggle("is-active", isOpen);
+  btn.setAttribute("aria-expanded", String(isOpen));
+}
+
+function setAgentDrawerOpen(isOpen) {
+  const panel = document.querySelector(".agent-panel");
+  const btn = document.getElementById("agentDrawerBtn");
+  panel.classList.toggle("is-open", isOpen);
+  btn.classList.toggle("is-open", isOpen);
+  btn.setAttribute("aria-expanded", String(isOpen));
 }
 
 async function toggleObject(objectType) {
@@ -196,7 +229,11 @@ async function loadObject(objectType, filters = {}, options = {}) {
     }
     return showHydrodynamicMesh(options);
   }
-  const key = layerKey(objectType, filters);
+  const resolvedFilters = filtersWithObjectIds(objectType, filters, options.objectIds || options.object_ids || []);
+  if (options.replaceObjectType || options.replace_object_type) {
+    removeObjectTypeLayers(objectType);
+  }
+  const key = layerKey(objectType, resolvedFilters);
   if (options.refresh && state.layerGroups.has(key)) {
     removeLayer(key);
   }
@@ -209,7 +246,7 @@ async function loadObject(objectType, filters = {}, options = {}) {
   }
 
   const params = new URLSearchParams({ object_type: objectType });
-  Object.entries(filters || {}).forEach(([name, value]) => params.set(name, value));
+  params.set("filters", JSON.stringify(resolvedFilters));
   if (options.simplify_tolerance) params.set("simplify_tolerance", options.simplify_tolerance);
 
   const res = await fetch(`/api/geojson?${params.toString()}`);
@@ -219,17 +256,18 @@ async function loadObject(objectType, filters = {}, options = {}) {
   const layer = L.geoJSON(geojson, {
     interactive: mapSelectable,
     style: (feature) => featureStyle(objectType, feature),
-    pointToLayer: (feature, latlng) => L.circleMarker(latlng, pointStyle(objectType, feature)),
+    pointToLayer: (feature, latlng) => pointLayer(objectType, feature, latlng),
     onEachFeature: (feature, layerItem) => {
       if (!mapSelectable) return;
       indexFeature(objectType, feature, layerItem);
-      layerItem.on("click", () => selectFeature(objectType, feature, layerItem));
       layerItem.bindPopup(popupHtml(objectType, feature));
+      layerItem.on("click", () => selectFeature(objectType, feature, layerItem));
     },
   }).addTo(state.map);
+  renderIcons();
 
   state.layerGroups.set(key, layer);
-  state.layerMeta.set(key, { objectType, filters, label: options.label || OBJECT_CONFIG[objectType]?.label || objectType });
+  state.layerMeta.set(key, { objectType, filters: resolvedFilters, label: options.label || OBJECT_CONFIG[objectType]?.label || objectType });
   setObjectButtonActive(objectType, true);
   if (objectType === "Watershed") state.baseBounds = layer.getBounds();
   if (options.fit) fitLayer(layer);
@@ -350,6 +388,23 @@ function removeLayer(key) {
   if (meta) setObjectButtonActive(meta.buttonType || meta.objectType, hasLayerButtonType(meta.buttonType || meta.objectType));
 }
 
+function removeObjectTypeLayers(objectType) {
+  Array.from(state.layerMeta.entries()).forEach(([key, meta]) => {
+    if (meta?.objectType === objectType) removeLayer(key);
+  });
+}
+
+function filtersWithObjectIds(objectType, filters = {}, objectIds = []) {
+  const ids = (objectIds || []).map(String).filter(Boolean);
+  if (!ids.length) return { ...(filters || {}) };
+  const idField = ID_FIELDS[objectType];
+  if (!idField) return { ...(filters || {}) };
+  return {
+    ...(filters || {}),
+    [`${idField}__in`]: Array.from(new Set(ids)),
+  };
+}
+
 function resetMap() {
   clearFocus();
   clearHighlights();
@@ -388,7 +443,7 @@ function clearBoundaryFlowLayer() {
 
 function startAutonomyStream() {
   if (state.autonomyStream) state.autonomyStream.close();
-  const es = new EventSource("/api/autonomy/stream?interval=15");
+  const es = new EventSource("/api/autonomy/stream?interval=5");
   state.autonomyStream = es;
 
   es.addEventListener("runtime_status", (event) => {
@@ -423,9 +478,14 @@ function startAutonomyStream() {
 
   es.addEventListener("map_actions", async (event) => {
     const data = parseEvent(event);
-    if (data.context) document.getElementById("contextPill").textContent = data.context;
-    await executeActions(data.map_actions || []);
-    renderMetrics(data.result_cards || []);
+    try {
+      if (data.context) document.getElementById("contextPill").textContent = data.context;
+      await executeActions(data.map_actions || []);
+      renderMetrics(data.result_cards || []);
+      addTrace("MAP", "地图动作", (data.map_actions || []).map((item) => item.object_type || item.type).join(", "));
+    } catch (error) {
+      addTrace("ERR", "地图动作执行失败", error.message || String(error));
+    }
   });
 
   es.onerror = () => {
@@ -453,6 +513,7 @@ async function toggleMockService() {
   const btn = document.getElementById("mockToggleBtn");
   btn.disabled = true;
   try {
+    if (nextRunning) resetMap();
     const res = await fetch(nextRunning ? "/api/autonomy/start" : "/api/autonomy/stop", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -801,6 +862,52 @@ function pointStyle(objectType, feature) {
   };
 }
 
+function pointLayer(objectType, feature, latlng) {
+  if (!ICON_OBJECT_TYPES.has(objectType)) {
+    return L.circleMarker(latlng, pointStyle(objectType, feature));
+  }
+  const marker = L.marker(latlng, {
+    icon: objectDivIcon(objectType, feature),
+    interactive: true,
+    riseOnHover: true,
+  });
+  marker.isObjectIconMarker = true;
+  return marker;
+}
+
+function objectDivIcon(objectType, feature) {
+  const info = objectIconInfo(objectType, feature);
+  return L.divIcon({
+    className: `object-symbol-marker object-symbol-${info.key}`,
+    html: `<span class="object-symbol-inner" title="${escapeHtml(info.label)}" aria-label="${escapeHtml(info.label)}">${escapeHtml(info.emoji)}</span>`,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+    popupAnchor: [0, -14],
+  });
+}
+
+function objectIconInfo(objectType, feature) {
+  const props = feature?.properties || {};
+  if (objectType === "Facility") {
+    const type = props.facility_type || "facility";
+    return {
+      school: { key: "school", emoji: "🏫", label: "学校" },
+      hospital: { key: "hospital", emoji: "🏥", label: "医院" },
+      government: { key: "government", emoji: "🏛️", label: "政府机构" },
+    }[type] || { key: "facility", emoji: "🏢", label: "重要设施" };
+  }
+  return {
+    Reservoir: { key: "reservoir", emoji: "🌊", label: "水库" },
+    Sluice: { key: "sluice", emoji: "🚪", label: "水闸" },
+    Bridge: { key: "bridge", emoji: "🌉", label: "桥梁" },
+    Place: { key: "place", emoji: "🏠", label: "安置地点" },
+    Transfer: { key: "transfer", emoji: "👥", label: "转移对象" },
+    Risk: { key: "risk", emoji: "⚠️", label: "危险区" },
+    HydroStation: { key: "station", emoji: "📡", label: "水文测站" },
+    HistoricalFloodMark: { key: "flood-mark", emoji: "🚩", label: "历史洪痕" },
+  }[objectType] || { key: "default", emoji: "📍", label: OBJECT_CONFIG[objectType]?.label || objectType };
+}
+
 function boundaryColor(feature) {
   if (!isModelInputBoundary(feature)) return "#64748b";
   const role = feature?.properties?.boundary_role || "";
@@ -921,6 +1028,13 @@ async function focusObject(action = {}) {
 function applyFocus(layerItem, objectType) {
   clearFocus();
   state.focusedLayer = layerItem;
+  if (isObjectIconMarker(layerItem)) {
+    layerItem.getElement()?.classList.add("is-focused");
+    layerItem.setZIndexOffset?.(1000);
+    layerItem.bringToFront?.();
+    state.focusedOriginalStyle = { objectType, iconMarker: true };
+    return;
+  }
   const isPoint = Boolean(layerItem.setRadius);
   const radius = pointRadius(objectType) + 1.6;
   const style = isPoint
@@ -934,6 +1048,13 @@ function applyFocus(layerItem, objectType) {
 function clearFocus() {
   if (!state.focusedLayer) return;
   const objectType = state.focusedOriginalStyle?.objectType;
+  if (state.focusedOriginalStyle?.iconMarker) {
+    state.focusedLayer.getElement()?.classList.remove("is-focused");
+    state.focusedLayer.setZIndexOffset?.(0);
+    state.focusedLayer = null;
+    state.focusedOriginalStyle = null;
+    return;
+  }
   const feature = state.focusedLayer.feature || {};
   if (state.focusedLayer.setStyle && objectType) {
     if (state.focusedLayer.setRadius) state.focusedLayer.setRadius(pointStyle(objectType, feature).radius);
@@ -945,6 +1066,13 @@ function clearFocus() {
 
 function applyHighlight(layerItem, objectType) {
   if (!layerItem) return;
+  if (isObjectIconMarker(layerItem)) {
+    layerItem.getElement()?.classList.add("is-highlighted");
+    layerItem.setZIndexOffset?.(800);
+    layerItem.bringToFront?.();
+    state.highlightedLayers.push({ layer: layerItem, objectType });
+    return;
+  }
   const isPoint = Boolean(layerItem.setRadius);
   const radius = pointRadius(objectType) + 1.4;
   if (isPoint) layerItem.setRadius(radius);
@@ -957,6 +1085,11 @@ function applyHighlight(layerItem, objectType) {
 
 function clearHighlights() {
   state.highlightedLayers.forEach(({ layer, objectType }) => {
+    if (isObjectIconMarker(layer)) {
+      layer.getElement()?.classList.remove("is-highlighted");
+      layer.setZIndexOffset?.(0);
+      return;
+    }
     const feature = layer.feature || {};
     if (layer.setStyle && objectType) {
       if (layer.setRadius) layer.setRadius(pointStyle(objectType, feature).radius);
@@ -964,6 +1097,10 @@ function clearHighlights() {
     }
   });
   state.highlightedLayers = [];
+}
+
+function isObjectIconMarker(layerItem) {
+  return Boolean(layerItem?.isObjectIconMarker);
 }
 
 async function highlightObjects(action = {}) {
@@ -974,7 +1111,11 @@ async function highlightObjects(action = {}) {
     return false;
   }
   if (!objectType || !objectIds.length) return false;
-  await loadObject(objectType, action.filters || {}, { fit: false, label: action.label });
+  await loadObject(objectType, action.filters || {}, {
+    fit: false,
+    label: action.label,
+    objectIds,
+  });
   objectIds.forEach((objectId) => {
     const entry = state.featureIndex.get(featureIndexKey(objectType, objectId));
     if (entry) applyHighlight(entry.layer, objectType);
@@ -1128,6 +1269,8 @@ async function executeActions(actions) {
         label: action.label,
         simplify_tolerance: action.simplify_tolerance,
         refresh: action.refresh,
+        objectIds: action.object_ids,
+        replaceObjectType: action.replace_object_type || action.replaceObjectType,
       });
     }
     if (action.type === "show_hydrodynamic_mesh") {
@@ -1412,7 +1555,7 @@ function addTrace(tag, label, detail) {
     return state.lastTrace.item;
   }
   const item = document.createElement("div");
-  item.className = "trace-item";
+  item.className = `trace-item ${traceTagClass(tag)}`;
   item.innerHTML = `
     <div class="trace-label">
       <span>${escapeHtml(label || "")}</span>
@@ -1424,6 +1567,11 @@ function addTrace(tag, label, detail) {
   state.lastTrace = { key, item, count: 1 };
   wrap.scrollTop = wrap.scrollHeight;
   return item;
+}
+
+function traceTagClass(tag) {
+  const value = String(tag || "agent").toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
+  return value ? `trace-${value}` : "trace-agent";
 }
 
 function shouldHideAutonomyTrace(data = {}) {

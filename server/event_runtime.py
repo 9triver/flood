@@ -36,7 +36,7 @@ def format_sse(event: str, data: dict) -> bytes:
 
 class BoundaryFlowMockRunner:
     def __init__(self, source: BoundaryFlowMockService | None = None,
-                 interval_seconds: float = 15.0):
+                 interval_seconds: float = 5.0):
         self.source = source or BoundaryFlowMockService()
         self.interval_seconds = interval_seconds
 
@@ -83,7 +83,7 @@ class EventRuntime:
         self._published_impact_sources: set[str] = set()
         self._boundary_flow_runner = BoundaryFlowMockRunner()
 
-    def reset(self, *, clear_map: bool = True) -> None:
+    def reset(self) -> None:
         with self.condition:
             self._generation += 1
             self.events.clear()
@@ -98,17 +98,6 @@ class EventRuntime:
                 "label": "边界流量 mock 服务已启动",
                 "detail": "后台边界流量 mock 服务正在生成四边界流量数据。",
             }})
-            if clear_map:
-                self.outputs.append({"event": "map_actions", "data": {
-                    "type": "map_actions",
-                    "context": "调试 · 边界流量到智能体",
-                    "map_actions": [
-                        {"type": "reset"},
-                    ],
-                    "result_cards": [
-                        {"title": "调试范围", "value": "边界流量", "detail": "四边界流量数据超过警戒条件后进入智能体。"},
-                    ],
-                }})
             self.condition.notify_all()
 
     def ensure_started(self) -> None:
@@ -371,7 +360,7 @@ class EventRuntime:
                     "type": "agent_trace",
                     "tag": "TEXT",
                     "label": "智能体结论",
-                    "detail": compact_event_text(conclusion),
+                    "detail": compact_event_text(conclusion, limit=1800),
                 }, generation)
         except Exception as exc:
             self._append_output("agent_trace", {
@@ -480,8 +469,9 @@ class EventRuntime:
                     "type": "agent_trace",
                     "tag": "TEXT",
                     "label": "智能体结论",
-                    "detail": compact_event_text(conclusion),
+                    "detail": compact_event_text(conclusion, limit=1800),
                 }, generation)
+            self._append_followup_complete_trace(result, generation)
         except Exception as exc:
             self._append_output("agent_trace", {
                 "type": "agent_trace",
@@ -502,6 +492,19 @@ class EventRuntime:
             )
         for map_event in self.app._pop_pending_map_events(session_id):
             self._append_output("map_actions", map_event, generation)
+
+    def _append_followup_complete_trace(self, result: dict[str, Any], generation: int) -> None:
+        impact_result = result.get("impact_result")
+        if is_impact_result(impact_result):
+            detail = impact_event_detail({"payload": impact_result})
+        else:
+            detail = "事件智能体处理已结束。"
+        self._append_output("agent_trace", {
+            "type": "agent_trace",
+            "tag": "DONE",
+            "label": "事件处理完成",
+            "detail": detail,
+        }, generation)
 
     def _make_inundation_event(self, source_event: dict[str, Any],
                                forecast_result: dict[str, Any],
@@ -714,62 +717,3 @@ def format_float(value: Any, digits: int = 2) -> str:
         return f"{float(value):.{digits}f}"
     except (TypeError, ValueError):
         return "0.00"
-
-
-def forecast_map_event(result: dict[str, Any]) -> dict[str, Any]:
-    forecast = result.get("forecast") or {}
-    return {
-        "type": "map_actions",
-        "context": "事件驱动 · 水动力计算",
-        "map_actions": [
-            {
-                "type": "show_hydrodynamic_mesh",
-                "fit": False,
-            },
-            {
-                "type": "apply_hydrodynamic_result",
-                "label": "预测淹没范围",
-                "filters": {"forecast_id": "latest"},
-                "fit": False,
-                "refresh": True,
-            },
-        ],
-        "result_cards": [
-            {
-                "title": "模型输出",
-                "value": f"{forecast.get('inundated_area_km2', 0):.2f} km²",
-                "detail": f"预测单元 {forecast.get('forecast_cell_count', 0)} 个，最大水深 {forecast.get('max_depth_m', 0):.2f} m。",
-            },
-        ],
-    }
-
-
-def decision_map_event(result: dict[str, Any]) -> dict[str, Any]:
-    transfer_ids = [row.get("transfer_id") for row in result.get("transfer_impacts", []) if row.get("transfer_id")]
-    road_ids = [row.get("object_id") for row in result.get("road_impacts", []) if row.get("object_id")]
-    route_ids = [row.get("object_id") for row in result.get("route_impacts", []) if row.get("object_id")]
-    warning = result.get("warning") or {}
-    return {
-        "type": "map_actions",
-        "context": "事件驱动 · 预案研判",
-        "map_actions": [
-            {"type": "load_object", "object_type": "Transfer", "label": "转移对象", "filters": {}, "fit": False},
-            {"type": "load_object", "object_type": "Place", "label": "安置地点", "filters": {}, "fit": False},
-            {"type": "load_object", "object_type": "Route", "label": "转移路线", "filters": {}, "fit": False},
-            {"type": "highlight_objects", "object_type": "Transfer", "object_ids": transfer_ids[:12], "fit": True},
-            {"type": "highlight_objects", "object_type": "Road", "object_ids": road_ids[:8], "fit": False},
-            {"type": "highlight_objects", "object_type": "Route", "object_ids": route_ids[:8], "fit": False},
-        ],
-        "result_cards": [
-            {
-                "title": warning.get("title", "预警决策"),
-                "value": str(warning.get("level", "")).upper(),
-                "detail": warning.get("basis", ""),
-            },
-            {
-                "title": "调度建议",
-                "value": str(len(result.get("recommendations") or [])),
-                "detail": f"转移影响 {len(result.get('transfer_impacts') or [])} 个，道路关注 {len(result.get('road_impacts') or [])} 个。",
-            },
-        ],
-    }

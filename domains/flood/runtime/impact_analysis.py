@@ -86,26 +86,13 @@ def analyze_inundation_impacts(resolver, forecast_id: str = "latest",
             "max_distance_m": float(max_distance_m or 0),
         },
         "summary": summary,
+        "affected_object_ids": affected_object_ids(target_types, impacts, limit=20),
         "total_impacts": len(impacts),
-        "impacts": impacts[:80],
         "basis": (
             "使用最新 ForecastCell 预测淹没网格执行确定性空间邻近分析；"
             "点对象按对象坐标匹配最近淹没网格，线对象按几何采样点匹配最深命中网格。"
         ),
-        "mappable": [
-            {"object_type": "ForecastCell", "filters": {"forecast_id": "latest"}},
-            *[
-                {
-                    "object_type": object_type,
-                    "filters": {},
-                    "object_ids": [
-                        row["object_id"] for row in impacts
-                        if row.get("object_type") == object_type and row.get("object_id")
-                    ][:20],
-                }
-                for object_type in target_types
-            ],
-        ],
+        "impacts": impacts[:80],
     }
 
 
@@ -202,6 +189,26 @@ def summarize_impacts(target_types: list[str], impacts: list[dict[str, Any]]) ->
             "max_depth_m": round(max((float(row.get("depth_m") or 0) for row in rows), default=0), 3),
         }
     return summary
+
+
+def affected_object_ids(target_types: list[str], impacts: list[dict[str, Any]],
+                        limit: int) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    for object_type in target_types:
+        ids: list[str] = []
+        seen: set[str] = set()
+        for row in impacts:
+            if row.get("object_type") != object_type:
+                continue
+            object_id = str(row.get("object_id") or "")
+            if not object_id or object_id in seen:
+                continue
+            ids.append(object_id)
+            seen.add(object_id)
+            if len(ids) >= limit:
+                break
+        result[object_type] = ids
+    return result
 
 
 def safe_row_point(row: dict[str, Any]) -> tuple[float, float] | None:

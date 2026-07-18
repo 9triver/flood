@@ -74,6 +74,14 @@ def register_map_tools(tools: ToolRegistry, resolver, registry) -> None:
                             "filters": {"type": "object", "description": "对象过滤条件，例如学校为 {\"facility_type\":\"school\"}"},
                             "label": {"type": "string", "description": "地图图层显示名称，可选"},
                             "fit": {"type": "boolean", "description": "是否缩放到该对象范围"},
+                            "refresh": {"type": "boolean", "description": "是否刷新已有图层"},
+                            "object_ids": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "需要显示或高亮的对象 ID 列表，可选；show_only_object_ids=true 时只显示这些对象",
+                            },
+                            "highlight": {"type": "boolean", "description": "是否高亮 object_ids 指定对象"},
+                            "show_only_object_ids": {"type": "boolean", "description": "是否只加载 object_ids 指定对象，适合影响分析结果"},
                             "simplify_tolerance": {"type": "number", "description": "大型面对象简化容差，通常仅旧 Cell GeoJSON 使用"},
                         },
                         "required": ["object_type"],
@@ -97,6 +105,8 @@ def register_map_tools(tools: ToolRegistry, resolver, registry) -> None:
             "转移安置 => Transfer、Place、Route；设计洪水/年一遇/洪水情景淹没范围 => HydrodynamicCell，并传 scenario_id 或 return_period_year；"
             "预测淹没/未来淹没/实时预测 => 先调用 run_flood_forecast，再用 HydrodynamicCell 并传 forecast_id=latest；"
             "水动力网格/模型网格/全部 cell/GT.txt 网格 => HydrodynamicCell。"
+            "当根据影响分析结果展示受影响对象时，从分析结果 impacts 中按 object_type 汇总 object_id；"
+            "对象项包含 object_ids、highlight=true 和 show_only_object_ids=true 时，本工具会只加载这些对象并高亮。"
         ),
         category="ui",
         policy=policy,
@@ -217,6 +227,9 @@ def _show_objects(args: dict[str, Any], resolver, registry) -> str:
             return _error(f"filters for {object_type} must be an object")
         label = str(item.get("label") or _default_object_label(object_type, filters) or object_type)
         fit = bool(item.get("fit")) if "fit" in item else index == 0
+        object_ids = [str(value) for value in item.get("object_ids") or [] if value not in (None, "")]
+        highlight = bool(item.get("highlight")) and bool(object_ids)
+        show_only_object_ids = bool(item.get("show_only_object_ids")) and bool(object_ids)
         if is_hydrodynamic_result_request(object_type, filters):
             result_filters = hydrodynamic_result_filters(object_type, filters)
             actions.append({"type": "show_hydrodynamic_mesh", "fit": False})
@@ -238,16 +251,34 @@ def _show_objects(args: dict[str, Any], resolver, registry) -> str:
                 "object_type": object_type,
                 "label": label,
                 "filters": filters,
-                "fit": fit,
+                "object_ids": object_ids if show_only_object_ids else [],
+                "replace_object_type": show_only_object_ids,
+                "fit": fit and not highlight,
             }
+            if item.get("refresh") is not None:
+                action["refresh"] = bool(item.get("refresh"))
             if item.get("simplify_tolerance") is not None:
                 action["simplify_tolerance"] = item.get("simplify_tolerance")
             actions.append(action)
+            if highlight:
+                if not any(action.get("type") == "clear_highlights" for action in actions):
+                    actions.append({"type": "clear_highlights"})
+                actions.append({
+                    "type": "highlight_objects",
+                    "object_type": object_type,
+                    "object_ids": object_ids,
+                    "filters": filters,
+                    "label": label,
+                    "fit": fit,
+                })
 
         cards.append({
             "title": label,
-            "value": str(_count_mappable(resolver, registry, object_type, filters)),
-            "detail": f"{OBJECT_LABELS.get(object_type, object_type)} 对象已加入地图显示",
+            "value": str(len(object_ids) if highlight else _count_mappable(resolver, registry, object_type, filters)),
+            "detail": (
+                f"{OBJECT_LABELS.get(object_type, object_type)} 受影响对象已高亮"
+                if highlight else f"{OBJECT_LABELS.get(object_type, object_type)} 对象已加入地图显示"
+            ),
         })
 
     context = str(args.get("context") or _default_context(actions))
@@ -420,6 +451,7 @@ def _dedupe_actions(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
             action.get("type"),
             action.get("object_type"),
             json.dumps(action.get("filters", {}), sort_keys=True, ensure_ascii=False),
+            json.dumps(action.get("object_ids", []), sort_keys=True, ensure_ascii=False),
         )
         if key in seen:
             continue
