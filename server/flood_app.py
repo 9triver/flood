@@ -80,6 +80,8 @@ class FloodApp:
         self._pending_map_events_lock = threading.Lock()
         self._pending_forecast_results: dict[str, list[dict[str, Any]]] = {}
         self._pending_forecast_results_lock = threading.Lock()
+        self._pending_impact_results: dict[str, list[dict[str, Any]]] = {}
+        self._pending_impact_results_lock = threading.Lock()
         self.agent = self._build_agent()
         self._export_lock = threading.Lock()
 
@@ -277,6 +279,12 @@ class FloodApp:
                 with self._pending_forecast_results_lock:
                     self._pending_forecast_results.setdefault(session_id, []).append(result)
             return HookResult(action="allow")
+        if tool_name == "analyze_inundation_impacts" and session_id:
+            result = parse_tool_json_result(context.get("result") or "")
+            if result and "error" not in result:
+                with self._pending_impact_results_lock:
+                    self._pending_impact_results.setdefault(session_id, []).append(result)
+            return HookResult(action="allow")
         event = tool_result_to_map_event(
             tool_name,
             str(context.get("result") or ""),
@@ -295,3 +303,17 @@ class FloodApp:
     def _pop_pending_forecast_results(self, session_id: str) -> list[dict[str, Any]]:
         with self._pending_forecast_results_lock:
             return self._pending_forecast_results.pop(session_id, [])
+
+    def _pop_pending_impact_results(self, session_id: str) -> list[dict[str, Any]]:
+        with self._pending_impact_results_lock:
+            return self._pending_impact_results.pop(session_id, [])
+
+
+def parse_tool_json_result(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        return value
+    try:
+        parsed = json.loads(str(value or ""))
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None

@@ -1427,7 +1427,7 @@ function addTrace(tag, label, detail) {
 }
 
 function shouldHideAutonomyTrace(data = {}) {
-  return new Set(["CALL", "EVENT", "RESULT", "SYSTEM", "TEXT", "THINK", "CUT"]).has(data.tag);
+  return new Set(["CUT"]).has(data.tag);
 }
 
 function activateAgentPane(name) {

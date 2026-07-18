@@ -449,7 +449,7 @@ class EventRuntime:
                 elif event_type == "tool_result":
                     tool_name = str(data.get("name") or "")
                     parsed = parse_tool_json_result(data.get("result") or "")
-                    if tool_name == "analyze_inundation_impacts" and parsed and "error" not in parsed:
+                    if tool_name == "analyze_inundation_impacts" and is_impact_result(parsed):
                         result["impact_result"] = parsed
                         self._publish_impact_event_once(
                             self._make_impact_event(parsed, session_id),
@@ -494,6 +494,12 @@ class EventRuntime:
     def _collect_agent_side_effects(self, session_id: str, result: dict[str, Any], generation: int) -> None:
         for forecast_result in self.app._pop_pending_forecast_results(session_id):
             result["forecast_result"] = forecast_result
+        for impact_result in self.app._pop_pending_impact_results(session_id):
+            result["impact_result"] = impact_result
+            self._publish_impact_event_once(
+                self._make_impact_event(impact_result, session_id),
+                generation,
+            )
         for map_event in self.app._pop_pending_map_events(session_id):
             self._append_output("map_actions", map_event, generation)
 
@@ -617,6 +623,15 @@ def parse_tool_json_result(value: Any) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+def is_impact_result(value: dict[str, Any] | None) -> bool:
+    return bool(
+        isinstance(value, dict)
+        and "error" not in value
+        and "summary" in value
+        and "impacts" in value
+    )
 
 
 def boundary_flow_detail(summary: dict[str, Any]) -> str:
