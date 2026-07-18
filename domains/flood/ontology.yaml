@@ -986,6 +986,18 @@ functions:
     params:
       force_forecast: {type: bool, description: "是否强制重新运行预测模型", default: false}
 
+  analyze_inundation_impacts:
+    summary: "根据预测淹没范围分析受影响对象"
+    description: "读取最新或指定 ForecastCell 预测淹没网格，对道路、桥梁、重要设施、转移单元、安置地点和转移路线执行确定性空间邻近分析，返回受影响对象清单、风险等级和按类型汇总。"
+    usage_prompt: "收到 InundationGenerated 事件后应优先调用本函数，forecast_id 默认 latest，target_type 默认 all。该函数是本体层确定性空间分析入口：LLM 只能根据返回结果说明哪些对象受影响，不要自行猜测学校、医院、道路、桥梁、转移路线或安置点是否受淹。需要缩窄范围时 target_type 可传 Road、Bridge、Facility、Route、Transfer、Place 或 all；min_depth_m 默认 0.15，max_distance_m 默认 120。"
+    function_type: lookup
+    involves_objects: [ForecastRun, ForecastCell, Road, Bridge, Facility, Route, Transfer, Place, Risk]
+    params:
+      forecast_id: {type: str, description: "预测运行ID；latest 表示最新预测", default: "latest"}
+      target_type: {type: str, description: "分析目标类型: Road/Bridge/Facility/Route/Transfer/Place/all", default: "all"}
+      min_depth_m: {type: float, description: "纳入影响判定的最低预测水深，单位 m", default: 0.15}
+      max_distance_m: {type: float, description: "对象或采样点到预测淹没网格中心的最大匹配距离，单位 m", default: 120}
+
   analyze_risks:
     summary: "分析某情景下道路、桥梁、设施、路线等对象风险"
     description: "对指定目标类型执行空间叠加或缓存查询，生成统一 Risk 结果。"

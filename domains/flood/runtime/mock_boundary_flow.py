@@ -120,7 +120,7 @@ class BoundaryFlowMockService:
     def reset(self) -> None:
         self._index = 0
 
-    def next_event(self) -> dict[str, Any]:
+    def next_boundary_flow_data(self) -> dict[str, Any]:
         sample = self._samples[self._index % len(self._samples)]
         self._index += 1
         event_id = f"evt_{uuid.uuid4().hex[:10]}"

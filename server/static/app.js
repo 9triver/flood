@@ -507,6 +507,15 @@ function eventDetail(data) {
   if (data.event_type === "InundationGenerated") {
     return `预测单元 ${payload.forecast_cell_count || 0} 个，淹没面积 ${(Number(payload.inundated_area_km2 || 0)).toFixed(2)} km²`;
   }
+  if (data.event_type === "ImpactAnalyzed") {
+    const summary = payload.summary || {};
+    const labels = { Facility: "设施", Bridge: "桥梁", Road: "道路", Route: "路线", Transfer: "转移单元", Place: "安置点" };
+    const parts = Object.keys(labels).map((key) => {
+      const count = Number((summary[key] || {}).count || 0);
+      return count ? `${labels[key]} ${count} 个` : "";
+    }).filter(Boolean);
+    return parts.length ? parts.join("，") : "未识别到受预测淹没影响的对象";
+  }
   return data.severity || "";
 }
 
@@ -653,6 +662,7 @@ function eventPhase(eventType) {
     BoundaryFlowSeriesGenerated: "observe",
     HydroThresholdExceeded: "observe",
     InundationGenerated: "compute",
+    ImpactAnalyzed: "analyze",
     ExposureAnalyzed: "decide",
   }[eventType] || "analyze";
 }
@@ -1455,6 +1465,7 @@ function readableTool(name, args) {
     get_scenario_summary: "查看情景汇总",
     run_flood_forecast: "运行洪水预测",
     run_emergency_cycle: "运行闭环预警",
+    analyze_inundation_impacts: "分析淹没影响",
     analyze_risks: "分析风险",
     list_mappable_objects: "列出可绘制对象",
     export_objects_geojson: "导出对象 GeoJSON",
