@@ -467,8 +467,9 @@ class EventRuntime:
             self._clear_event_queue()
             self.outputs.append({"event": "runtime_status", "data": {
                 "type": "runtime_status",
+                "status": "running",
                 "label": "边界流量 mock 服务已启动",
-                "detail": "后台边界流量 mock 服务正在生成四边界过程线；事件进入单 worker 队列交给智能体处理。",
+                "detail": "后台边界流量 mock 服务正在生成四边界流量数据。",
             }})
             if clear_map:
                 self.outputs.append({"event": "map_actions", "data": {
@@ -478,7 +479,7 @@ class EventRuntime:
                         {"type": "reset"},
                     ],
                     "result_cards": [
-                        {"title": "调试范围", "value": "边界流量", "detail": "四边界流量事件由 LLM 判断是否启动水动力预测。"},
+                        {"title": "调试范围", "value": "边界流量", "detail": "四边界流量数据超过警戒条件后进入智能体。"},
                     ],
                 }})
             self.condition.notify_all()
@@ -509,6 +510,7 @@ class EventRuntime:
             self._clear_event_queue()
             self.outputs.append({"event": "runtime_status", "data": {
                 "type": "runtime_status",
+                "status": "stopped",
                 "label": "边界流量 mock 服务已停止",
                 "detail": "后台不再生成新的边界流量事件；已清空待处理事件队列。",
             }})
@@ -553,8 +555,11 @@ class EventRuntime:
             event = self._boundary_flow_mock.next_event()
             if not self._is_mock_running(generation):
                 continue
-            self._publish_boundary_flow_status(event)
-            self._publish_event(event)
+            self._publish_boundary_flow_data(event)
+            if self._should_promote_boundary_flow_event(event):
+                self._publish_event(event)
+                self._finish_mock_sequence(generation, event)
+                continue
             self._sleep_while_mock_running(15, generation)
 
     def _wait_until_mock_running(self) -> int:
@@ -581,18 +586,35 @@ class EventRuntime:
             self._event_queue.clear()
             self._event_queue_condition.notify_all()
 
-    def _publish_boundary_flow_status(self, event: dict[str, Any]) -> None:
+    def _publish_boundary_flow_data(self, event: dict[str, Any]) -> None:
         payload = event.get("payload") or {}
         boundary_flow = payload.get("boundary_flow") or {}
-        trigger = payload.get("forecast_trigger") or {}
         with self.condition:
+            self.outputs.append({"event": "boundary_flow_data", "data": {
+                "type": "boundary_flow_data",
+                "label": "四边界流量数据",
+                "event": event,
+                "detail": boundary_flow_detail(boundary_flow),
+            }})
+            self.condition.notify_all()
+
+    def _should_promote_boundary_flow_event(self, event: dict[str, Any]) -> bool:
+        payload = event.get("payload") or {}
+        trigger = payload.get("forecast_trigger") or {}
+        return bool(trigger.get("should_run_forecast"))
+
+    def _finish_mock_sequence(self, generation: int, event: dict[str, Any]) -> None:
+        payload = event.get("payload") or {}
+        boundary_flow = payload.get("boundary_flow") or {}
+        with self.condition:
+            if generation != self._generation:
+                return
+            self._mock_running = False
             self.outputs.append({"event": "runtime_status", "data": {
                 "type": "runtime_status",
-                "label": event.get("title", "边界流量过程线已生成"),
-                "detail": (
-                    f"{boundary_flow_detail(boundary_flow)}；"
-                    f"规则建议={trigger.get('decision', 'unknown')}"
-                ),
+                "status": "finished",
+                "label": "边界流量 mock 服务已结束",
+                "detail": boundary_flow_detail(boundary_flow),
             }})
             self.condition.notify_all()
 
@@ -601,22 +623,6 @@ class EventRuntime:
         with self.condition:
             self.events.append(event)
             self.outputs.append({"event": "domain_event", "data": event})
-            self.outputs.append({"event": "agent_trace", "data": {
-                "type": "agent_trace",
-                "tag": "EVENT",
-                "label": event["title"],
-                "detail": boundary_flow_event_detail(event),
-                "event_id": event["event_id"],
-            }})
-            boundary_flow = ((event.get("payload") or {}).get("boundary_flow") or {})
-            if boundary_flow:
-                self.outputs.append({"event": "agent_trace", "data": {
-                    "type": "agent_trace",
-                    "tag": "DATA",
-                    "label": "四边界流量已生成",
-                    "detail": boundary_flow_detail(boundary_flow),
-                    "event_id": event["event_id"],
-                }})
             self.condition.notify_all()
         self._enqueue_event(event, generation)
 
@@ -671,12 +677,12 @@ class EventRuntime:
         prompt = (
             "/no_think\n"
             "你正在作为珊瑚河洪水应急智能体接收后台事件。"
-            "本轮链路调试放开到水动力预测：你需要判断这组四边界流量过程线是否需要驱动水动力模型。"
+            "本轮链路调试放开到水动力预测：你需要判断这组四边界流量数据是否需要驱动水动力模型。"
             "如果你认为该事件需要用户在地图上感知，可以调用 ui_show_objects 展示 HydrodynamicBoundary，filters 使用 {\"is_model_input_boundary\": true}，fit=false。"
             "事件 payload 中包含 boundary_flow 和 forecast_trigger。"
             "只有当 forecast_trigger.should_run_forecast 为 true，且你判断确需推演时，才调用 run_flood_forecast，forecast_id 使用 latest。"
             "禁止调用 run_emergency_cycle；影响评估和防洪响应预案仍然切断。"
-            "请用简短结论说明：边界流量峰值、规则建议、是否调用了预测模型。"
+            "请用简短结论说明四边界流量峰值，以及是否调用了预测模型。"
             "原始事件如下：\n"
             f"{json.dumps(event, ensure_ascii=False, indent=2)}"
         )
@@ -909,17 +915,14 @@ class EventRuntime:
         boundary_flow = payload.get("boundary_flow") or {}
         should_run = bool(trigger.get("should_run_forecast"))
         if self.app.agent:
-            detail = "智能体接收边界流量事件；LLM 可调用地图工具，并依据四边界流量判断是否调用 run_flood_forecast。"
+            detail = "智能体接收四边界流量数据。"
         else:
-            detail = "未启用 LLM，按四边界流量规则决定是否启动水动力模型。"
+            detail = "未启用 LLM，已接收四边界流量数据。"
         return {
             "type": "agent_trace",
             "tag": "SYSTEM",
-            "label": "领域规则提示",
-            "detail": (
-                f"{detail} {boundary_flow_detail(boundary_flow)}；"
-                f"规则建议={trigger.get('decision', 'unknown')}，原因={trigger.get('reason', '')}"
-            ),
+            "label": "四边界流量数据",
+            "detail": f"{detail} {boundary_flow_detail(boundary_flow)}",
             "should_run_model": should_run,
             "severity": event.get("severity", "warning"),
         }
@@ -966,19 +969,13 @@ def boundary_flow_detail(summary: dict[str, Any]) -> str:
             parts.append(f"{item.get('label', key)}峰值 {format_float(item.get('peak_flow_m3s'), 2)} m³/s")
     return (
         f"{summary.get('boundary_flow_id')}: "
-        f"模板={summary.get('template_scenario_id')}，"
-        f"flow_index={format_float(summary.get('flow_index'), 2)}；"
         + "，".join(parts)
     )
 
 
 def boundary_flow_event_detail(event: dict[str, Any]) -> str:
     payload = event.get("payload") or {}
-    trigger = payload.get("forecast_trigger") or {}
-    return (
-        f"{boundary_flow_detail(payload.get('boundary_flow') or {})}；"
-        f"规则建议={trigger.get('decision', 'unknown')}"
-    )
+    return boundary_flow_detail(payload.get("boundary_flow") or {})
 
 
 def forecast_was_skipped(result: dict[str, Any]) -> bool:

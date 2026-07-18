@@ -394,14 +394,25 @@ function startAutonomyStream() {
   es.addEventListener("runtime_status", (event) => {
     const data = parseEvent(event);
     if (["等待水文事件", "等待边界流量事件", "等待启动 mock 服务"].includes(data.label)) return;
-    if (data.label === "边界流量 mock 服务已启动") setMockButtonState(true);
-    if (data.label === "边界流量 mock 服务已停止") setMockButtonState(false);
+    if (data.status === "running" || data.label === "边界流量 mock 服务已启动") setMockButtonState(true);
+    if (["stopped", "finished"].includes(data.status) || data.label === "边界流量 mock 服务已停止") {
+      setMockButtonState(false);
+    }
     addTrace("AUTO", data.label || "事件运行时", data.detail || "");
   });
 
   es.addEventListener("domain_event", (event) => {
     const data = parseEvent(event);
     renderDomainEvent(data);
+  });
+
+  es.addEventListener("boundary_flow_data", (event) => {
+    const data = parseEvent(event);
+    const domainEvent = data.event || {};
+    addTrace("FLOW", data.label || "四边界流量数据", data.detail || eventDetail(domainEvent));
+    if (domainEvent.event_type === "BoundaryFlowSeriesGenerated") {
+      renderBoundaryFlowLayer(domainEvent).catch((error) => console.warn("boundary flow render failed", error));
+    }
   });
 
   es.addEventListener("agent_trace", (event) => {
@@ -453,7 +464,7 @@ async function toggleMockService() {
     addTrace(
       "AUTO",
       data.running ? "边界流量 mock 服务已启动" : "边界流量 mock 服务已停止",
-      data.running ? "后台开始每 15 秒生成四边界流量过程线。" : "后台已停止生成新的边界流量事件。",
+      data.running ? "后台开始生成四边界流量数据。" : "后台已停止生成新的边界流量数据。",
     );
   } catch (error) {
     addTrace("ERR", "mock 服务切换失败", error.message || String(error));
@@ -478,20 +489,17 @@ function setMockButtonState(running) {
 
 function renderDomainEvent(data) {
   if (!data || !data.event_type) return;
-  const tag = data.event_type === "BoundaryFlowSeriesGenerated" ? "FLOW" : (data.event_type === "HydroThresholdExceeded" ? "HYDRO" : "EVENT");
-  addTrace(tag, data.title || data.event_type, eventDetail(data));
+  const tag = data.event_type === "BoundaryFlowSeriesGenerated" ? "ALERT" : (data.event_type === "HydroThresholdExceeded" ? "HYDRO" : "EVENT");
+  const label = data.event_type === "BoundaryFlowSeriesGenerated" ? "警戒事件进入智能体" : (data.title || data.event_type);
+  addTrace(tag, label, eventDetail(data));
   setCyclePhase(eventPhase(data.event_type));
-  if (data.event_type === "BoundaryFlowSeriesGenerated") {
-    renderBoundaryFlowLayer(data).catch((error) => console.warn("boundary flow render failed", error));
-  }
 }
 
 function eventDetail(data) {
   const payload = data.payload || {};
   if (data.event_type === "BoundaryFlowSeriesGenerated") {
     const flow = payload.boundary_flow || {};
-    const trigger = payload.forecast_trigger || {};
-    return `${boundaryFlowSummary(flow)}；规则建议 ${trigger.decision || "unknown"}`;
+    return boundaryFlowSummary(flow);
   }
   if (data.event_type === "HydroThresholdExceeded") {
     return `${payload.station_name || data.source_id}: ${payload.metric_label || payload.metric} ${payload.value} ${payload.unit} / 阈值 ${payload.threshold} ${payload.unit}`;
@@ -634,7 +642,7 @@ function boundaryFlowColor(key) {
 function boundaryFlowPopupHtml(item, flow) {
   return `
     <div class="popup-title">${escapeHtml(item.label || "边界流量")}</div>
-    <div class="popup-meta">过程线: ${escapeHtml(flow.boundary_flow_id || "")}</div>
+    <div class="popup-meta">数据编号: ${escapeHtml(flow.boundary_flow_id || "")}</div>
     <div class="popup-meta">峰值: ${escapeHtml(Number(item.peak_flow_m3s || 0).toFixed(2))} m³/s</div>
     <div class="popup-meta">均值: ${escapeHtml(Number(item.mean_flow_m3s || 0).toFixed(2))} m³/s</div>
   `;
@@ -1409,7 +1417,7 @@ function addTrace(tag, label, detail) {
 }
 
 function shouldHideAutonomyTrace(data = {}) {
-  return new Set(["EVENT", "RESULT", "SYSTEM", "CUT"]).has(data.tag);
+  return new Set(["CALL", "EVENT", "RESULT", "SYSTEM", "TEXT", "THINK", "CUT"]).has(data.tag);
 }
 
 function activateAgentPane(name) {

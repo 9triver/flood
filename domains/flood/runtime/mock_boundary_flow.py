@@ -85,35 +85,35 @@ class BoundaryFlowMockService:
                 template="twenty_year",
                 scale=0.035,
                 severity="normal",
-                title="四边界低流量过程线",
+                title="四边界流量数据",
             ),
             BoundaryFlowSample(
                 mode="dry",
                 template="twenty_year",
                 scale=0.04,
                 severity="normal",
-                title="四边界平稳低流量过程线",
+                title="四边界流量数据",
             ),
             BoundaryFlowSample(
-                mode="rising",
+                mode="dry",
                 template="twenty_year",
-                scale=0.72,
+                scale=0.12,
                 severity="watch",
-                title="四边界上涨流量过程线",
+                title="四边界流量数据",
             ),
             BoundaryFlowSample(
                 mode="flood",
                 template="five_year",
                 scale=0.9,
                 severity="warning",
-                title="四边界洪水流量过程线",
+                title="四边界流量数据",
             ),
             BoundaryFlowSample(
                 mode="flood",
                 template="ten_year",
                 scale=0.85,
                 severity="warning",
-                title="四边界强洪水流量过程线",
+                title="四边界流量数据",
             ),
         ]
 
@@ -229,7 +229,7 @@ def evaluate_forecast_trigger(boundary_flow: dict[str, Any]) -> dict[str, Any]:
         "should_run_forecast": should_run,
         "decision": "request_forecast" if should_run else "skip_dry_condition",
         "reason": (
-            "边界流量超过干态门槛且过程线有上涨特征。"
+            "边界流量超过干态门槛且上涨特征明显。"
             if should_run
             else "四边界峰值和上涨特征均不足以触发水动力模型。"
         ),
