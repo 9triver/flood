@@ -19,8 +19,8 @@ FORECAST_RUNS_PATH = FORECAST_DIR / "forecast_runs.jsonl"
 FORECAST_CELLS_PATH = FORECAST_DIR / "forecast_cells_latest.jsonl"
 FORECAST_CYCLE_PATH = FORECAST_DIR / "emergency_cycle_latest.json"
 HYDRODYNAMIC_FORECAST_DEPTH_PATH = DOMAIN_DATA_DIR / "hydrodynamic" / "forecasts" / "latest" / "max_depth.csv"
-SCENARIO_DEPTH_DIR = DOMAIN_DATA_DIR / "hydrodynamic" / "scenarios"
 LATEST_FORECAST_ID = "forecast_latest"
+FORECAST_SCHEMA_VERSION = 2
 
 
 MOCK_HYDROLOGY = {
@@ -108,7 +108,11 @@ def ensure_latest_forecast(resolver, force: bool = False) -> dict[str, Any]:
     if not force and FORECAST_RUNS_PATH.exists() and FORECAST_CELLS_PATH.exists():
         rows = read_jsonl(FORECAST_RUNS_PATH)
         latest_boundary_flow = read_latest_boundary_flow()
-        if rows and cached_forecast_matches_boundary_flow(rows[-1], latest_boundary_flow):
+        if (
+            rows
+            and rows[-1].get("schema_version") == FORECAST_SCHEMA_VERSION
+            and cached_forecast_matches_boundary_flow(rows[-1], latest_boundary_flow)
+        ):
             return rows[-1]
 
     FORECAST_DIR.mkdir(parents=True, exist_ok=True)
@@ -141,6 +145,7 @@ def generate_forecast(resolver) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         generated_at = datetime.now(timezone.utc).isoformat()
         write_hydrodynamic_depth_csv({}, HYDRODYNAMIC_FORECAST_DEPTH_PATH)
         run = {
+            "schema_version": FORECAST_SCHEMA_VERSION,
             "forecast_id": LATEST_FORECAST_ID,
             "name": "珊瑚河实时预测演算",
             "status": "skipped_no_boundary_flow",
@@ -148,7 +153,7 @@ def generate_forecast(resolver) -> tuple[dict[str, Any], list[dict[str, Any]]]:
             "model_description": "缺少最新四边界流量过程线，本轮不运行 CNN_V2。",
             "generated_at": generated_at,
             "lead_time_h": 0.0,
-            "mesh_source_scenario_id": "",
+            "mesh_source_id": "",
             "mesh_source_path": "",
             "hydrology_inputs": "{}",
             "forcing_index": 0.0,
@@ -166,6 +171,7 @@ def generate_forecast(resolver) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         generated_at = datetime.now(timezone.utc).isoformat()
         write_hydrodynamic_depth_csv({}, HYDRODYNAMIC_FORECAST_DEPTH_PATH)
         run = {
+            "schema_version": FORECAST_SCHEMA_VERSION,
             "forecast_id": LATEST_FORECAST_ID,
             "name": "珊瑚河实时预测演算",
             "status": "skipped_dry_condition",
@@ -173,7 +179,7 @@ def generate_forecast(resolver) -> tuple[dict[str, Any], list[dict[str, Any]]]:
             "model_description": "领域规则判断四边界流量未达到水动力模型触发条件，本轮不运行 CNN。",
             "generated_at": generated_at,
             "lead_time_h": 0.0,
-            "mesh_source_scenario_id": "",
+            "mesh_source_id": "",
             "mesh_source_path": "",
             "hydrology_inputs": json.dumps(boundary_flow.get("summary") if boundary_flow else {}, ensure_ascii=False),
             "forcing_index": 0.0,
@@ -193,6 +199,7 @@ def generate_forecast(resolver) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     if cnn_result.get("error"):
         write_hydrodynamic_depth_csv({}, HYDRODYNAMIC_FORECAST_DEPTH_PATH)
         run = {
+            "schema_version": FORECAST_SCHEMA_VERSION,
             "forecast_id": LATEST_FORECAST_ID,
             "name": "珊瑚河实时预测演算",
             "status": "failed",
@@ -200,7 +207,7 @@ def generate_forecast(resolver) -> tuple[dict[str, Any], list[dict[str, Any]]]:
             "model_description": str(cnn_result.get("error") or "CNN_V2 prediction failed"),
             "generated_at": generated_at,
             "lead_time_h": 0.0,
-            "mesh_source_scenario_id": "cnn_v2_gt",
+            "mesh_source_id": "cnn_v2_gt",
             "mesh_source_path": rel(GRID_PATH),
             "hydrology_inputs": json.dumps(hydrology_inputs, ensure_ascii=False),
             "boundary_flow": json.dumps(boundary_flow.get("summary") if boundary_flow else {}, ensure_ascii=False),
@@ -221,6 +228,7 @@ def generate_forecast(resolver) -> tuple[dict[str, Any], list[dict[str, Any]]]:
 
     total_area_km2 = sum(float(row.get("area_m2") or 0) for row in cells) / 1_000_000
     run = {
+        "schema_version": FORECAST_SCHEMA_VERSION,
         "forecast_id": LATEST_FORECAST_ID,
         "name": "珊瑚河实时预测演算",
         "status": "completed",
@@ -228,7 +236,7 @@ def generate_forecast(resolver) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         "model_description": cnn_result.get("model_description", "CNN_V2 水动力模型预测。"),
         "generated_at": generated_at,
         "lead_time_h": 3.0,
-        "mesh_source_scenario_id": "cnn_v2_gt",
+        "mesh_source_id": "cnn_v2_gt",
         "mesh_source_path": rel(GRID_PATH),
         "hydrology_inputs": json.dumps(hydrology_inputs, ensure_ascii=False),
         "boundary_flow": json.dumps(boundary_flow.get("summary") if boundary_flow else {}, ensure_ascii=False),
@@ -309,7 +317,7 @@ def forecast_cells_from_hydrodynamic_mesh(depths: dict[int, float],
                 "forecast_id": LATEST_FORECAST_ID,
                 "model_name": "FLOOD_CNN_V2",
                 "mesh_cell_id": str(mesh_cell_id),
-                "mesh_source_scenario_id": "cnn_v2_gt",
+                "mesh_source_id": "cnn_v2_gt",
                 "lead_time_h": 3.0,
                 "centroid_lon": round(centroid[0], 7),
                 "centroid_lat": round(centroid[1], 7),
@@ -343,32 +351,6 @@ def triangle_area_m2(points: list[list[float]]) -> float:
     return abs((x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1)) / 2
 
 
-def write_mock_hydrodynamic_depths(boundary_flow: dict[str, Any] | None,
-                                   forcing: float) -> dict[str, Any]:
-    summary = (boundary_flow or {}).get("summary") or {}
-    scenario_id = str(summary.get("template_scenario_id") or "45050092hsfx0003")
-    base_path = SCENARIO_DEPTH_DIR / f"{scenario_id}_max_depth.csv"
-    if not base_path.exists():
-        write_hydrodynamic_depth_csv({}, HYDRODYNAMIC_FORECAST_DEPTH_PATH)
-        return {"depth_count": 0, "flooded_count": 0, "max_depth_m": 0.0}
-    flow_index_value = float(summary.get("flow_index") or 1.0)
-    scale = max(0.05, min(2.2, 0.32 + forcing * 0.34 + flow_index_value * 0.08))
-    depths: dict[int, float] = {}
-    with base_path.open(newline="", encoding="utf-8") as file:
-        reader = csv.DictReader(file)
-        for row in reader:
-            depth = float(row.get("max_depth") or row.get("max_depth_m") or 0)
-            adjusted = round(max(0.0, depth * scale), 6)
-            if adjusted > 0:
-                depths[int(row["cell_id"])] = adjusted
-    write_hydrodynamic_depth_csv(depths, HYDRODYNAMIC_FORECAST_DEPTH_PATH)
-    return {
-        "depth_count": len(depths),
-        "flooded_count": sum(1 for depth in depths.values() if depth > 0),
-        "max_depth_m": max(depths.values(), default=0.0),
-    }
-
-
 def write_hydrodynamic_depth_csv(depths: dict[int, float], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as file:
@@ -376,18 +358,6 @@ def write_hydrodynamic_depth_csv(depths: dict[int, float], path: Path) -> None:
         writer.writeheader()
         for cell_id, depth in sorted(depths.items()):
             writer.writerow({"cell_id": cell_id, "max_depth": depth})
-
-
-def predicted_depth(base: dict[str, Any], distance_m: float,
-                    along_ratio: float, forcing: float) -> float:
-    ground = float(base.get("ground_elevation_m") or 0)
-    terrain = max(0.0, min(1.0, (206.0 - ground) / 26.0)) if ground else 0.35
-    channel_attenuation = math.exp(-distance_m / 540.0)
-    along_wave = 0.72 + 0.28 * math.sin(math.pi * max(0.0, min(1.0, along_ratio)))
-    hydraulic_head = 0.18 + 1.72 * forcing * channel_attenuation * along_wave + 0.42 * terrain
-    lateral_loss = distance_m / 1250.0
-    return round(max(0.0, hydraulic_head - lateral_loss), 3)
-
 
 def forcing_index(inputs: dict[str, float]) -> float:
     rain_term = inputs["observed_rainfall_6h_mm"] / 140.0 * 0.48

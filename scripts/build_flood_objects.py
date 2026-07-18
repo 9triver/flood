@@ -31,8 +31,6 @@ OBJECT_TYPES = [
     "Place",
     "Transfer",
     "Route",
-    "Scenario",
-    "Impact",
     "Risk",
     "HydroStation",
     "HydroObservation",
@@ -51,9 +49,7 @@ def build_objects(force: bool = False) -> dict:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source_data": str(DATA_DIR.relative_to(PROJECT_DIR)),
         "object_types": {},
-        "notes": [
-            "Cell inundation geometries are intentionally not materialized as JSONL; they remain scenario spatial sources exported on demand.",
-        ],
+        "notes": [],
     }
 
     for object_type in OBJECT_TYPES:

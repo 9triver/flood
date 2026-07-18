@@ -383,7 +383,7 @@ class EventRuntime:
             "请按领域工具自身的语义说明调用可用函数完成对象影响分析，不要自行猜测受淹对象。"
             "如果你认为该淹没事件需要在 GIS 上展示，必须调用 ui_show_objects 显示预测淹没结果，"
             "对象使用 HydrodynamicCell，filters 使用 {\"forecast_id\":\"latest\"}，fit=false，refresh=true；地图工具会拆成显示网格和应用水深结果。"
-            "禁止调用 run_emergency_cycle、analyze_risks 或 plan_response；防洪响应预案仍然切断。"
+            "禁止调用 run_emergency_cycle；防洪响应预案仍然切断。"
             "请用简短结论说明：预测运行、淹没面积、最大水深、影响分析结果，以及是否已请求地图展示。"
             "原始事件如下：\n"
             f"{json.dumps(event, ensure_ascii=False, indent=2)}"

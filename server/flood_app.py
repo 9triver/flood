@@ -23,7 +23,9 @@ from oag.ontology.loader import load_domain  # noqa: E402
 from oag.runtime import HarnessConfig  # noqa: E402
 from oag.runtime.events import event_to_dict  # noqa: E402
 from oag.runtime.hooks import HookResult  # noqa: E402
+from domains.flood.runtime.geojson import export_objects_geojson  # noqa: E402
 from domains.flood.runtime.hydrodynamic_grid import hydrodynamic_grid_stats, hydrodynamic_grid_tile  # noqa: E402
+from domains.flood.runtime.tools import list_mappable_objects  # noqa: E402
 
 
 ID_FIELDS = {
@@ -42,12 +44,10 @@ ID_FIELDS = {
     "Place": "place_id",
     "Transfer": "transfer_id",
     "Route": "route_id",
-    "Scenario": "scenario_id",
     "Risk": "risk_id",
     "HydroStation": "station_id",
     "HydroObservation": "observation_id",
     "HistoricalFloodMark": "mark_id",
-    "Cell": "cell_id",
     "ForecastRun": "forecast_id",
     "ForecastCell": "forecast_cell_id",
     "HydrodynamicCell": "hydrodynamic_cell_id",
@@ -75,7 +75,6 @@ class FloodApp:
         self.llm_client = self._build_llm_client()
         self.ontology, self.repository, self.registry = load_domain(DOMAIN_DIR)
         self.resolver = self.registry.get_resolver("flood_repository")
-        self.scenarios = self.registry.call("list_scenarios")
         self._pending_map_events: dict[str, list[dict[str, Any]]] = {}
         self._pending_map_events_lock = threading.Lock()
         self._pending_forecast_results: dict[str, list[dict[str, Any]]] = {}
@@ -94,7 +93,7 @@ class FloodApp:
         )
 
     def bootstrap(self) -> dict:
-        mappable = self.registry.call("list_mappable_objects")
+        mappable = list_mappable_objects(self.resolver)
         return {
             "domain": self.ontology.name,
             "title": "珊瑚河洪水应急预警智能体",
@@ -117,13 +116,7 @@ class FloodApp:
     def export_geojson(self, object_type: str, filters: dict,
                        simplify: float = 0) -> tuple[dict, bytes]:
         with self._export_lock:
-            result = self.registry.call(
-                "export_objects_geojson",
-                object_type=object_type,
-                filters=filters,
-                simplify_tolerance=simplify,
-                force=False,
-            )
+            result = export_objects_geojson(self.resolver, object_type, filters, simplify, force=False)
             if "error" in result:
                 raise ValueError(result["error"])
             path = Path(result["absolute_path"])
@@ -226,18 +219,17 @@ class FloodApp:
                 append_system_prompt=(
                     "你服务于一个以珊瑚河流域 GIS 为中心的前端。"
                     "回答用户时优先调用领域对象查询和领域函数获取事实。"
-                    "不要让用户通过情景切换控件操作；如果需要其他情景，请让用户直接在对话中指定。"
+                    "当前系统只展示实时预测结果，不提供设计洪水方案切换。"
                     "当用户要求在地图上显示、打开、绘制、加载、叠加、缩放、聚焦或清空对象时，"
                     "必须调用 ui_show_objects、ui_show_event_marker、ui_focus_object 或 ui_clear_map，让前端执行地图动作；"
                     "当用户要求清除、不显示或隐藏淹没范围、预测淹没结果、水动力结果时，调用 ui_clear_map 并传 target=inundation；这只移除淹没结果，不改变地图视野。"
                     "不要只用文字说明将要显示什么。"
                     "当用户要求基于预测淹没范围判断学校、医院、道路、桥梁、转移路线或安置点是否受影响时，"
                     "必须调用 analyze_inundation_impacts；不要自行猜测对象级受淹结论。"
-                    "当前 analyze_risks/plan_response/generate_brief 可能尚未实现；如工具返回 not_implemented，必须如实说明。"
                     "当用户要求运行预测、实时预测或未来淹没时，先调用 run_flood_forecast，再调用 ui_show_objects；地图工具会先显示水动力网格，再应用 forecast_id=latest 的水深结果。"
                     "当用户要求自主观测、持续预测、自动告警、闭环调度或避洪转移调度时，调用 run_emergency_cycle，"
                     "再用 ui_show_objects 展示 HydrodynamicCell、Risk、Transfer、Place、Route 等对象。"
-                    "预测淹没地图展示必须分解为显示水动力网格和应用 forecast_id=latest 的水深结果；不要把 severity_index 或综合指标映射到 5/10/20/50/100 年一遇情景。"
+                    "预测淹没地图展示必须分解为显示水动力网格和应用 forecast_id=latest 的水深结果；不要把 severity_index 或综合指标映射到 5/10/20/50/100 年一遇设计方案。"
                     "对象级受淹判定必须来自 analyze_inundation_impacts 的返回结果；防洪响应预案仍需通过已实现工具或人工审批。"
                 ),
             ),

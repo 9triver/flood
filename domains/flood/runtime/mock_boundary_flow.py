@@ -27,28 +27,28 @@ BOUNDARIES = {
 
 TRAINING_TEMPLATES = {
     "twenty_year": {
-        "scenario_id": "45050092hsfx0001",
-        "return_period_year": 20,
+        "template_dir": "45050092hsfx0001",
+        "template_label": "校核后-20",
         "prefix": "校核后-20",
     },
     "ten_year": {
-        "scenario_id": "45050092hsfx0002",
-        "return_period_year": 10,
+        "template_dir": "45050092hsfx0002",
+        "template_label": "校核后-10",
         "prefix": "校核后-10",
     },
     "five_year": {
-        "scenario_id": "45050092hsfx0003",
-        "return_period_year": 5,
+        "template_dir": "45050092hsfx0003",
+        "template_label": "校核后-5",
         "prefix": "校核后-5",
     },
     "two_year": {
-        "scenario_id": "45050092hsfx0004",
-        "return_period_year": 2,
+        "template_dir": "45050092hsfx0004",
+        "template_label": "校核后-2",
         "prefix": "校核后-2",
     },
     "check_flood": {
-        "scenario_id": "45050092hsfx0005",
-        "return_period_year": 1,
+        "template_dir": "45050092hsfx0005",
+        "template_label": "校核后-1",
         "prefix": "校核后-1",
     },
 }
@@ -184,8 +184,7 @@ def generate_boundary_flow_series(observation: dict[str, Any]) -> dict[str, Any]
         "boundary_flow_id": series_id,
         "mode": mode,
         "template_key": template_key,
-        "template_scenario_id": template["scenario_id"],
-        "template_return_period_year": template["return_period_year"],
+        "template_label": template["template_label"],
         "scale": round(scale, 4),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "boundaries": boundaries,
@@ -249,7 +248,7 @@ def read_latest_boundary_flow() -> dict[str, Any] | None:
 
 
 def load_template_rows(template: dict[str, Any], label: str) -> list[dict[str, float]]:
-    path = TRAIN_DIR / template["scenario_id"] / f"{template['prefix']}-{label}.csv"
+    path = TRAIN_DIR / template["template_dir"] / f"{template['prefix']}-{label}.csv"
     if not path.exists():
         return [{"time_s": float(index * 3600), "flow_m3s": 0.0} for index in range(25)]
     rows = []

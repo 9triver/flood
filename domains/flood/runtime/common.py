@@ -32,8 +32,6 @@ OBJECT_LIBRARY_FILES = {
     "Place": "place.jsonl",
     "Transfer": "transfer.jsonl",
     "Route": "route.jsonl",
-    "Scenario": "scenario.jsonl",
-    "Impact": "impact.jsonl",
     "Risk": "risk.jsonl",
     "HydroStation": "hydro_station.jsonl",
     "HydroObservation": "hydro_observation.jsonl",
@@ -132,16 +130,6 @@ MAPPABLE_OBJECTS = {
         "role": "hydrology",
         "style": {"type": "circle", "color": "#be123c", "radius": 4, "stroke": "#ffffff"},
     },
-    "Cell": {
-        "label": "洪水计算单元",
-        "role": "scenario",
-        "style": {"type": "fill", "fillColor": "#4292c6", "fillOpacity": 0.35, "color": "#4292c6", "weight": 0.5},
-    },
-    "ForecastCell": {
-        "label": "预测淹没单元",
-        "role": "forecast",
-        "style": {"type": "fill", "fillColor": "#7c3aed", "fillOpacity": 0.34, "color": "#7c3aed", "weight": 0.5},
-    },
     "HydrodynamicCell": {
         "label": "水动力模型网格",
         "role": "forecast",
@@ -216,8 +204,6 @@ def id_field(object_type: str) -> str:
         "Place": "place_id",
         "Transfer": "transfer_id",
         "Route": "route_id",
-        "Scenario": "scenario_id",
-        "Impact": "impact_id",
         "Risk": "risk_id",
         "HydroStation": "station_id",
         "HydroObservation": "observation_id",
@@ -235,26 +221,3 @@ def rel(path: Path | str) -> str:
         return str(path.resolve().relative_to(PROJECT_DIR.resolve()))
     except ValueError:
         return str(path)
-
-
-def as_float(value: Any) -> float:
-    if value in (None, ""):
-        return 0.0
-    return float(value)
-
-
-def first_non_empty(values: dict, *keys: str) -> Any:
-    for key in keys:
-        value = values.get(key)
-        if value not in (None, "", [], {}, "null"):
-            return value
-    return None
-
-
-def code(value: Any) -> str:
-    if value in (None, ""):
-        return ""
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))
-    text = str(value)
-    return text[:-2] if text.endswith(".0") else text

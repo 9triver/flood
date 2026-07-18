@@ -14,15 +14,6 @@ from .runtime.common import DATA_DIR, OBJECTS_DIR, PROJECT_DIR, SOURCES_DIR, rel
 from .runtime.repository import object_library_path
 
 
-SCENARIO_CODE_ALIASES = {
-    "45050092shh0001": "45050092hsfx0001",
-    "45050092shh0002": "45050092hsfx0002",
-    "45050092shh0003": "45050092hsfx0003",
-    "45050092shh0004": "45050092hsfx0004",
-    "45050092shh0005": "45050092hsfx0005",
-}
-
-
 class FloodObjectBuilder:
     def __init__(self):
         self._cache: dict[str, list[dict]] = {}
@@ -362,51 +353,6 @@ class FloodObjectBuilder:
         path = DATA_DIR / "8.避洪转移/转移路线.shp"
         return [_route_record(i, feature, path) for i, feature in enumerate(_features(path), 1)]
 
-    def _build_scenario(self) -> list[dict]:
-        path = DATA_DIR / "6.淹没图层/方案说明内容_河流.xlsx"
-        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-        ws = wb[wb.sheetnames[0]]
-        rows = []
-        for row in ws.iter_rows(min_row=2, values_only=True):
-            _, _, scenario_id, name, description, summary = row[:6]
-            if not scenario_id:
-                continue
-            rows.append({
-                "scenario_id": str(scenario_id),
-                "river_id": "shanhu",
-                "name": str(name or ""),
-                "return_period_year": _return_period(name or summary or description),
-                "summary": str(summary or ""),
-                "description": str(description or ""),
-                "data_path": rel(DATA_DIR / f"6.淹没图层/45050092_珊瑚河/{scenario_id}.shp"),
-            })
-        wb.close()
-        return rows
-
-    def _build_impact(self) -> list[dict]:
-        path = DATA_DIR / "7.灾前&灾损数据/45050092_洪水影响分析与损失评估结果表.xlsx"
-        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-        ws = wb[wb.sheetnames[0]]
-        rows = []
-        for row in ws.iter_rows(min_row=2, values_only=True):
-            if not row or not row[0]:
-                continue
-            raw_id = str(row[0])
-            scenario_id = SCENARIO_CODE_ALIASES.get(raw_id, raw_id)
-            rows.append({
-                "impact_id": f"impact_{scenario_id}",
-                "scenario_id": scenario_id,
-                "inundated_area_km2": _float(row[1]),
-                "inundated_building_10k_m2": _float(row[2]),
-                "inundated_farmland_ha": _float(row[3]),
-                "inundated_road_km": _float(row[4]),
-                "affected_population_10k": _float(row[5]),
-                "affected_gdp_10k_cny": _float(row[6]),
-                "direct_loss_10k_cny": _float(row[7]),
-            })
-        wb.close()
-        return rows
-
     def _build_risk(self) -> list[dict]:
         path = DATA_DIR / "危险区-珊瑚河流域/危险区-珊瑚河流域.dbf"
         if not path.exists():
@@ -421,7 +367,6 @@ class FloodObjectBuilder:
             geometry = {"type": "Point", "coordinates": [lon, lat]} if lon and lat else {}
             rows.append({
                 "risk_id": f"danger_area_{risk_id}",
-                "scenario_id": "",
                 "target_type": "Settlement",
                 "target_id": village_code or risk_id,
                 "name": village,
@@ -681,19 +626,13 @@ class FloodObjectBuilder:
         ws = wb[wb.sheetnames[0]]
         rows = []
         periods = [100, 50, 20, 10, 5]
-        scenario_by_period = {
-            row["return_period_year"]: row["scenario_id"]
-            for row in self.build("Scenario")
-            if row.get("return_period_year")
-        }
         for r in range(4, 7):
             duration = _duration_hours(ws.cell(r, 1).value)
             for idx, period in enumerate(periods, start=5):
                 rows.append({
                     "hydrology_id": f"rain_{duration:g}h_{period}a",
                     "river_id": "shanhu",
-                    "scenario_id": scenario_by_period.get(period, ""),
-                    "return_period_year": period,
+                    "design_frequency_year": period,
                     "duration_h": duration,
                     "design_rainfall_mm": _float(ws.cell(r, idx).value),
                     "source": "珊瑚河水文分析结果.xlsx: 设计暴雨",
@@ -704,8 +643,7 @@ class FloodObjectBuilder:
             rows.append({
                 "hydrology_id": f"flood_peak_{period}a",
                 "river_id": "shanhu",
-                "scenario_id": scenario_by_period.get(period, ""),
-                "return_period_year": period,
+                "design_frequency_year": period,
                 "peak_inflow_m3s": _float(peak),
                 "max_discharge_m3s": _float(discharge),
                 "source": "珊瑚河水文分析结果.xlsx: 设计洪水",
@@ -1692,11 +1630,6 @@ def _float(value: Any) -> float:
     if value in (None, ""):
         return 0.0
     return float(value)
-
-
-def _return_period(value: Any) -> int:
-    match = re.search(r"(\d+)\s*(?:a|年)", str(value))
-    return int(match.group(1)) if match else 0
 
 
 def _duration_hours(value: Any) -> float:

@@ -1,5 +1,5 @@
 name: flood
-description: "水库下游洪水、道路桥梁、重要设施与避洪转移联动分析领域。面向珊瑚河数据，回答不同洪水情景下哪些道路、桥梁、设施、转移路线和安置对象受影响，以及应采取哪些封控、撤离、绕行和简报建议。"
+description: "水库下游洪水、道路桥梁、重要设施与避洪转移联动分析领域。面向珊瑚河数据，回答洪水事件中哪些道路、桥梁、设施、转移路线和安置对象受影响，以及应采取哪些封控、撤离、绕行和简报建议。"
 tool_preferences:
   generic_search: fallback_only
 
@@ -13,20 +13,13 @@ objects:
       resolver: flood_repository
       id_field: river_id
     summary: "河流主体"
-    description: "River 表达珊瑚河这个河流主体，是水文、洪水情景、水利工程和流域对象的关联中心；River 可携带本地河道中心线 geometry 用于前端绘制。流域范围由 Watershed 表达，OSM 候选水系由 Waterway 表达。"
+    description: "River 表达珊瑚河这个河流主体，是水文、洪水过程、水利工程和流域对象的关联中心。流域范围由 Watershed 表达，水系线段由 Waterway 表达。"
     properties:
       river_id: {type: str, required: true, description: "河流编号，如 shanhu"}
       name: {type: str, description: "河流名称"}
       water_system: {type: str, description: "所属水系"}
       watershed_id: {type: str, description: "默认关联的流域编号"}
       watershed_name: {type: str, description: "默认关联的流域名称"}
-      geometry_source: {type: str, description: "河流 geometry 来源，如 local_river_centerline"}
-      source_crs: {type: str, description: "源空间数据坐标系"}
-      geometry_crs: {type: str, description: "当前 geometry 坐标系，前端绘制统一为 EPSG:4326"}
-      geometry_type: {type: str, description: "GeoJSON 几何类型"}
-      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
-      data_path: {type: str, description: "对应空间数据路径"}
-      data_note: {type: str, description: "关于河流数据来源或缺失情况的说明"}
 
   Watershed:
     kind: entity
@@ -37,18 +30,13 @@ objects:
       resolver: flood_repository
       id_field: watershed_id
     summary: "河流流域范围"
-    description: "Watershed 表达珊瑚河流域边界面及相关小流域面，是 GIS 基础范围对象；它不是河流主体，也不是河道线。"
+    description: "Watershed 表达珊瑚河流域范围及相关小流域，是河流、行政区、水系和风险对象的空间语义范围。"
     properties:
       watershed_id: {type: str, required: true, description: "流域编号，如 shanhu_watershed"}
       river_id: {type: str, description: "所属河流编号"}
       name: {type: str, description: "流域名称"}
       watershed_type: {type: str, description: "流域类型，如 flood_risk_basin/small_watershed"}
       area_km2: {type: float, description: "流域面积，若数据可得"}
-      source_crs: {type: str, description: "源空间数据坐标系"}
-      geometry_crs: {type: str, description: "当前 geometry 坐标系，前端绘制统一为 EPSG:4326"}
-      geometry_type: {type: str, description: "GeoJSON 几何类型"}
-      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
-      data_path: {type: str, description: "对应空间数据路径"}
 
   Waterway:
     kind: entity
@@ -59,24 +47,16 @@ objects:
       resolver: flood_repository
       id_field: waterway_id
     summary: "河道或水系线"
-    description: "Waterway 表达可在 GIS 中绘制的河道、水系线段。当前 OSM 未检索到命名为珊瑚河/Shanhu River 的水系主体，因此以流域内相交的 OSM waterway way 作为候选河道对象，并保留候选状态。"
+    description: "Waterway 表达流域内河道、水系线段，用于说明河流网络、支流和边界入流关系。"
     properties:
-      waterway_id: {type: str, required: true, description: "水系线对象ID，如 osm_way_258641158"}
+      waterway_id: {type: str, required: true, description: "水系线对象ID，如 waterway_001"}
       river_id: {type: str, description: "所属河流编号"}
       watershed_id: {type: str, description: "所属流域编号"}
-      name: {type: str, description: "OSM 名称，未命名则为空"}
-      waterway_type: {type: str, description: "OSM waterway 类型，如 river/stream"}
-      osm_type: {type: str, description: "OSM 元素类型"}
-      osm_id: {type: str, description: "OSM way ID"}
-      source: {type: str, description: "数据来源"}
-      osm_source: {type: str, description: "OSM 标签中的 source"}
+      name: {type: str, description: "水系名称，未命名则为空"}
+      waterway_type: {type: str, description: "水系类型，如 river/stream"}
       length_m: {type: float, description: "线对象长度，米"}
       inside_basin_length_m: {type: float, description: "估算位于流域内的线段长度，米"}
       inside_basin_ratio: {type: float, description: "估算位于流域内的长度占比"}
-      candidate_status: {type: str, description: "候选状态，如 osm_unnamed_candidate/osm_named_neighbor"}
-      geometry_type: {type: str, description: "GeoJSON 几何类型"}
-      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
-      data_path: {type: str, description: "缓存的 OSM 原始响应路径"}
 
   HydrodynamicBoundary:
     kind: entity
@@ -87,7 +67,7 @@ objects:
       resolver: flood_repository
       id_field: boundary_id
     summary: "水动力模型边界和断面位置"
-    description: "表达水动力模型中上游入流、沿程入流、支流入流、下游水位边界以及断面位置。对象携带边界线或断面线 geometry，用于在 GIS 中解释模型输入边界与计算断面的空间位置。"
+    description: "表达水动力模型中上游入流、沿程入流、支流入流、下游水位边界以及断面位置，用于解释模型输入边界与计算断面的业务角色。"
     properties:
       boundary_id: {type: str, required: true, description: "水动力边界对象编号"}
       river_id: {type: str, description: "所属河流编号"}
@@ -95,19 +75,9 @@ objects:
       boundary_group: {type: str, description: "边界分组: upstream/interval1/interval2/tonggu/waterlevel"}
       boundary_type: {type: str, description: "原始边界类型或水动力输入类型"}
       boundary_role: {type: str, description: "业务角色: upstream_inflow/lateral_inflow/tributary_inflow/downstream_water_level"}
-      display_role: {type: str, description: "地图展示角色: model_input_boundary/auxiliary_boundary"}
       is_model_input_boundary: {type: bool, description: "是否为 CNN 水动力模型的 4 个流量输入边界之一"}
-      source_layer: {type: str, description: "来源层: section_position/verified_boundary"}
       section_code: {type: str, description: "断面编号，若来源为断面位置"}
       flow_node: {type: str, description: "水动力模型 FlowNode 编号，若源数据提供"}
-      data_type: {type: str, description: "水动力边界 DataType，若源数据提供"}
-      type_desc: {type: str, description: "水动力边界类型说明，若源数据提供"}
-      point_count: {type: int, description: "边界点数，若源数据提供"}
-      source_crs: {type: str, description: "源空间数据坐标系"}
-      geometry_crs: {type: str, description: "当前 geometry 坐标系，前端绘制统一为 EPSG:4326"}
-      geometry_type: {type: str, description: "GeoJSON 几何类型"}
-      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
-      data_path: {type: str, description: "对应空间数据路径"}
 
   County:
     kind: entity
@@ -118,15 +88,12 @@ objects:
       resolver: flood_repository
       id_field: county_id
     summary: "县级行政区"
-    description: "县界图层表达的是 County 的县级行政边界，领域分析时以县为行政责任和统计单元。"
+    description: "County 表达县级行政区，领域分析时以县为行政责任和统计单元。"
     properties:
       county_id: {type: str, required: true, description: "县级行政区编码"}
       river_id: {type: str, description: "关联河流编号，当前用于表达珊瑚河流域涉及的县"}
       name: {type: str, description: "县名"}
       adcode: {type: str, description: "行政区划代码"}
-      geometry_type: {type: str, description: "GeoJSON 几何类型"}
-      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
-      data_path: {type: str, description: "县界空间数据路径"}
 
   Town:
     kind: entity
@@ -149,11 +116,6 @@ objects:
       housing_property_10k_cny: {type: float, description: "居民房屋及室内财产，万元"}
       transport_industry_10k_cny: {type: float, description: "交通运输业产值，万元"}
       commerce_10k_cny: {type: float, description: "商贸服务业产值，万元"}
-      geometry_type: {type: str, description: "GeoJSON 几何类型"}
-      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
-      geometry_crs: {type: str, description: "几何坐标系，当前为 EPSG:4326"}
-      geometry_source: {type: str, description: "乡镇边界来源"}
-      data_path: {type: str, description: "乡镇边界源数据路径"}
 
   Reservoir:
     kind: entity
@@ -164,7 +126,7 @@ objects:
       resolver: flood_repository
       id_field: reservoir_id
     summary: "水库工程"
-    description: "水库对象承接下游洪水来源、调度情景和工程台账信息。"
+    description: "水库对象承接下游洪水来源、调度过程和工程台账信息。"
     properties:
       reservoir_id: {type: str, required: true, description: "水库编号"}
       name: {type: str, description: "水库名称"}
@@ -179,22 +141,6 @@ objects:
       safety_status: {type: str, description: "安全状态或安全类别"}
       longitude: {type: float, description: "经度"}
       latitude: {type: float, description: "纬度"}
-      geometry_source: {type: str, description: "当前 geometry 来源: local_inventory/osm_reservoir_area/hydrolakes_reservoir_area/esa_worldcover_water_area/local_inventory_with_osm_dam_match"}
-      osm_match_status: {type: str, description: "OSM 匹配状态: unmatched/matched_by_osm_id/matched_by_name/matched_by_distance"}
-      osm_ref: {type: str, description: "匹配到的 OSM 元素引用，如 relation/11580522"}
-      osm_name: {type: str, description: "OSM 名称"}
-      osm_water_feature: {type: str, description: "OSM 特征类型: reservoir_area/dam"}
-      osm_distance_m: {type: float, description: "本地水库点与 OSM 元素中心距离"}
-      osm_tags: {type: str, description: "保留的 OSM 标签 JSON 字符串"}
-      osm_data_path: {type: str, description: "缓存的 OSM 原始响应路径"}
-      external_geometry_source: {type: str, description: "外部几何来源，如 HydroLAKES"}
-      external_geometry_ref: {type: str, description: "外部几何引用，如 Hylak_id/1385651"}
-      external_geometry_distance_m: {type: float, description: "本地水库点到外部几何边界的距离"}
-      external_geometry_confidence: {type: str, description: "外部几何匹配置信度"}
-      external_geometry_area_km2: {type: float, description: "外部水体面积，平方千米"}
-      geometry_type: {type: str, description: "GeoJSON 几何类型"}
-      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
-      data_path: {type: str, description: "空间数据路径"}
 
   Sluice:
     kind: entity
@@ -217,17 +163,6 @@ objects:
       design_discharge_m3s: {type: float, description: "设计过闸流量或分泄流量"}
       longitude: {type: float, description: "经度"}
       latitude: {type: float, description: "纬度"}
-      geometry_source: {type: str, description: "当前 geometry 来源或 OSM 补充状态"}
-      osm_match_status: {type: str, description: "OSM 匹配状态: unmatched/matched_by_osm_id/matched_by_name/matched_by_distance"}
-      osm_ref: {type: str, description: "匹配到的 OSM 元素引用"}
-      osm_name: {type: str, description: "OSM 名称"}
-      osm_feature: {type: str, description: "OSM 特征类型"}
-      osm_distance_m: {type: float, description: "本地对象与 OSM 元素中心距离"}
-      osm_tags: {type: str, description: "保留的 OSM 标签 JSON 字符串"}
-      osm_data_path: {type: str, description: "缓存的 OSM 原始响应路径"}
-      geometry_type: {type: str, description: "GeoJSON 几何类型"}
-      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
-      data_path: {type: str, description: "空间数据路径"}
 
   HydraulicStructure:
     kind: entity
@@ -252,17 +187,6 @@ objects:
       flow_m3s: {type: float, description: "流量，适用于泵站/泄洪设施"}
       longitude: {type: float, description: "经度，点状设施或代表点"}
       latitude: {type: float, description: "纬度，点状设施或代表点"}
-      geometry_source: {type: str, description: "当前 geometry 来源或 OSM 补充状态"}
-      osm_match_status: {type: str, description: "OSM 匹配状态: unmatched/matched_by_osm_id/matched_by_name/matched_by_distance"}
-      osm_ref: {type: str, description: "匹配到的 OSM 元素引用"}
-      osm_name: {type: str, description: "OSM 名称"}
-      osm_feature: {type: str, description: "OSM 特征类型"}
-      osm_distance_m: {type: float, description: "本地对象与 OSM 元素中心距离"}
-      osm_tags: {type: str, description: "保留的 OSM 标签 JSON 字符串"}
-      osm_data_path: {type: str, description: "缓存的 OSM 原始响应路径"}
-      geometry_type: {type: str, description: "GeoJSON 几何类型"}
-      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
-      data_path: {type: str, description: "空间数据路径"}
 
 
   Road:
@@ -274,7 +198,7 @@ objects:
       resolver: flood_repository
       id_field: road_id
     summary: "道路"
-    description: "道路对象来自路网线图层。道路可按 OSM id 或内部线段编号表达；对用户统一称为道路。"
+    description: "Road 表达道路或路段，是交通中断、绕行和转移路线可达性分析的基础对象。"
     properties:
       road_id: {type: str, required: true, description: "道路或路段稳定ID"}
       name: {type: str, description: "道路名称"}
@@ -284,19 +208,6 @@ objects:
       bridge_flag: {type: bool, description: "该路段是否标记为桥上路段"}
       tunnel_flag: {type: bool, description: "该路段是否标记为隧道路段"}
       length_m: {type: float, description: "道路长度，米"}
-      source_crs: {type: str, description: "源空间数据坐标系"}
-      geometry_crs: {type: str, description: "当前 geometry 坐标系，前端绘制统一为 EPSG:4326"}
-      geometry_source: {type: str, description: "当前 geometry 来源或 OSM 补充状态"}
-      osm_match_status: {type: str, description: "OSM 匹配状态: unmatched/matched_by_osm_id/matched_by_name/matched_by_distance"}
-      osm_ref: {type: str, description: "匹配到的 OSM 元素引用"}
-      osm_name: {type: str, description: "OSM 名称"}
-      osm_feature: {type: str, description: "OSM 特征类型"}
-      osm_distance_m: {type: float, description: "本地对象与 OSM 元素中心距离"}
-      osm_tags: {type: str, description: "保留的 OSM 标签 JSON 字符串"}
-      osm_data_path: {type: str, description: "缓存的 OSM 原始响应路径"}
-      geometry_type: {type: str, description: "GeoJSON 几何类型"}
-      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
-      data_path: {type: str, description: "空间数据路径"}
 
   Bridge:
     kind: entity
@@ -307,7 +218,7 @@ objects:
       resolver: flood_repository
       id_field: bridge_id
     summary: "桥梁"
-    description: "桥梁对象来自水利工程桥梁点图层。现有台账字段可能缺失，因此风险评估需要标注资料质量。"
+    description: "Bridge 表达桥梁及其通行风险相关属性。现有台账字段可能缺失，因此风险评估需要标注资料质量。"
     properties:
       bridge_id: {type: str, required: true, description: "桥梁稳定ID"}
       name: {type: str, description: "桥梁名称"}
@@ -319,17 +230,6 @@ objects:
       data_quality: {type: str, description: "台账完整性: complete/partial/missing"}
       longitude: {type: float, description: "经度"}
       latitude: {type: float, description: "纬度"}
-      geometry_source: {type: str, description: "当前 geometry 来源或 OSM 补充状态"}
-      osm_match_status: {type: str, description: "OSM 匹配状态: unmatched/matched_by_osm_id/matched_by_name/matched_by_distance"}
-      osm_ref: {type: str, description: "匹配到的 OSM 元素引用"}
-      osm_name: {type: str, description: "OSM 名称"}
-      osm_feature: {type: str, description: "OSM 特征类型"}
-      osm_distance_m: {type: float, description: "本地对象与 OSM 元素中心距离"}
-      osm_tags: {type: str, description: "保留的 OSM 标签 JSON 字符串"}
-      osm_data_path: {type: str, description: "缓存的 OSM 原始响应路径"}
-      geometry_type: {type: str, description: "GeoJSON 几何类型"}
-      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
-      data_path: {type: str, description: "空间数据路径"}
 
   Facility:
     kind: entity
@@ -351,17 +251,6 @@ objects:
       county_id: {type: str, description: "所属县编码"}
       longitude: {type: float, description: "经度"}
       latitude: {type: float, description: "纬度"}
-      geometry_source: {type: str, description: "当前 geometry 来源或 OSM 补充状态"}
-      osm_match_status: {type: str, description: "OSM 匹配状态: unmatched/matched_by_osm_id/matched_by_name/matched_by_distance"}
-      osm_ref: {type: str, description: "匹配到的 OSM 元素引用"}
-      osm_name: {type: str, description: "OSM 名称"}
-      osm_feature: {type: str, description: "OSM 特征类型"}
-      osm_distance_m: {type: float, description: "本地对象与 OSM 元素中心距离"}
-      osm_tags: {type: str, description: "保留的 OSM 标签 JSON 字符串"}
-      osm_data_path: {type: str, description: "缓存的 OSM 原始响应路径"}
-      geometry_type: {type: str, description: "GeoJSON 几何类型"}
-      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
-      data_path: {type: str, description: "空间数据路径"}
 
   Place:
     kind: entity
@@ -384,9 +273,6 @@ objects:
       capacity_person: {type: int, description: "可容纳人数"}
       longitude: {type: float, description: "经度"}
       latitude: {type: float, description: "纬度"}
-      geometry_type: {type: str, description: "GeoJSON 几何类型"}
-      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
-      data_path: {type: str, description: "空间数据路径"}
 
   Transfer:
     kind: entity
@@ -410,9 +296,6 @@ objects:
       place_id: {type: str, description: "目标安置地点ID"}
       longitude: {type: float, description: "经度"}
       latitude: {type: float, description: "纬度"}
-      geometry_type: {type: str, description: "GeoJSON 几何类型"}
-      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
-      data_path: {type: str, description: "空间数据路径"}
 
   Route:
     kind: entity
@@ -433,55 +316,6 @@ objects:
       place_id: {type: str, description: "目标地点ID"}
       population: {type: int, description: "服务或转移人口"}
       length_m: {type: float, description: "路线长度，米"}
-      geometry_type: {type: str, description: "GeoJSON 几何类型"}
-      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
-      data_path: {type: str, description: "空间数据路径"}
-
-  Scenario:
-    kind: entity
-    data_source: external_api
-    mutability: read_only
-    source:
-      type: resolver
-      resolver: flood_repository
-      id_field: scenario_id
-    summary: "洪水情景"
-    description: "5年、10年、20年、50年、100年一遇等洪水方案。"
-    properties:
-      scenario_id: {type: str, required: true, description: "方案编码，如 45050092hsfx0001"}
-      river_id: {type: str, description: "对应河流编号"}
-      name: {type: str, description: "方案名称，如 SHH_5a"}
-      return_period_year: {type: int, description: "重现期，年"}
-      summary: {type: str, description: "方案概要"}
-      description: {type: str, description: "方案说明"}
-      data_path: {type: str, description: "淹没图层路径"}
-
-  Cell:
-    kind: entity
-    data_source: external_api
-    mutability: read_only
-    source:
-      type: resolver
-      resolver: flood_repository
-      id_field: cell_id
-    summary: "洪水计算单元"
-    description: "Cell 是方案下的淹没空间计算单元，承载水深、流速、到达时间、退水时间等物理量。"
-    properties:
-      cell_id: {type: str, required: true, description: "计算单元ID"}
-      scenario_id: {type: str, description: "所属洪水情景ID"}
-      x: {type: float, description: "计算单元代表点 X 坐标"}
-      y: {type: float, description: "计算单元代表点 Y 坐标"}
-      ground_elevation_m: {type: float, description: "地面高程，对应 Z"}
-      water_level_m: {type: float, description: "洪水水位，对应 Eta"}
-      depth_m: {type: float, description: "淹没水深，对应 YMSS"}
-      velocity_mps: {type: float, description: "流速，对应 HSLS"}
-      arrival_time_h: {type: float, description: "洪水到达时间，对应 DDSJ"}
-      recession_time_h: {type: float, description: "退水或消退时间，对应 XTSJ"}
-      area_m2: {type: float, description: "单元面积，对应 WGMJ 或几何面积"}
-      crs: {type: str, description: "原始坐标系"}
-      geometry_type: {type: str, description: "GeoJSON 几何类型"}
-      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
-      data_path: {type: str, description: "空间数据路径"}
 
   ForecastRun:
     kind: entity
@@ -501,14 +335,13 @@ objects:
       model_description: {type: str, description: "模型说明"}
       generated_at: {type: str, description: "生成时间"}
       lead_time_h: {type: float, description: "预见期，小时"}
-      mesh_source_scenario_id: {type: str, description: "作为计算网格来源的空间单元集合"}
+      mesh_source_id: {type: str, description: "作为计算网格来源的水动力网格集合"}
       hydrology_inputs: {type: str, description: "水文边界条件 JSON"}
       forcing_index: {type: float, description: "综合水文边界强度，仅作为模型内部无量纲输入"}
       forecast_cell_count: {type: int, description: "预测有水深的单元数量"}
       inundated_area_km2: {type: float, description: "预测淹没面积，平方千米"}
       max_depth_m: {type: float, description: "最大预测水深，米"}
       mean_depth_m: {type: float, description: "平均预测水深，米"}
-      data_path: {type: str, description: "预测 cell 对象路径"}
 
   ForecastCell:
     kind: entity
@@ -519,13 +352,13 @@ objects:
       resolver: flood_repository
       id_field: forecast_cell_id
     summary: "预测淹没单元"
-    description: "ForecastCell 是水动力预测直接输出的淹没 cell，承载预测水深、流速、到达时间、退水时间和空间几何。"
+    description: "ForecastCell 是水动力预测直接输出的淹没单元，承载预测水深、流速、到达时间和退水时间。"
     properties:
       forecast_cell_id: {type: str, required: true, description: "预测计算单元ID"}
       forecast_id: {type: str, description: "所属预测运行ID"}
       model_name: {type: str, description: "输出该单元的模型名称"}
       mesh_cell_id: {type: str, description: "基础计算网格单元ID"}
-      mesh_source_scenario_id: {type: str, description: "基础网格来源"}
+      mesh_source_id: {type: str, description: "基础网格来源"}
       lead_time_h: {type: float, description: "预见期，小时"}
       centroid_lon: {type: float, description: "单元中心经度"}
       centroid_lat: {type: float, description: "单元中心纬度"}
@@ -538,8 +371,6 @@ objects:
       recession_time_h: {type: float, description: "退水时间，小时"}
       risk_level: {type: str, description: "由水深和流速派生的风险等级"}
       area_m2: {type: float, description: "单元面积，平方米"}
-      geometry_type: {type: str, description: "GeoJSON 几何类型"}
-      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
 
   HydrodynamicCell:
     kind: entity
@@ -550,14 +381,12 @@ objects:
       resolver: flood_repository
       id_field: hydrodynamic_cell_id
     summary: "水动力模型网格单元"
-    description: "HydrodynamicCell 是水动力模型 GT.txt 中的静态三角网格计算单元；前端将它与某个 forecast_id、scenario_id 或 return_period_year 对应的动态 max depth 结果合并绘制。干单元透明、有水单元按水深着色。"
+    description: "HydrodynamicCell 是水动力模型的静态三角网格计算单元，可承载某次预测对应的最大水深结果。"
     properties:
       hydrodynamic_cell_id: {type: str, required: true, description: "水动力网格单元ID"}
       cell_id: {type: int, description: "模型原始 cell 编号"}
       depth_m: {type: float, description: "模型输出最大水深，米；0 表示无水"}
       is_flooded: {type: bool, description: "是否有水深"}
-      geometry_type: {type: str, description: "几何类型，固定为 Polygon"}
-      geometry_crs: {type: str, description: "地图绘制坐标系，EPSG:4326"}
 
   Hydrology:
     kind: entity
@@ -572,13 +401,11 @@ objects:
     properties:
       hydrology_id: {type: str, required: true, description: "水文成果ID"}
       river_id: {type: str, description: "对应河流编号"}
-      scenario_id: {type: str, description: "关联方案ID，若可对应"}
-      return_period_year: {type: int, description: "重现期，年"}
+      design_frequency_year: {type: int, description: "设计频率，年"}
       duration_h: {type: float, description: "设计暴雨历时，小时"}
       design_rainfall_mm: {type: float, description: "设计暴雨，毫米"}
       peak_inflow_m3s: {type: float, description: "入库洪峰流量"}
       max_discharge_m3s: {type: float, description: "最大泄量"}
-      source: {type: str, description: "资料来源"}
 
   HydroStation:
     kind: entity
@@ -589,7 +416,7 @@ objects:
       resolver: flood_repository
       id_field: station_id
     summary: "水文、雨量或气象测站"
-    description: "表达珊瑚河流域及附近可作为自动感知来源的测站，包括龙潭水库站、雨量站和气象站。测站对象携带经纬度，可在前端 GIS 中绘制。"
+    description: "表达珊瑚河流域及附近可作为自动感知来源的测站，包括龙潭水库站、雨量站和气象站。"
     properties:
       station_id: {type: str, required: true, description: "测站ID"}
       river_id: {type: str, description: "关联河流编号"}
@@ -603,12 +430,6 @@ objects:
       established_year: {type: int, description: "设站年份"}
       observation_items: {type: str, description: "观测项目，如 rainfall,water_level,outflow"}
       record_period: {type: str, description: "资料系列或可用时段说明"}
-      data_availability: {type: str, description: "数据可用性: metadata_only/summary_only/raw_series_available"}
-      source: {type: str, description: "资料来源"}
-      source_crs: {type: str, description: "源空间数据坐标系"}
-      geometry_crs: {type: str, description: "当前 geometry 坐标系，前端绘制统一为 EPSG:4326"}
-      geometry_type: {type: str, description: "GeoJSON 几何类型"}
-      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
 
   HydroObservation:
     kind: event
@@ -630,12 +451,9 @@ objects:
       start_year: {type: int, description: "起始年份"}
       end_year: {type: int, description: "结束年份"}
       missing_years: {type: str, description: "缺测年份说明"}
-      record_count: {type: int, description: "记录数，若可确定"}
       value: {type: float, description: "摘要值"}
       value_stat: {type: str, description: "摘要值类型，如 mean/multi_year_mean"}
       description: {type: str, description: "资料说明"}
-      data_availability: {type: str, description: "数据可用性"}
-      source: {type: str, description: "资料来源"}
 
   HistoricalFloodMark:
     kind: event
@@ -646,7 +464,7 @@ objects:
       resolver: flood_repository
       id_field: mark_id
     summary: "历史洪水洪痕"
-    description: "表达现场调查或历史资料中的洪痕点、高程和描述，用于模型率定验证和洪水记忆检索。若后续补充 RTK 坐标，可直接作为 GIS 点对象绘制。"
+    description: "表达现场调查或历史资料中的洪痕位置、高程和描述，用于模型率定验证和洪水记忆检索。"
     properties:
       mark_id: {type: str, required: true, description: "洪痕记录ID"}
       river_id: {type: str, description: "关联河流编号"}
@@ -655,34 +473,8 @@ objects:
       description: {type: str, description: "洪水描述"}
       elevation_m: {type: float, description: "洪痕高程"}
       reliability: {type: str, description: "可靠度或资料类型"}
-      data_availability: {type: str, description: "数据可用性"}
       longitude: {type: float, description: "经度，若有"}
       latitude: {type: float, description: "纬度，若有"}
-      source: {type: str, description: "资料来源"}
-      geometry_crs: {type: str, description: "当前 geometry 坐标系"}
-      geometry_type: {type: str, description: "GeoJSON 几何类型"}
-      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
-
-  Impact:
-    kind: entity
-    data_source: external_api
-    mutability: read_only
-    source:
-      type: resolver
-      resolver: flood_repository
-      id_field: impact_id
-    summary: "方案级影响汇总"
-    description: "某个洪水情景下的总体淹没、人口、GDP、房屋、耕地、公路和直接经济损失。"
-    properties:
-      impact_id: {type: str, required: true, description: "影响汇总ID"}
-      scenario_id: {type: str, description: "洪水情景ID"}
-      inundated_area_km2: {type: float, description: "淹没总面积，平方千米"}
-      inundated_building_10k_m2: {type: float, description: "淹没房屋，万平方米"}
-      inundated_farmland_ha: {type: float, description: "淹没耕地，公顷"}
-      inundated_road_km: {type: float, description: "淹没公路，公里"}
-      affected_population_10k: {type: float, description: "受影响人口，万人"}
-      affected_gdp_10k_cny: {type: float, description: "受影响GDP，万元"}
-      direct_loss_10k_cny: {type: float, description: "直接经济损失，万元"}
 
   Risk:
     kind: entity
@@ -693,10 +485,9 @@ objects:
       resolver: flood_repository
       id_field: risk_id
     summary: "风险或危险区对象"
-    description: "统一表达某个洪水情景下道路、桥梁、设施、路线、乡镇、安置地点等目标对象的风险，也可承接本地危险区台账中的空间点对象。"
+    description: "统一表达道路、桥梁、设施、路线、乡镇、安置地点等目标对象的风险，也可承接本地危险区台账中的空间点对象。"
     properties:
       risk_id: {type: str, required: true, description: "风险评估ID"}
-      scenario_id: {type: str, description: "洪水情景ID"}
       target_type: {type: str, description: "目标对象类型: Road/Bridge/Facility/Route/Town/Place/Transfer"}
       target_id: {type: str, description: "目标对象ID"}
       name: {type: str, description: "风险点或危险区名称"}
@@ -717,54 +508,6 @@ objects:
       evidence: {type: str, description: "风险判断依据"}
       data_quality: {type: str, description: "证据质量: model_overlay/table_record/manual/insufficient"}
       recommended_action: {type: str, description: "建议动作摘要"}
-      source: {type: str, description: "风险对象来源"}
-      source_crs: {type: str, description: "源空间数据坐标系"}
-      geometry_crs: {type: str, description: "当前 geometry 坐标系，前端绘制统一为 EPSG:4326"}
-      geometry_type: {type: str, description: "GeoJSON 几何类型"}
-      geometry: {type: str, description: "GeoJSON geometry JSON 字符串，用于前端绘制"}
-      data_path: {type: str, description: "数据来源路径"}
-
-  Recommendation:
-    kind: entity
-    data_source: agent_generated
-    mutability: append_only
-    source:
-      type: resolver
-      resolver: flood_repository
-      id_field: recommendation_id
-    summary: "应急处置建议"
-    description: "封路、封桥、撤离、绕行、队伍派遣、物资前置、持续监测等建议。"
-    properties:
-      recommendation_id: {type: str, required: true, description: "建议ID"}
-      scenario_id: {type: str, description: "洪水情景ID"}
-      risk_id: {type: str, description: "关联风险ID"}
-      action_type: {type: str, description: "动作类型: close_road/close_bridge/evacuate/detour/dispatch/preposition/monitor"}
-      priority: {type: str, description: "优先级: immediate/within_1h/within_3h/monitor"}
-      target_type: {type: str, description: "处置目标对象类型"}
-      target_id: {type: str, description: "处置目标对象ID"}
-      message: {type: str, description: "建议正文"}
-      basis: {type: str, description: "依据数据和规则"}
-      requires_human_approval: {type: bool, description: "是否需要人工审核后执行"}
-
-  Brief:
-    kind: entity
-    data_source: agent_generated
-    mutability: append_only
-    source:
-      type: resolver
-      resolver: flood_repository
-      id_field: brief_id
-    summary: "指挥简报"
-    description: "面向指挥中心、会商和预警发布的文字摘要。"
-    properties:
-      brief_id: {type: str, required: true, description: "简报ID"}
-      scenario_id: {type: str, description: "洪水情景ID"}
-      title: {type: str, description: "简报标题"}
-      audience: {type: str, description: "受众: command_center/public/traffic/rescue"}
-      content: {type: str, description: "简报正文"}
-      key_risks: {type: str, description: "关键风险摘要"}
-      key_actions: {type: str, description: "关键动作摘要"}
-      created_at: {type: str, description: "生成时间"}
 
 links:
   river_watersheds:
@@ -787,7 +530,7 @@ links:
     source: Watershed
     target: Waterway
     join: {source_key: watershed_id, target_key: watershed_id}
-    description: "流域内可绘制河道或水系线候选"
+    description: "流域内的河道或水系线"
     link_type: contains
     cardinality: 1..n
 
@@ -823,30 +566,6 @@ links:
     link_type: relates
     cardinality: 1..n
 
-  river_scenarios:
-    source: River
-    target: Scenario
-    join: {source_key: river_id, target_key: river_id}
-    description: "河流对应的洪水情景"
-    link_type: contains
-    cardinality: 1..n
-
-  scenario_cells:
-    source: Scenario
-    target: Cell
-    join: {source_key: scenario_id, target_key: scenario_id}
-    description: "情景包含的洪水计算单元"
-    link_type: contains
-    cardinality: 1..n
-
-  scenario_hydrology:
-    source: Scenario
-    target: Hydrology
-    join: {source_key: scenario_id, target_key: scenario_id}
-    description: "情景对应的水文成果"
-    link_type: causal
-    cardinality: 1..n
-
   river_hydro_stations:
     source: River
     target: HydroStation
@@ -870,14 +589,6 @@ links:
     description: "河流关联的历史洪水洪痕记录"
     link_type: evidence
     cardinality: 1..n
-
-  scenario_impact:
-    source: Scenario
-    target: Impact
-    join: {source_key: scenario_id, target_key: scenario_id}
-    description: "情景对应的总体影响汇总"
-    link_type: causal
-    cardinality: 1..1
 
   transfer_route:
     source: Transfer
@@ -903,30 +614,6 @@ links:
     link_type: enables
     cardinality: n..1
 
-  scenario_risks:
-    source: Scenario
-    target: Risk
-    join: {source_key: scenario_id, target_key: scenario_id}
-    description: "情景下生成的对象级风险"
-    link_type: causal
-    cardinality: 1..n
-
-  risk_recommendations:
-    source: Risk
-    target: Recommendation
-    join: {source_key: risk_id, target_key: risk_id}
-    description: "风险触发的处置建议"
-    link_type: enables
-    cardinality: 1..n
-
-  scenario_briefs:
-    source: Scenario
-    target: Brief
-    join: {source_key: scenario_id, target_key: scenario_id}
-    description: "情景生成的指挥简报"
-    link_type: relates
-    cardinality: 1..n
-
 rules:
   road_passability_by_depth:
     description: "按水深判断道路通行风险的基础阈值。阈值应结合本地标准和车辆类型校核。"
@@ -951,46 +638,29 @@ rules:
       - {field: max_depth_m, operator: gte, value: 0.3, result: high}
 
 functions:
-  list_scenarios:
-    summary: "列出珊瑚河洪水情景"
-    description: "返回 5、10、20、50、100 年一遇等方案编号、名称、说明和数据路径。"
-    function_type: lookup
-    involves_objects: [Scenario]
-    params: {}
-
-  get_scenario_summary:
-    summary: "查看洪水情景的水文和影响汇总"
-    description: "按 scenario_id 或重现期查询情景说明、淹没面积、损失、人口、GDP 和水文成果。"
-    usage_prompt: "当用户询问某个设计洪水情景的水文过程、淹没面积或损失影响汇总时调用。该函数只返回情景事实；如需在 GIS 展示情景淹没范围，LLM 应在本函数返回后调用 ui_show_objects，object_type=HydrodynamicCell，并传 scenario_id 或 return_period_year。"
-    function_type: lookup
-    involves_objects: [Scenario, Impact, Hydrology]
-    params:
-      scenario_id: {type: str, description: "方案编码，可选", default: ""}
-      return_period_year: {type: int, description: "重现期，年，可选", default: 0}
-
   run_flood_forecast:
     summary: "运行或读取最新洪水预测"
-    description: "读取最新四边界流量过程线，先执行干态门控规则；达到触发条件时调用 CNN_V2 水动力模型生成水动力网格 max_depth 预测结果和 ForecastRun 汇总。该函数不把 severity 或综合指标映射为 5/10/20/50/100 年一遇情景。"
+    description: "读取最新四边界流量过程线，先执行干态门控规则；达到触发条件时调用 CNN_V2 水动力模型生成水动力网格 max_depth 预测结果和 ForecastRun 汇总。该函数不把 severity 或综合指标映射为 5/10/20/50/100 年一遇设计方案。"
     usage_prompt: "当用户要求运行预测、查看实时预测、显示未来淹没，或水文异常事件中的 forecast_trigger.should_run_forecast 为 true 且需要推演时调用。该函数只返回 ForecastRun 汇总；如需在 GIS 展示预测淹没范围，LLM 应在本函数返回后调用 ui_show_objects，object_type=HydrodynamicCell，filters={\"forecast_id\":\"latest\"}，label=预测淹没结果，fit=false，refresh=true。"
     function_type: lookup
-    involves_objects: [ForecastRun, ForecastCell, River, Reservoir, Cell]
+    involves_objects: [ForecastRun, ForecastCell, HydrodynamicCell, River, Reservoir]
     params:
       forecast_id: {type: str, description: "预测运行ID；latest 表示最新预测", default: "latest"}
       force: {type: bool, description: "是否强制重新运行简化模型", default: false}
 
   run_emergency_cycle:
     summary: "运行水文观测-预测-告警-调度闭环原型"
-    description: "使用 mock 水文观测与规则，运行简化水动力预测，生成预警级别、受影响转移对象、道路/路线关注对象和调度建议。预测结果直接来自 ForecastCell，不通过重现期情景映射。"
+    description: "使用 mock 水文观测与规则，运行简化水动力预测，生成预警级别、受影响转移对象、道路/路线关注对象和调度建议。预测结果直接来自 ForecastCell，不通过设计频率映射。"
     usage_prompt: "当用户要求自主观测、持续预测、自动告警、闭环调度、避洪转移调度或应急循环时调用。该函数只返回预测、预警、受影响对象和调度建议事实；如需 GIS 展示，LLM 应在本函数返回后调用 ui_show_objects 展示 HydrodynamicCell、Risk、Transfer、Place、Route 等领域对象。涉及发布预警、封路、转移等执行动作时必须说明需要人工审批。"
     function_type: lookup
-    involves_objects: [ForecastRun, ForecastCell, Risk, Road, Route, Transfer, Place, Recommendation]
+    involves_objects: [ForecastRun, ForecastCell, Risk, Road, Route, Transfer, Place]
     params:
       force_forecast: {type: bool, description: "是否强制重新运行预测模型", default: false}
 
   analyze_inundation_impacts:
     summary: "根据预测淹没范围分析受影响对象"
     description: "读取最新或指定 ForecastCell 预测淹没网格，对道路、桥梁、重要设施、转移单元、安置地点和转移路线执行确定性空间邻近分析，返回受影响对象清单、风险等级和按类型汇总。"
-    usage_prompt: "收到 InundationGenerated 事件后应优先调用本函数，forecast_id 默认 latest，target_type 默认 all。该函数是本体层确定性空间分析入口：LLM 只能根据返回结果说明哪些对象受影响，不要自行猜测学校、医院、道路、桥梁、转移路线或安置点是否受淹。需要在 GIS 展示影响分析结果时，LLM 应在本函数返回后再调用 ui_show_objects：先显示 HydrodynamicCell 且 filters={\"forecast_id\":\"latest\"}、label=预测淹没结果、fit=false、refresh=true；再优先使用 affected_object_ids 中按对象类型汇总的 ID，分别传给对应对象类型并设置 highlight=true、show_only_object_ids=true，只显示并高亮这些受影响对象，不要额外加载同类型全量对象图层。需要缩窄范围时 target_type 可传 Road、Bridge、Facility、Route、Transfer、Place 或 all；min_depth_m 默认 0.15，max_distance_m 默认 120。"
+    usage_prompt: "收到 InundationGenerated 事件后应优先调用本函数，forecast_id 默认 latest，target_type 默认 all。该函数是本体层确定性空间分析入口：LLM 只能根据返回结果说明哪些对象受影响，不要自行猜测学校、医院、道路、桥梁、转移路线或安置点是否受淹。需要在地图展示影响分析结果时，LLM 应在本函数返回后再调用 ui_show_objects：先显示 HydrodynamicCell 且 filters={\"forecast_id\":\"latest\"}、label=预测淹没结果、fit=false、refresh=true；再优先使用 affected_object_ids 中按对象类型汇总的 ID，分别传给对应对象类型并设置 highlight=true、show_only_object_ids=true，只显示并高亮这些受影响对象，不要额外加载同类型全量对象。需要缩窄范围时 target_type 可传 Road、Bridge、Facility、Route、Transfer、Place 或 all；min_depth_m 默认 0.15，max_distance_m 默认 120。"
     function_type: lookup
     involves_objects: [ForecastRun, ForecastCell, Road, Bridge, Facility, Route, Transfer, Place, Risk]
     params:
@@ -998,53 +668,3 @@ functions:
       target_type: {type: str, description: "分析目标类型: Road/Bridge/Facility/Route/Transfer/Place/all", default: "all"}
       min_depth_m: {type: float, description: "纳入影响判定的最低预测水深，单位 m", default: 0.15}
       max_distance_m: {type: float, description: "对象或采样点到预测淹没网格中心的最大匹配距离，单位 m", default: 120}
-
-  analyze_risks:
-    summary: "分析某情景下道路、桥梁、设施、路线等对象风险"
-    description: "对指定目标类型执行空间叠加或缓存查询，生成统一 Risk 结果。"
-    usage_prompt: "当用户问哪些道路会中断、哪些桥梁风险高、哪些设施受淹、哪些转移路线不可用时调用。target_type 可传 Road、Bridge、Facility、Route、Transfer、Place 或 all。"
-    function_type: lookup
-    involves_objects: [Scenario, Cell, Road, Bridge, Facility, Route, Transfer, Place, Risk]
-    params:
-      scenario_id: {type: str, description: "方案编码"}
-      target_type: {type: str, description: "分析目标类型: Road/Bridge/Facility/Route/Transfer/Place/all", default: "all"}
-      min_risk_level: {type: str, description: "最低风险等级过滤: low/medium/high/critical", default: "medium"}
-
-  list_mappable_objects:
-    summary: "列出可用于前端 GIS 绘制的领域对象类型"
-    description: "返回哪些领域对象带有地理信息、对象数量、几何类型和推荐样式。前端应按对象类型绘制，而不是依赖领域模型中的图层对象。"
-    function_type: lookup
-    involves_objects: [Watershed, Waterway, County, Road, Reservoir, Sluice, HydraulicStructure, Bridge, Facility, Place, Transfer, Route, Risk, HydroStation, HistoricalFloodMark, Cell, ForecastCell, HydrodynamicCell]
-    params:
-      object_type: {type: str, description: "可选，按领域对象类型过滤", default: ""}
-
-  export_objects_geojson:
-    summary: "按领域对象导出前端地图可加载的 GeoJSON"
-    description: "从领域对象数据导出 EPSG:4326 GeoJSON。点、线、面几何来自对象自身的 geometry 字段；ForecastCell 来自预测模型输出；HydrodynamicCell 由前端使用专门的网格瓦片接口绘制，并可叠加 forecast_id、scenario_id 或 return_period_year 对应的 max depth 结果。"
-    usage_prompt: "该函数是底层 GeoJSON 导出接口，通常供前端服务或调试使用，不是交互式地图展示入口。用户要求显示、绘制、叠加、缩放或高亮地图对象时，LLM 应调用 ui_show_objects、ui_focus_object 或 ui_clear_map；只有在用户明确要求导出 GeoJSON 文件或排查导出结果时才调用本函数。"
-    function_type: lookup
-    involves_objects: [Watershed, Waterway, County, Road, Reservoir, Sluice, HydraulicStructure, Bridge, Facility, Place, Transfer, Route, Risk, HydroStation, HistoricalFloodMark, Cell, ForecastCell, HydrodynamicCell]
-    params:
-      object_type: {type: str, description: "领域对象类型，如 Facility、Bridge、Route、Town、Cell"}
-      filters: {type: dict, description: "对象过滤条件；Cell 可用 scenario_id", default: {}}
-      simplify_tolerance: {type: float, description: "可选简化容差，单位为源坐标系单位；0 表示不简化", default: 0}
-      force: {type: bool, description: "是否强制重新导出", default: false}
-
-  plan_response:
-    summary: "生成封控、转移、绕行和监测建议"
-    description: "根据风险结果和转移安置关系生成 Recommendation。"
-    usage_prompt: "当用户问当前应该先封哪座桥、撤哪片区域、救援车辆走哪条路线或如何排序处置时调用。"
-    function_type: lookup
-    involves_objects: [Scenario, Risk, Recommendation, Transfer, Route, Place]
-    params:
-      scenario_id: {type: str, description: "方案编码"}
-      focus: {type: str, description: "关注方向: evacuation/traffic/facility/all", default: "all"}
-
-  generate_brief:
-    summary: "生成应急指挥简报"
-    description: "面向指挥中心或专项部门输出风险排序、关键时刻、建议动作和依据数据。"
-    function_type: lookup
-    involves_objects: [Scenario, Impact, Risk, Recommendation, Brief]
-    params:
-      scenario_id: {type: str, description: "方案编码"}
-      audience: {type: str, description: "受众: command_center/public/traffic/rescue", default: "command_center"}

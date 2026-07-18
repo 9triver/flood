@@ -4,7 +4,6 @@ import json
 from functools import cached_property
 from typing import Any
 
-from .cell import count_cells, query_cells
 from .common import (
     OBJECT_LIBRARY_FILES,
     OBJECTS_DIR,
@@ -29,8 +28,6 @@ class FloodRepository:
     def query(self, object_type: str, filters: dict[str, Any] | None = None,
               limit: int | None = None, order_by: str | None = None,
               offset: int | None = None) -> list[dict]:
-        if object_type == "Cell":
-            return query_cells(self, filters, limit, order_by, offset)
         if object_type == "ForecastRun":
             return query_forecast_runs(self, filters, limit, order_by, offset)
         if object_type == "ForecastCell":
@@ -43,8 +40,6 @@ class FloodRepository:
         return apply_window(rows, limit, offset)
 
     def count(self, object_type: str, filters: dict[str, Any] | None = None) -> int:
-        if object_type == "Cell":
-            return count_cells(self, filters)
         if object_type == "ForecastRun":
             return count_forecast_runs(self, filters)
         if object_type == "ForecastCell":
@@ -64,7 +59,7 @@ class FloodRepository:
         results = []
         searchable_types = object_types or [
             item for item in OBJECT_LIBRARY_FILES
-            if item not in {"Cell", "ForecastRun", "ForecastCell", "HydrodynamicCell"}
+            if item not in {"ForecastRun", "ForecastCell", "HydrodynamicCell"}
         ]
         for object_type in searchable_types:
             for row in self._rows(object_type):
@@ -88,14 +83,6 @@ class FloodRepository:
         rows = read_object_library(object_type)
         self._row_cache[object_type] = rows
         return rows
-
-    @cached_property
-    def scenarios(self) -> list[dict]:
-        return self._rows("Scenario")
-
-    @cached_property
-    def impacts(self) -> list[dict]:
-        return self._rows("Impact")
 
     @cached_property
     def hydrology(self) -> list[dict]:

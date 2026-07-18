@@ -42,7 +42,6 @@ const OBJECT_CONFIG = {
   Risk: { label: "危险区", color: "#b91c1c", swatch: "point" },
   HydroStation: { label: "水文测站", color: "#0284c7", swatch: "point" },
   HistoricalFloodMark: { label: "历史洪痕", color: "#be123c", swatch: "point" },
-  Cell: { label: "淹没范围", color: "#2f80c9", swatch: "fill" },
   ForecastCell: { label: "预测淹没", color: "#dc2626", swatch: "fill" },
   HydrodynamicCell: { label: "水动力网格", color: "#64748b", swatch: "fill" },
   ForecastResult: { label: "预测淹没结果", color: "#dc2626", swatch: "fill" },
@@ -68,7 +67,6 @@ const ID_FIELDS = {
   HydroStation: "station_id",
   HydroObservation: "observation_id",
   HistoricalFloodMark: "mark_id",
-  Cell: "cell_id",
   ForecastCell: "forecast_cell_id",
   HydrodynamicCell: "hydrodynamic_cell_id",
 };
@@ -224,7 +222,7 @@ function defaultObjectFilters(objectType) {
 
 async function loadObject(objectType, filters = {}, options = {}) {
   if (objectType === "HydrodynamicCell") {
-    if (filters && Object.keys(filters).some((key) => ["forecast_id", "scenario_id", "return_period_year"].includes(key))) {
+    if (filters && Object.keys(filters).some((key) => ["forecast_id"].includes(key))) {
       throw new Error("Hydrodynamic results must use apply_hydrodynamic_result.");
     }
     return showHydrodynamicMesh(options);
@@ -814,11 +812,9 @@ function fitFeatureLayer(layer) {
 }
 
 function featureStyle(objectType, feature) {
-  if (objectType === "Cell" || objectType === "ForecastCell") {
+  if (objectType === "ForecastCell") {
     const depth = Number(feature.properties?.depth_m || feature.properties?.YMSS || 0);
-    const color = objectType === "ForecastCell"
-      ? depth > 1.2 ? "#7f1d1d" : depth > 0.6 ? "#dc2626" : "#fecaca"
-      : depth > 1 ? "#14539a" : depth > 0.5 ? "#2f80c9" : "#7ab6df";
+    const color = depth > 1.2 ? "#7f1d1d" : depth > 0.6 ? "#dc2626" : "#fecaca";
     return { color, weight: 0.5, fillColor: color, fillOpacity: 0.34 };
   }
   if (objectType === "HydrodynamicCell") {
@@ -1609,14 +1605,9 @@ function readableTool(name, args) {
     query: "查询对象",
     count: "统计数量",
     inspect: "查看定义",
-    list_scenarios: "列出洪水情景",
-    get_scenario_summary: "查看情景汇总",
     run_flood_forecast: "运行洪水预测",
     run_emergency_cycle: "运行闭环预警",
     analyze_inundation_impacts: "分析淹没影响",
-    analyze_risks: "分析风险",
-    list_mappable_objects: "列出可绘制对象",
-    export_objects_geojson: "导出对象 GeoJSON",
     ui_show_objects: "地图显示",
     ui_show_event_marker: "地图标记事件",
     ui_clear_map: "清空地图",
@@ -1626,8 +1617,6 @@ function readableTool(name, args) {
   if (args.object_type) parts.push(args.object_type);
   if (Array.isArray(args.objects)) parts.push(args.objects.map((item) => item.object_type).filter(Boolean).join(", "));
   if (args.target) parts.push(args.target);
-  if (args.scenario_id) parts.push(args.scenario_id);
-  if (args.return_period_year) parts.push(`${args.return_period_year}年一遇`);
   return `${labels[name] || name}${parts.length ? ` (${parts.join(", ")})` : ""}`;
 }
 

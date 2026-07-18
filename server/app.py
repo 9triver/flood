@@ -200,18 +200,6 @@ class Handler(BaseHTTPRequestHandler):
         result = (params.get("result") or [""])[0]
         if result:
             return result
-        scenario_id = (params.get("scenario_id") or [""])[0]
-        if scenario_id:
-            return scenario_id
-        return_period = (params.get("return_period_year") or [""])[0]
-        if return_period:
-            try:
-                period = int(return_period)
-            except ValueError:
-                period = 0
-            scenario = next((row for row in APP.scenarios if row.get("return_period_year") == period), None)
-            if scenario:
-                return str(scenario.get("scenario_id") or "latest")
         return (params.get("forecast_id") or ["latest"])[0]
 
     def _object(self, query: str):

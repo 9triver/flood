@@ -13,9 +13,7 @@ from .common import DOMAIN_DATA_DIR, DOMAIN_DIR, PROJECT_DIR, apply_filters, app
 
 MODEL_DIR = DOMAIN_DIR / "model" / "cnn_v2"
 GT_PATH = MODEL_DIR / "GT.txt"
-DEFAULT_DEPTH_PATH = DOMAIN_DATA_DIR / "hydrodynamic" / "scenarios" / "45050092hsfx0003_max_depth.csv"
 HYDRODYNAMIC_DATA_DIR = DOMAIN_DATA_DIR / "hydrodynamic"
-SCENARIO_DEPTH_DIR = HYDRODYNAMIC_DATA_DIR / "scenarios"
 LATEST_FORECAST_DEPTH_PATH = HYDRODYNAMIC_DATA_DIR / "forecasts" / "latest" / "max_depth.csv"
 MESH_DB_PATH = HYDRODYNAMIC_DATA_DIR / "mesh.sqlite"
 MIN_TILE_ZOOM = 13
@@ -457,10 +455,7 @@ def forecast_depth_path(forecast_id: str = LATEST_FORECAST_ID) -> Path:
     if forecast_id == MESH_ONLY_ID:
         return Path("")
     if forecast_id == LATEST_FORECAST_ID:
-        return LATEST_FORECAST_DEPTH_PATH if LATEST_FORECAST_DEPTH_PATH.exists() else DEFAULT_DEPTH_PATH
-    scenario_path = SCENARIO_DEPTH_DIR / f"{forecast_id}_max_depth.csv"
-    if scenario_path.exists():
-        return scenario_path
+        return LATEST_FORECAST_DEPTH_PATH
     return HYDRODYNAMIC_DATA_DIR / "forecasts" / forecast_id / "max_depth.csv"
 
 

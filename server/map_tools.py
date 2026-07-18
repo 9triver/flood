@@ -28,8 +28,6 @@ OBJECT_LABELS = {
     "Risk": "危险区",
     "HydroStation": "水文测站",
     "HistoricalFloodMark": "历史洪痕",
-    "Cell": "淹没范围",
-    "ForecastCell": "预测淹没",
     "HydrodynamicCell": "水动力网格",
 }
 
@@ -82,7 +80,7 @@ def register_map_tools(tools: ToolRegistry, resolver, registry) -> None:
                             },
                             "highlight": {"type": "boolean", "description": "是否高亮 object_ids 指定对象"},
                             "show_only_object_ids": {"type": "boolean", "description": "是否只加载 object_ids 指定对象，适合影响分析结果"},
-                            "simplify_tolerance": {"type": "number", "description": "大型面对象简化容差，通常仅旧 Cell GeoJSON 使用"},
+                            "simplify_tolerance": {"type": "number", "description": "大型面对象简化容差"},
                         },
                         "required": ["object_type"],
                     },
@@ -102,9 +100,9 @@ def register_map_tools(tools: ToolRegistry, resolver, registry) -> None:
             "学校/医院/政府机构 => Facility 并分别过滤 facility_type=school/hospital/government；"
             "水文站/测站/雨量站/水位站/气象站 => HydroStation；"
             "水利设施/水利工程 => Reservoir、Sluice、HydraulicStructure；道路交通 => Road、Bridge；"
-            "转移安置 => Transfer、Place、Route；设计洪水/年一遇/洪水情景淹没范围 => HydrodynamicCell，并传 scenario_id 或 return_period_year；"
+            "转移安置 => Transfer、Place、Route；"
             "预测淹没/未来淹没/实时预测 => 先调用 run_flood_forecast，再用 HydrodynamicCell 并传 forecast_id=latest；"
-            "水动力网格/模型网格/全部 cell/GT.txt 网格 => HydrodynamicCell。"
+            "水动力网格/模型网格/GT.txt 网格 => HydrodynamicCell。"
             "当根据影响分析结果展示受影响对象时，从分析结果 impacts 中按 object_type 汇总 object_id；"
             "对象项包含 object_ids、highlight=true 和 show_only_object_ids=true 时，本工具会只加载这些对象并高亮。"
         ),
@@ -368,17 +366,11 @@ def _count_mappable(resolver, registry, object_type: str, filters: dict[str, Any
     if object_type == "HydrodynamicCell":
         stats = hydrodynamic_grid_stats("mesh")
         return int(stats.get("feature_count") or 0)
-    if object_type == "ForecastCell":
-        return int(resolver.count("ForecastCell", filters or {"forecast_id": "latest"}))
     return int(resolver.count(object_type, filters))
 
 
 def _default_object_label(object_type: str, filters: dict[str, Any]) -> str:
-    if object_type in {"HydrodynamicCell", "Cell", "ForecastCell"}:
-        if filters.get("return_period_year"):
-            return f"{filters['return_period_year']} 年一遇淹没范围"
-        if filters.get("scenario_id"):
-            return f"{filters['scenario_id']} 淹没范围"
+    if object_type in {"HydrodynamicCell", "ForecastCell"}:
         if object_type == "ForecastCell" or filters.get("forecast_id") == "latest":
             return "预测淹没结果"
         if filters.get("forecast_id") and filters.get("forecast_id") != "latest":
@@ -387,25 +379,13 @@ def _default_object_label(object_type: str, filters: dict[str, Any]) -> str:
 
 
 def _hydrodynamic_result_id(resolver, filters: dict[str, Any]) -> str:
-    if filters.get("scenario_id"):
-        return str(filters["scenario_id"])
-    if filters.get("return_period_year"):
-        try:
-            period = int(filters["return_period_year"])
-        except (TypeError, ValueError):
-            period = 0
-        scenario = next((row for row in resolver.scenarios if row.get("return_period_year") == period), None)
-        if scenario:
-            return str(scenario.get("scenario_id") or "latest")
     return str(filters.get("forecast_id") or "latest")
 
 
 def is_hydrodynamic_result_request(object_type: str, filters: dict[str, Any]) -> bool:
-    return (
-        object_type == "ForecastCell"
-        or (object_type in {"HydrodynamicCell", "Cell"} and bool(
-            filters.get("forecast_id") or filters.get("scenario_id") or filters.get("return_period_year")
-        ))
+    return object_type == "ForecastCell" or (
+        object_type == "HydrodynamicCell"
+        and bool(filters.get("forecast_id"))
     )
 
 
@@ -426,8 +406,6 @@ def _default_context(actions: list[dict[str, Any]]) -> str:
         return "水动力模型网格 · 珊瑚河流域"
     if "ForecastCell" in types:
         return "实时预测 · 珊瑚河流域"
-    if "Cell" in types:
-        return "洪水影响分析 · 珊瑚河流域"
     if types & {"Reservoir", "Sluice", "HydraulicStructure"}:
         return "水利工程设施 · 珊瑚河流域"
     if types & {"Road", "Bridge"}:

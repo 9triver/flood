@@ -4,7 +4,6 @@ import hashlib
 import json
 from typing import Any
 
-from .cell import find_scenario, ogr_export, scenario_path
 from .common import GENERATED_DIR, MAPPABLE_OBJECTS, rel
 
 
@@ -19,14 +18,6 @@ def export_objects_geojson(resolver, object_type: str,
     target = GENERATED_DIR / f"{key}{suffix}.geojson"
     if target.exists() and not force:
         return geojson_result(object_type, filters, target, cached=True)
-
-    if object_type == "Cell":
-        scenario = find_scenario(resolver, filters.get("scenario_id", ""), int(filters.get("return_period_year", 0) or 0))
-        if not scenario:
-            return {"error": "scenario not found", "filters": filters}
-        source = scenario_path(scenario)
-        ogr_export(source, target, simplify_tolerance)
-        return geojson_result(object_type, {"scenario_id": scenario["scenario_id"]}, target, cached=False)
 
     if object_type == "ForecastCell":
         if not filters.get("forecast_id"):
@@ -84,9 +75,6 @@ def feature_from_row(row: dict) -> dict:
 
 
 def export_key(object_type: str, filters: dict[str, Any]) -> str:
-    if object_type == "Cell":
-        scenario_id = filters.get("scenario_id") or f"{filters.get('return_period_year', '')}a"
-        return f"{object_type.lower()}_{scenario_id}".strip("_")
     if object_type == "ForecastCell":
         forecast_id = filters.get("forecast_id") or "latest"
         return f"{object_type.lower()}_{forecast_id}"
