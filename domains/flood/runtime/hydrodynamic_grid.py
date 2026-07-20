@@ -76,7 +76,8 @@ class HydrodynamicMeshStore:
     def tile(self, z: int, x: int, y: int,
              forecast_id: str = LATEST_FORECAST_ID,
              wet_only: bool = False,
-             time_h: float | None = None) -> dict[str, Any]:
+             time_h: float | None = None,
+             tile_crs: str = "wgs84") -> dict[str, Any]:
         self.ensure_ready()
         if z < MIN_TILE_ZOOM:
             return {
@@ -85,16 +86,20 @@ class HydrodynamicMeshStore:
                 "min_tile_zoom": MIN_TILE_ZOOM,
             }
         forecast_id = normalize_forecast_id(forecast_id)
+        tile_crs = normalize_tile_crs(tile_crs)
         depth_entry = forecast_depth_entry(forecast_id, time_h=time_h)
         depths = depth_entry["depths"]
-        cache_key = (z, x, y, forecast_id, depth_entry.get("time_h"), bool(wet_only), depth_entry["stat_key"])
+        cache_key = (
+            z, x, y, tile_crs, forecast_id, depth_entry.get("time_h"),
+            bool(wet_only), depth_entry["stat_key"],
+        )
         with _TILE_CACHE_LOCK:
             cached = _TILE_CACHE.get(cache_key)
             if cached:
                 _TILE_CACHE.move_to_end(cache_key)
                 return cached
 
-        rows = self._tile_rows(z, x, y)
+        rows = self._tile_rows(z, x, y, tile_crs)
 
         cells = []
         for row in rows:
@@ -120,6 +125,7 @@ class HydrodynamicMeshStore:
             "z": z,
             "x": x,
             "y": y,
+            "tile_crs": tile_crs,
         }
         with _TILE_CACHE_LOCK:
             _TILE_CACHE[cache_key] = result
@@ -128,8 +134,11 @@ class HydrodynamicMeshStore:
                 _TILE_CACHE.popitem(last=False)
         return result
 
-    def _tile_rows(self, z: int, x: int, y: int) -> list[sqlite3.Row]:
+    def _tile_rows(self, z: int, x: int, y: int,
+                   tile_crs: str = "wgs84") -> list[sqlite3.Row]:
         with self._connect() as conn:
+            if tile_crs == "gcj02":
+                return self._bbox_rows(conn, z, gcj02_tile_bounds_wgs84(z, x, y))
             if z in SUPPORTED_TILE_ZOOMS:
                 return conn.execute(
                     """
@@ -142,8 +151,35 @@ class HydrodynamicMeshStore:
                     (z, x, y),
                 ).fetchall()
 
-            min_lon, min_lat, max_lon, max_lat = tile_bounds(z, x, y)
+            return self._bbox_rows(conn, z, tile_bounds(z, x, y))
+
+    def _bbox_rows(self, conn: sqlite3.Connection, z: int,
+                   bounds: tuple[float, float, float, float]) -> list[sqlite3.Row]:
+        min_lon, min_lat, max_lon, max_lat = bounds
+        if z in SUPPORTED_TILE_ZOOMS:
+            min_x, max_y = lonlat_to_tile(min_lon, min_lat, z)
+            max_x, min_y = lonlat_to_tile(max_lon, max_lat, z)
             return conn.execute(
+                """
+                select distinct c.cell_id, c.lon1, c.lat1, c.lon2, c.lat2, c.lon3, c.lat3
+                from tile_cells tc
+                join cells c on c.cell_id = tc.cell_id
+                where tc.z = ?
+                  and tc.x between ? and ?
+                  and tc.y between ? and ?
+                  and c.max_lon >= ?
+                  and c.min_lon <= ?
+                  and c.max_lat >= ?
+                  and c.min_lat <= ?
+                order by c.cell_id
+                """,
+                (
+                    z, min(min_x, max_x), max(min_x, max_x),
+                    min(min_y, max_y), max(min_y, max_y),
+                    min_lon, max_lon, min_lat, max_lat,
+                ),
+            ).fetchall()
+        return conn.execute(
                 """
                 select cell_id, lon1, lat1, lon2, lat2, lon3, lat3
                 from cells
@@ -154,7 +190,7 @@ class HydrodynamicMeshStore:
                 order by cell_id
                 """,
                 (min_lon, max_lon, min_lat, max_lat),
-            ).fetchall()
+        ).fetchall()
 
     def query(self, filters: dict[str, Any] | None = None,
               limit: int | None = None, order_by: str | None = None,
@@ -290,8 +326,9 @@ def hydrodynamic_grid_stats(forecast_id: str = LATEST_FORECAST_ID) -> dict[str, 
 def hydrodynamic_grid_tile(z: int, x: int, y: int,
                            forecast_id: str = LATEST_FORECAST_ID,
                            wet_only: bool = False,
-                           time_h: float | None = None) -> dict[str, Any]:
-    return STORE.tile(z, x, y, forecast_id, wet_only, time_h)
+                           time_h: float | None = None,
+                           tile_crs: str = "wgs84") -> dict[str, Any]:
+    return STORE.tile(z, x, y, forecast_id, wet_only, time_h, tile_crs)
 
 
 def query_hydrodynamic_cells(filters: dict[str, Any] | None = None,
@@ -602,6 +639,11 @@ def normalize_forecast_id(forecast_id: str = LATEST_FORECAST_ID) -> str:
     return LATEST_FORECAST_ID if value in {"latest", "forecast_latest"} else value
 
 
+def normalize_tile_crs(tile_crs: str = "wgs84") -> str:
+    value = str(tile_crs or "wgs84").strip().lower()
+    return "gcj02" if value in {"gcj02", "gcj-02", "amap", "gaode"} else "wgs84"
+
+
 def lonlat_to_tile(lon: float, lat: float, z: int) -> tuple[int, int]:
     n = 2 ** z
     x = int((lon + 180.0) / 360.0 * n)
@@ -617,6 +659,74 @@ def tile_bounds(z: int, x: int, y: int) -> tuple[float, float, float, float]:
     max_lat = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * y / n))))
     min_lat = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (y + 1) / n))))
     return min_lon, min_lat, max_lon, max_lat
+
+
+def gcj02_tile_bounds_wgs84(z: int, x: int, y: int) -> tuple[float, float, float, float]:
+    min_lng, min_lat, max_lng, max_lat = tile_bounds(z, x, y)
+    gcj_points = [
+        (min_lng, min_lat),
+        (min_lng, max_lat),
+        (max_lng, min_lat),
+        (max_lng, max_lat),
+        ((min_lng + max_lng) / 2, min_lat),
+        ((min_lng + max_lng) / 2, max_lat),
+        (min_lng, (min_lat + max_lat) / 2),
+        (max_lng, (min_lat + max_lat) / 2),
+    ]
+    wgs_points = [gcj02_to_wgs84(lng, lat) for lng, lat in gcj_points]
+    padding = 1e-7
+    return (
+        min(point[0] for point in wgs_points) - padding,
+        min(point[1] for point in wgs_points) - padding,
+        max(point[0] for point in wgs_points) + padding,
+        max(point[1] for point in wgs_points) + padding,
+    )
+
+
+def wgs84_to_gcj02(lng: float, lat: float) -> tuple[float, float]:
+    if outside_china(lng, lat):
+        return lng, lat
+    axis = 6378245.0
+    eccentricity = 0.006693421622965943
+    delta_lat = gcj_transform_lat(lng - 105.0, lat - 35.0)
+    delta_lng = gcj_transform_lng(lng - 105.0, lat - 35.0)
+    radians = math.radians(lat)
+    magic = 1 - eccentricity * math.sin(radians) ** 2
+    root_magic = math.sqrt(magic)
+    delta_lat = math.degrees(delta_lat / ((axis * (1 - eccentricity)) / (magic * root_magic)))
+    delta_lng = math.degrees(delta_lng / ((axis / root_magic) * math.cos(radians)))
+    return lng + delta_lng, lat + delta_lat
+
+
+def gcj02_to_wgs84(lng: float, lat: float) -> tuple[float, float]:
+    if outside_china(lng, lat):
+        return lng, lat
+    original_lng, original_lat = lng, lat
+    for _ in range(4):
+        shifted_lng, shifted_lat = wgs84_to_gcj02(original_lng, original_lat)
+        original_lng += lng - shifted_lng
+        original_lat += lat - shifted_lat
+    return original_lng, original_lat
+
+
+def outside_china(lng: float, lat: float) -> bool:
+    return lng < 72.004 or lng > 137.8347 or lat < 0.8293 or lat > 55.8271
+
+
+def gcj_transform_lat(x: float, y: float) -> float:
+    value = -100 + 2 * x + 3 * y + 0.2 * y ** 2 + 0.1 * x * y + 0.2 * math.sqrt(abs(x))
+    value += (20 * math.sin(6 * x * math.pi) + 20 * math.sin(2 * x * math.pi)) * 2 / 3
+    value += (20 * math.sin(y * math.pi) + 40 * math.sin(y / 3 * math.pi)) * 2 / 3
+    value += (160 * math.sin(y / 12 * math.pi) + 320 * math.sin(y * math.pi / 30)) * 2 / 3
+    return value
+
+
+def gcj_transform_lng(x: float, y: float) -> float:
+    value = 300 + x + 2 * y + 0.1 * x ** 2 + 0.1 * x * y + 0.1 * math.sqrt(abs(x))
+    value += (20 * math.sin(6 * x * math.pi) + 20 * math.sin(2 * x * math.pi)) * 2 / 3
+    value += (20 * math.sin(x * math.pi) + 40 * math.sin(x / 3 * math.pi)) * 2 / 3
+    value += (150 * math.sin(x / 12 * math.pi) + 300 * math.sin(x / 30 * math.pi)) * 2 / 3
+    return value
 
 
 def epsg4546_to_wgs84(easting: float, northing: float) -> tuple[float, float]:

@@ -1,7 +1,7 @@
 const state = {
   map: null,
   baseLayer: null,
-  basemapKey: "light",
+  basemapKey: "standard",
   basemapLayers: new Map(),
   basemapSwitchToken: 0,
   basemapSwitchTimer: null,
@@ -43,32 +43,67 @@ const state = {
 };
 
 const BASEMAP_STORAGE_KEY = "flood-basemap";
+const AMAP_PROJECTION = {
+  bounds: L.Projection.SphericalMercator.bounds,
+  project(latlng) {
+    const shifted = wgs84ToGcj02(latlng.lng, latlng.lat);
+    return L.Projection.SphericalMercator.project(L.latLng(shifted.lat, shifted.lng));
+  },
+  unproject(point) {
+    const shifted = L.Projection.SphericalMercator.unproject(point);
+    const original = gcj02ToWgs84(shifted.lng, shifted.lat);
+    return L.latLng(original.lat, original.lng);
+  },
+};
+const AMAP_CRS = L.Util.extend({}, L.CRS.EPSG3857, {
+  code: "GCJ02:3857",
+  projection: AMAP_PROJECTION,
+});
+
 const BASEMAPS = {
-  light: {
-    url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-    options: {
-      subdomains: "abcd",
-      maxZoom: 20,
-      attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
-    },
+  standard: {
+    layers: [{
+      url: "https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x={x}&y={y}&z={z}",
+      options: {
+        subdomains: "1234",
+        maxZoom: 20,
+        maxNativeZoom: 18,
+        attribution: "&copy; 高德地图",
+      },
+    }],
   },
   satellite: {
-    url: "https://{s}.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    options: {
-      subdomains: ["server", "services"],
-      maxZoom: 20,
-      maxNativeZoom: 19,
-      attribution: "Tiles &copy; Esri, Maxar, Earthstar Geographics, and the GIS User Community",
-    },
+    layers: [{
+      url: "https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}",
+      options: {
+        subdomains: "1234",
+        maxZoom: 20,
+        maxNativeZoom: 18,
+        attribution: "&copy; 高德地图",
+      },
+    }],
   },
-  terrain: {
-    url: "https://{s}.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
-    options: {
-      subdomains: ["server", "services"],
-      maxZoom: 20,
-      maxNativeZoom: 19,
-      attribution: "Tiles &copy; Esri and its data providers",
-    },
+  hybrid: {
+    layers: [
+      {
+        url: "https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}",
+        options: {
+          subdomains: "1234",
+          maxZoom: 20,
+          maxNativeZoom: 18,
+          attribution: "&copy; 高德地图",
+        },
+      },
+      {
+        url: "https://webst0{s}.is.autonavi.com/appmaptile?style=8&x={x}&y={y}&z={z}",
+        options: {
+          subdomains: "1234",
+          maxZoom: 20,
+          maxNativeZoom: 18,
+          attribution: "&copy; 高德地图",
+        },
+      },
+    ],
   },
 };
 
@@ -142,6 +177,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 function initMap() {
   state.map = L.map("map", {
+    crs: AMAP_CRS,
     zoomControl: false,
     preferCanvas: true,
   }).setView([24.4, 111.35], 10);
@@ -151,16 +187,18 @@ function initMap() {
 }
 
 function setBasemap(key, options = {}) {
-  const nextKey = BASEMAPS[key] ? key : "light";
+  const nextKey = BASEMAPS[key] ? key : "standard";
   let nextLayer = state.basemapLayers.get(nextKey);
   if (!nextLayer) {
     const config = BASEMAPS[nextKey];
-    nextLayer = L.tileLayer(config.url, {
-      ...config.options,
+    const tileLayers = config.layers.map((item) => L.tileLayer(item.url, {
+      ...item.options,
       pane: "tilePane",
       updateWhenIdle: true,
       keepBuffer: 3,
-    });
+    }));
+    nextLayer = tileLayers.length === 1 ? tileLayers[0] : L.layerGroup(tileLayers);
+    nextLayer._basemapTileLayers = tileLayers;
     state.basemapLayers.set(nextKey, nextLayer);
   }
   state.basemapKey = nextKey;
@@ -171,8 +209,8 @@ function setBasemap(key, options = {}) {
     if (state.basemapSwitchTimer) window.clearTimeout(state.basemapSwitchTimer);
     state.basemapSwitchTimer = null;
     if (previousLayer) {
-      nextLayer.setOpacity(0);
-      nextLayer.once("load", () => finishBasemapSwitch(nextKey, nextLayer, switchToken));
+      setBasemapOpacity(nextLayer, 0);
+      whenBasemapLoaded(nextLayer, () => finishBasemapSwitch(nextKey, nextLayer, switchToken));
       state.basemapSwitchTimer = window.setTimeout(
         () => finishBasemapSwitch(nextKey, nextLayer, switchToken),
         15000,
@@ -180,8 +218,8 @@ function setBasemap(key, options = {}) {
     }
     nextLayer.addTo(state.map);
     if (!previousLayer) {
-      nextLayer.setOpacity(1);
-      nextLayer.bringToBack();
+      setBasemapOpacity(nextLayer, 1);
+      bringBasemapToBack(nextLayer);
     }
     state.baseLayer = nextLayer;
   }
@@ -200,12 +238,34 @@ function finishBasemapSwitch(key, layer, switchToken) {
   }
   if (state.basemapSwitchTimer) window.clearTimeout(state.basemapSwitchTimer);
   state.basemapSwitchTimer = null;
-  layer.setOpacity(1);
-  layer.bringToBack();
+  setBasemapOpacity(layer, 1);
+  bringBasemapToBack(layer);
   state.basemapLayers.forEach((candidate) => {
     if (candidate !== layer && state.map.hasLayer(candidate)) {
       state.map.removeLayer(candidate);
     }
+  });
+}
+
+function basemapTileLayers(layer) {
+  return layer?._basemapTileLayers || [layer];
+}
+
+function setBasemapOpacity(layer, opacity) {
+  basemapTileLayers(layer).forEach((tileLayer) => tileLayer?.setOpacity?.(opacity));
+}
+
+function bringBasemapToBack(layer) {
+  basemapTileLayers(layer).slice().reverse().forEach((tileLayer) => tileLayer?.bringToBack?.());
+}
+
+function whenBasemapLoaded(layer, callback) {
+  const pending = new Set(basemapTileLayers(layer));
+  pending.forEach((tileLayer) => {
+    tileLayer.once("load", () => {
+      pending.delete(tileLayer);
+      if (!pending.size) callback();
+    });
   });
 }
 
@@ -219,10 +279,11 @@ function setBasemapButtonActive(key) {
 
 function readStoredBasemap() {
   try {
-    const value = window.localStorage.getItem(BASEMAP_STORAGE_KEY) || "light";
-    return BASEMAPS[value] ? value : "light";
+    const value = window.localStorage.getItem(BASEMAP_STORAGE_KEY) || "standard";
+    const migrated = { light: "standard", terrain: "hybrid" }[value] || value;
+    return BASEMAPS[migrated] ? migrated : "standard";
   } catch {
-    return "light";
+    return "standard";
   }
 }
 
@@ -232,6 +293,53 @@ function storeBasemap(key) {
   } catch {
     // Browsers with restricted storage still keep the current in-memory selection.
   }
+}
+
+function wgs84ToGcj02(lng, lat) {
+  if (outsideChina(lng, lat)) return { lng, lat };
+  const axis = 6378245.0;
+  const eccentricity = 0.006693421622965943;
+  let deltaLat = gcjTransformLat(lng - 105.0, lat - 35.0);
+  let deltaLng = gcjTransformLng(lng - 105.0, lat - 35.0);
+  const radians = (lat / 180.0) * Math.PI;
+  let magic = Math.sin(radians);
+  magic = 1 - eccentricity * magic * magic;
+  const rootMagic = Math.sqrt(magic);
+  deltaLat = (deltaLat * 180.0) / (((axis * (1 - eccentricity)) / (magic * rootMagic)) * Math.PI);
+  deltaLng = (deltaLng * 180.0) / ((axis / rootMagic) * Math.cos(radians) * Math.PI);
+  return { lng: lng + deltaLng, lat: lat + deltaLat };
+}
+
+function gcj02ToWgs84(lng, lat) {
+  if (outsideChina(lng, lat)) return { lng, lat };
+  let originalLng = lng;
+  let originalLat = lat;
+  for (let index = 0; index < 4; index += 1) {
+    const shifted = wgs84ToGcj02(originalLng, originalLat);
+    originalLng += lng - shifted.lng;
+    originalLat += lat - shifted.lat;
+  }
+  return { lng: originalLng, lat: originalLat };
+}
+
+function outsideChina(lng, lat) {
+  return lng < 72.004 || lng > 137.8347 || lat < 0.8293 || lat > 55.8271;
+}
+
+function gcjTransformLat(x, y) {
+  let value = -100 + 2 * x + 3 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+  value += ((20 * Math.sin(6 * x * Math.PI) + 20 * Math.sin(2 * x * Math.PI)) * 2) / 3;
+  value += ((20 * Math.sin(y * Math.PI) + 40 * Math.sin((y / 3) * Math.PI)) * 2) / 3;
+  value += ((160 * Math.sin((y / 12) * Math.PI) + 320 * Math.sin((y * Math.PI) / 30)) * 2) / 3;
+  return value;
+}
+
+function gcjTransformLng(x, y) {
+  let value = 300 + x + 2 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+  value += ((20 * Math.sin(6 * x * Math.PI) + 20 * Math.sin(2 * x * Math.PI)) * 2) / 3;
+  value += ((20 * Math.sin(x * Math.PI) + 40 * Math.sin((x / 3) * Math.PI)) * 2) / 3;
+  value += ((150 * Math.sin((x / 12) * Math.PI) + 300 * Math.sin((x / 30) * Math.PI)) * 2) / 3;
+  return value;
 }
 
 async function bootstrap() {
@@ -1578,6 +1686,7 @@ L.GridLayer.HydrodynamicGrid = L.GridLayer.extend({
       z: String(coords.z),
       x: String(coords.x),
       y: String(coords.y),
+      tile_crs: "gcj02",
     });
     Object.entries(this.options.resultFilters || { result: "mesh" }).forEach(([name, value]) => {
       params.set(name, value);
@@ -1782,12 +1891,10 @@ function tilePoint(x, y, z) {
 }
 
 function latLngToTilePixel(lat, lon, z, origin) {
-  const sinLat = Math.sin((lat * Math.PI) / 180);
-  const worldX = ((lon + 180) / 360) * origin.scale;
-  const worldY = (0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI)) * origin.scale;
+  const world = state.map.options.crs.latLngToPoint(L.latLng(lat, lon), z);
   return {
-    x: worldX - origin.x,
-    y: worldY - origin.y,
+    x: world.x - origin.x,
+    y: world.y - origin.y,
   };
 }
 

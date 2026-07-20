@@ -126,8 +126,9 @@ class FloodApp:
     def hydrodynamic_grid_tile(self, z: int, x: int, y: int,
                                forecast_id: str = "latest",
                                wet_only: bool = False,
-                               time_h: float | None = None) -> dict[str, Any]:
-        return hydrodynamic_grid_tile(z, x, y, forecast_id, wet_only, time_h)
+                               time_h: float | None = None,
+                               tile_crs: str = "wgs84") -> dict[str, Any]:
+        return hydrodynamic_grid_tile(z, x, y, forecast_id, wet_only, time_h, tile_crs)
 
     def analyze_inundation_impacts(self, forecast_id: str = "latest",
                                    target_type: str = "all",

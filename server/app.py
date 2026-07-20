@@ -185,7 +185,8 @@ class Handler(BaseHTTPRequestHandler):
         forecast_id = self._hydrodynamic_result_id(params)
         wet_only = str((params.get("wet_only") or [""])[0]).lower() in {"1", "true", "yes", "on"}
         time_h = _coerce_optional_float((params.get("time_h") or [""])[0])
-        data = APP.hydrodynamic_grid_tile(z, x, y, forecast_id, wet_only, time_h)
+        tile_crs = (params.get("tile_crs") or ["wgs84"])[0]
+        data = APP.hydrodynamic_grid_tile(z, x, y, forecast_id, wet_only, time_h, tile_crs)
         body = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
