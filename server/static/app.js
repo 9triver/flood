@@ -1,5 +1,10 @@
 const state = {
   map: null,
+  baseLayer: null,
+  basemapKey: "light",
+  basemapLayers: new Map(),
+  basemapSwitchToken: 0,
+  basemapSwitchTimer: null,
   layerGroups: new Map(),
   layerMeta: new Map(),
   featureIndex: new Map(),
@@ -37,10 +42,39 @@ const state = {
   applyingImpactRefresh: false,
 };
 
+const BASEMAP_STORAGE_KEY = "flood-basemap";
+const BASEMAPS = {
+  light: {
+    url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+    options: {
+      subdomains: "abcd",
+      maxZoom: 20,
+      attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
+    },
+  },
+  satellite: {
+    url: "https://{s}.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    options: {
+      subdomains: ["server", "services"],
+      maxZoom: 20,
+      maxNativeZoom: 19,
+      attribution: "Tiles &copy; Esri, Maxar, Earthstar Geographics, and the GIS User Community",
+    },
+  },
+  terrain: {
+    url: "https://{s}.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
+    options: {
+      subdomains: ["server", "services"],
+      maxZoom: 20,
+      maxNativeZoom: 19,
+      attribution: "Tiles &copy; Esri and its data providers",
+    },
+  },
+};
+
 const OBJECT_CONFIG = {
   River: { label: "珊瑚河", color: "#0e7490", swatch: "line" },
   Watershed: { label: "珊瑚河流域", color: "#1f2937", swatch: "fill" },
-  Waterway: { label: "河道水系", color: "#0e7490", swatch: "line" },
   HydrodynamicBoundary: { label: "水动力边界", color: "#e11d48", swatch: "line" },
   County: { label: "县级边界", color: "#7b8794", swatch: "line" },
   Town: { label: "乡镇边界", color: "#7a6a22", swatch: "fill" },
@@ -63,7 +97,6 @@ const OBJECT_CONFIG = {
 const ID_FIELDS = {
   River: "river_id",
   Watershed: "watershed_id",
-  Waterway: "waterway_id",
   HydrodynamicBoundary: "boundary_id",
   County: "county_id",
   Town: "town_id",
@@ -114,10 +147,91 @@ function initMap() {
   }).setView([24.4, 111.35], 10);
 
   L.control.zoom({ position: "bottomleft" }).addTo(state.map);
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19,
-    attribution: "&copy; OpenStreetMap contributors",
-  }).addTo(state.map);
+  setBasemap(readStoredBasemap(), { persist: false });
+}
+
+function setBasemap(key, options = {}) {
+  const nextKey = BASEMAPS[key] ? key : "light";
+  let nextLayer = state.basemapLayers.get(nextKey);
+  if (!nextLayer) {
+    const config = BASEMAPS[nextKey];
+    nextLayer = L.tileLayer(config.url, {
+      ...config.options,
+      pane: "tilePane",
+      updateWhenIdle: true,
+      keepBuffer: 3,
+    });
+    state.basemapLayers.set(nextKey, nextLayer);
+  }
+  state.basemapKey = nextKey;
+  if (state.baseLayer !== nextLayer) {
+    const previousLayer = state.baseLayer;
+    const switchToken = state.basemapSwitchToken + 1;
+    state.basemapSwitchToken = switchToken;
+    if (state.basemapSwitchTimer) window.clearTimeout(state.basemapSwitchTimer);
+    state.basemapSwitchTimer = null;
+    if (previousLayer) {
+      nextLayer.setOpacity(0);
+      nextLayer.once("load", () => finishBasemapSwitch(nextKey, nextLayer, switchToken));
+      state.basemapSwitchTimer = window.setTimeout(
+        () => finishBasemapSwitch(nextKey, nextLayer, switchToken),
+        15000,
+      );
+    }
+    nextLayer.addTo(state.map);
+    if (!previousLayer) {
+      nextLayer.setOpacity(1);
+      nextLayer.bringToBack();
+    }
+    state.baseLayer = nextLayer;
+  }
+  setBasemapButtonActive(nextKey);
+  if (options.persist !== false) storeBasemap(nextKey);
+}
+
+function finishBasemapSwitch(key, layer, switchToken) {
+  if (state.basemapSwitchToken !== switchToken || state.basemapKey !== key) {
+    window.setTimeout(() => {
+      if (state.map.hasLayer(layer) && state.baseLayer !== layer) {
+        state.map.removeLayer(layer);
+      }
+    }, 0);
+    return;
+  }
+  if (state.basemapSwitchTimer) window.clearTimeout(state.basemapSwitchTimer);
+  state.basemapSwitchTimer = null;
+  layer.setOpacity(1);
+  layer.bringToBack();
+  state.basemapLayers.forEach((candidate) => {
+    if (candidate !== layer && state.map.hasLayer(candidate)) {
+      state.map.removeLayer(candidate);
+    }
+  });
+}
+
+function setBasemapButtonActive(key) {
+  document.querySelectorAll("[data-basemap]").forEach((button) => {
+    const active = button.dataset.basemap === key;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-checked", String(active));
+  });
+}
+
+function readStoredBasemap() {
+  try {
+    const value = window.localStorage.getItem(BASEMAP_STORAGE_KEY) || "light";
+    return BASEMAPS[value] ? value : "light";
+  } catch {
+    return "light";
+  }
+}
+
+function storeBasemap(key) {
+  try {
+    window.localStorage.setItem(BASEMAP_STORAGE_KEY, key);
+  } catch {
+    // Browsers with restricted storage still keep the current in-memory selection.
+  }
 }
 
 async function bootstrap() {
@@ -129,7 +243,7 @@ async function bootstrap() {
 
 function renderObjectList(items) {
   const list = document.getElementById("objectList");
-  const visible = ["River", "Watershed", "Waterway", "HydrodynamicBoundary", "County", "Town", "HydrodynamicCell", "ForecastResult", "HydroStation", "Road", "Reservoir", "Sluice", "Bridge", "HydraulicStructure", "Risk", "Place", "Route"];
+  const visible = ["River", "Watershed", "HydrodynamicBoundary", "County", "Town", "HydrodynamicCell", "ForecastResult", "HydroStation", "Road", "Reservoir", "Sluice", "Bridge", "HydraulicStructure", "Risk", "Place", "Route"];
   list.innerHTML = "";
 
   visible.forEach((objectType) => {
@@ -158,6 +272,9 @@ function bindEvents() {
   document.getElementById("hydroPlayBtn").addEventListener("click", toggleHydrodynamicTimelinePlayback);
   document.getElementById("hydroTimeSlider").addEventListener("input", (event) => {
     setHydrodynamicTimelineIndex(Number(event.target.value || 0));
+  });
+  document.querySelectorAll("[data-basemap]").forEach((button) => {
+    button.addEventListener("click", () => setBasemap(button.dataset.basemap));
   });
   document.querySelectorAll("[data-panel-toggle]").forEach((btn) => {
     btn.addEventListener("click", () => activateAgentPane(btn.dataset.panelToggle));
@@ -348,6 +465,7 @@ async function applyHydrodynamicResult(options = {}) {
     resultFilters: filters,
     renderMode: "result",
     wetOnly: true,
+    interactiveCells: true,
     minTileZoom: state.hydrodynamicResultMeta?.min_tile_zoom || 13,
   }).addTo(state.map);
   state.layerGroups.set(key, layer);
@@ -415,6 +533,7 @@ function setHydrodynamicTimelineIndex(index) {
     label.textContent = `${formatHydrodynamicHour(hour)} h`;
   }
   timeline.layer.options.resultFilters = filters;
+  timeline.layer.clearSelection?.();
   timeline.layer.redraw();
   scheduleImpactAnalysisRefresh();
 }
@@ -949,7 +1068,6 @@ function featureStyle(objectType, feature) {
   }
   if (objectType === "Watershed") return { color: "#1f2937", weight: 1.3, fillColor: "#9bc4df", fillOpacity: 0.1 };
   if (objectType === "River") return { color: "#0e7490", weight: 4, opacity: 0.95 };
-  if (objectType === "Waterway") return { color: "#0e7490", weight: 2.4, opacity: 0.9 };
   if (objectType === "HydrodynamicBoundary") return {
     color: boundaryColor(feature),
     weight: boundaryWeight(feature),
@@ -1434,6 +1552,17 @@ async function executeActions(actions) {
 }
 
 L.GridLayer.HydrodynamicGrid = L.GridLayer.extend({
+  onAdd(map) {
+    L.GridLayer.prototype.onAdd.call(this, map);
+    if (this.options.interactiveCells) map.on("click", this._handleCellClick, this);
+  },
+
+  onRemove(map) {
+    map.off("click", this._handleCellClick, this);
+    this.clearSelection();
+    L.GridLayer.prototype.onRemove.call(this, map);
+  },
+
   createTile(coords, done) {
     const tile = document.createElement("canvas");
     const size = this.getTileSize();
@@ -1462,6 +1591,8 @@ L.GridLayer.HydrodynamicGrid = L.GridLayer.extend({
         return res.json();
       })
       .then((data) => {
+        tile._hydrodynamicData = data;
+        tile._hydrodynamicCoords = { ...coords };
         drawHydrodynamicTile(ctx, size, coords, data, this.options.renderMode || "mesh");
         done(null, tile);
       })
@@ -1470,6 +1601,74 @@ L.GridLayer.HydrodynamicGrid = L.GridLayer.extend({
         done(null, tile);
       });
     return tile;
+  },
+
+  clearSelection() {
+    if (this._selectedCellLayer) {
+      this._selectedCellLayer.remove();
+      this._selectedCellLayer = null;
+    }
+    if (this._cellPopup) {
+      this._cellPopup.remove();
+      this._cellPopup = null;
+    }
+  },
+
+  _handleCellClick(event) {
+    if (hydrodynamicClickHitsAnotherObject(event)) return;
+    const cell = this._cellAtLatLng(event.latlng);
+    if (!cell || Number(cell.depth || 0) <= 0) {
+      this.clearSelection();
+      return;
+    }
+    this.clearSelection();
+    this._selectedCellLayer = L.polygon(cell.latlngs, {
+      color: "#111827",
+      weight: 2,
+      opacity: 0.95,
+      fill: false,
+      interactive: false,
+    }).addTo(this._map);
+    this._cellPopup = L.popup({
+      className: "hydrodynamic-cell-popup",
+      closeButton: false,
+      offset: [0, -4],
+    })
+      .setLatLng(event.latlng)
+      .setContent(hydrodynamicCellPopupHtml(cell))
+      .openOn(this._map);
+  },
+
+  _cellAtLatLng(latlng) {
+    if (!this._map) return null;
+    const zoom = this._map.getZoom();
+    const tileSize = this.getTileSize();
+    const projected = this._map.project(latlng, zoom);
+    const tileCoords = {
+      x: Math.floor(projected.x / tileSize.x),
+      y: Math.floor(projected.y / tileSize.y),
+      z: zoom,
+    };
+    const tileEntry = this._tiles?.[this._tileCoordsToKey(tileCoords)];
+    const data = tileEntry?.el?._hydrodynamicData;
+    if (!Array.isArray(data?.cells)) return null;
+    for (let index = data.cells.length - 1; index >= 0; index -= 1) {
+      const raw = data.cells[index];
+      const vertices = [
+        { lat: Number(raw[3]), lng: Number(raw[2]) },
+        { lat: Number(raw[5]), lng: Number(raw[4]) },
+        { lat: Number(raw[7]), lng: Number(raw[6]) },
+      ];
+      if (!pointInHydrodynamicTriangle(latlng, vertices)) continue;
+      return {
+        cellId: raw[0],
+        depth: Number(raw[1] || 0),
+        forecastId: data.forecast_id || this.options.resultFilters?.forecast_id || "latest",
+        timeH: data.time_h,
+        latlngs: vertices.map((point) => [point.lat, point.lng]),
+      };
+    }
+    return null;
   },
 });
 
@@ -1501,6 +1700,41 @@ function drawHydrodynamicTile(ctx, size, coords, data, renderMode = "mesh") {
     ctx.stroke();
   });
   ctx.globalAlpha = 1;
+}
+
+function hydrodynamicClickHitsAnotherObject(event) {
+  const target = event.originalEvent?.target;
+  if (!target?.closest) return false;
+  return Boolean(target.closest(".leaflet-interactive, .leaflet-marker-icon, .leaflet-control"));
+}
+
+function pointInHydrodynamicTriangle(point, vertices) {
+  const [a, b, c] = vertices;
+  const d1 = hydrodynamicTriangleSign(point, a, b);
+  const d2 = hydrodynamicTriangleSign(point, b, c);
+  const d3 = hydrodynamicTriangleSign(point, c, a);
+  const epsilon = 1e-12;
+  const hasNegative = d1 < -epsilon || d2 < -epsilon || d3 < -epsilon;
+  const hasPositive = d1 > epsilon || d2 > epsilon || d3 > epsilon;
+  return !(hasNegative && hasPositive);
+}
+
+function hydrodynamicTriangleSign(point, first, second) {
+  return (point.lng - second.lng) * (first.lat - second.lat)
+    - (first.lng - second.lng) * (point.lat - second.lat);
+}
+
+function hydrodynamicCellPopupHtml(cell) {
+  const depth = Number(cell.depth || 0);
+  const depthText = depth < 0.01 ? depth.toFixed(4) : depth.toFixed(3);
+  const timeText = cell.timeH == null
+    ? "最大水深"
+    : `${formatHydrodynamicHour(Number(cell.timeH))} h`;
+  return `
+    <div class="popup-title">淹水网格 ${escapeHtml(String(cell.cellId))}</div>
+    <div class="popup-depth">${escapeHtml(depthText)} <span>m</span></div>
+    <div class="popup-meta">${escapeHtml(timeText)} · ${escapeHtml(String(cell.forecastId || "latest"))}</div>
+  `;
 }
 
 function hydrodynamicMeshStyle() {

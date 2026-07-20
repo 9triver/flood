@@ -34,6 +34,24 @@
         </div>
         <div class="map-layer-control">
           <section class="layer-panel" id="layerPanel" aria-label="图层控制">
+            <div class="panel-section basemap-section">
+              <div class="section-title">底图</div>
+              <div class="basemap-options" role="radiogroup" aria-label="底图选择">
+                <button type="button" class="basemap-option" data-basemap="light" role="radio" aria-checked="true">
+                  <i data-lucide="map"></i>
+                  <span>浅色</span>
+                </button>
+                <button type="button" class="basemap-option" data-basemap="satellite" role="radio" aria-checked="false">
+                  <i data-lucide="satellite"></i>
+                  <span>卫星</span>
+                </button>
+                <button type="button" class="basemap-option" data-basemap="terrain" role="radio" aria-checked="false">
+                  <i data-lucide="mountain-snow"></i>
+                  <span>地形</span>
+                </button>
+              </div>
+            </div>
+
             <div class="panel-section">
               <div class="section-title">领域对象</div>
               <div class="object-list" id="objectList"></div>

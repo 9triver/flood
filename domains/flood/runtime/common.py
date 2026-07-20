@@ -19,7 +19,7 @@ SOURCES_DIR = DOMAIN_DATA_DIR / "sources"
 OBJECT_LIBRARY_FILES = {
     "River": "river.jsonl",
     "Watershed": "watershed.jsonl",
-    "Waterway": "waterway.jsonl",
+    # Waterway data is retained in waterway.jsonl but is temporarily disabled.
     "HydrodynamicBoundary": "hydrodynamic_boundary.jsonl",
     "County": "county.jsonl",
     "Town": "town.jsonl",
@@ -47,11 +47,6 @@ MAPPABLE_OBJECTS = {
         "label": "珊瑚河流域",
         "role": "base",
         "style": {"type": "fill", "color": "#111827", "weight": 1, "fillColor": "#9bc4df", "fillOpacity": 0.1},
-    },
-    "Waterway": {
-        "label": "河道水系",
-        "role": "base",
-        "style": {"type": "line", "color": "#0e7490", "weight": 2},
     },
     "HydrodynamicBoundary": {
         "label": "水动力边界",
@@ -184,7 +179,6 @@ def id_field(object_type: str) -> str:
     return {
         "River": "river_id",
         "Watershed": "watershed_id",
-        "Waterway": "waterway_id",
         "HydrodynamicBoundary": "boundary_id",
         "County": "county_id",
         "Town": "town_id",

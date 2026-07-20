@@ -32,7 +32,6 @@ from domains.flood.runtime.tools import list_mappable_objects  # noqa: E402
 ID_FIELDS = {
     "River": "river_id",
     "Watershed": "watershed_id",
-    "Waterway": "waterway_id",
     "HydrodynamicBoundary": "boundary_id",
     "County": "county_id",
     "Town": "town_id",
@@ -248,6 +247,8 @@ class FloodApp:
                     "再用 ui_show_objects 展示 HydrodynamicCell、Risk、Transfer、Place、Route 等对象。"
                     "预测淹没地图展示必须分解为显示水动力网格和应用 forecast_id=latest 的水深结果；不要把 severity_index 或综合指标映射到 5/10/20/50/100 年一遇设计方案。"
                     "对象级受淹判定必须来自 analyze_inundation_impacts 的返回结果；防洪响应预案仍需通过已实现工具或人工审批。"
+                    "当用户要求规划导航、避洪路线或绕开淹没区域前往安置点时，调用 plan_evacuation_route；"
+                    "成功后用结果中的 route_id 调用 ui_show_objects，只显示本次生成的 Route。"
                 ),
             ),
         )
@@ -276,6 +277,7 @@ class FloodApp:
             "不要把这些前端动作当作领域事实；领域事实必须通过 OAG 工具查询。"
             "如果用户请求地图展示，请调用 ui_* 工具；这些工具只改变前端显示，不改变领域数据。"
             "如果需要对象级受淹判定，调用 analyze_inundation_impacts；不要自行猜测。"
+            "如果需要避洪路线规划，调用 plan_evacuation_route，并使用返回的 route_id 显示动态 Route。"
             "如果 hydrodynamic_timeline.mode=time_slice 且用户询问当前时刻/当前画面/该时刻影响，"
             "把 current_hydrodynamic_time_h 作为 analyze_inundation_impacts.time_h；"
             "如果用户询问总体或最大影响，不传 time_h。\n"

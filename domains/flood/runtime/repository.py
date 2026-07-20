@@ -19,6 +19,7 @@ from .forecast import (
     query_forecast_runs,
 )
 from .hydrodynamic_grid import count_hydrodynamic_cells, query_hydrodynamic_cells
+from .route_planning import read_planned_routes
 
 
 class FloodRepository:
@@ -34,6 +35,12 @@ class FloodRepository:
             return query_forecast_cells(self, filters, limit, order_by, offset)
         if object_type == "HydrodynamicCell":
             return query_hydrodynamic_cells(filters, limit, order_by, offset)
+        if object_type == "Route":
+            rows = [dict(row) for row in self._rows(object_type)]
+            rows.extend(read_planned_routes())
+            rows = apply_filters(rows, filters)
+            rows = apply_order(rows, order_by)
+            return apply_window(rows, limit, offset)
         rows = [dict(row) for row in self._rows(object_type)]
         rows = apply_filters(rows, filters)
         rows = apply_order(rows, order_by)

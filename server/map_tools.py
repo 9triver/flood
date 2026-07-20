@@ -12,7 +12,6 @@ from domains.flood.runtime.hydrodynamic_grid import hydrodynamic_grid_stats
 OBJECT_LABELS = {
     "River": "珊瑚河",
     "Watershed": "珊瑚河流域",
-    "Waterway": "河道水系",
     "HydrodynamicBoundary": "水动力边界",
     "County": "县级边界",
     "Town": "乡镇边界",
@@ -92,7 +91,7 @@ def register_map_tools(tools: ToolRegistry, resolver, registry) -> None:
         },
         handler=lambda args: _show_objects(args, resolver, registry),
         usage_prompt=(
-            "常用映射：珊瑚河/主河道/河道中心线 => River；河道/水系/河网 => Waterway；"
+            "常用映射：珊瑚河/主河道/河道中心线 => River；"
             "水动力边界/模型边界/入流边界/断面位置/河口水位/坝址边界 => HydrodynamicBoundary；"
             "流域/小流域 => Watershed；县级边界/行政边界 => County；危险区/风险点 => Risk；"
             "乡镇/乡镇边界/镇界 => Town；"

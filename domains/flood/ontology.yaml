@@ -13,7 +13,7 @@ objects:
       resolver: flood_repository
       id_field: river_id
     summary: "河流主体"
-    description: "River 表达珊瑚河这个河流主体，是水文、洪水过程、水利工程和流域对象的关联中心。流域范围由 Watershed 表达，水系线段由 Waterway 表达。"
+    description: "River 表达珊瑚河这个河流主体，是水文、洪水过程、水利工程和流域对象的关联中心。流域范围由 Watershed 表达。"
     properties:
       river_id: {type: str, required: true, description: "河流编号，如 shanhu"}
       name: {type: str, description: "河流名称"}
@@ -37,26 +37,6 @@ objects:
       name: {type: str, description: "流域名称"}
       watershed_type: {type: str, description: "流域类型，如 flood_risk_basin/small_watershed"}
       area_km2: {type: float, description: "流域面积，若数据可得"}
-
-  Waterway:
-    kind: entity
-    data_source: external_api
-    mutability: read_only
-    source:
-      type: resolver
-      resolver: flood_repository
-      id_field: waterway_id
-    summary: "河道或水系线"
-    description: "Waterway 表达流域内河道、水系线段，用于说明河流网络、支流和边界入流关系。"
-    properties:
-      waterway_id: {type: str, required: true, description: "水系线对象ID，如 waterway_001"}
-      river_id: {type: str, description: "所属河流编号"}
-      watershed_id: {type: str, description: "所属流域编号"}
-      name: {type: str, description: "水系名称，未命名则为空"}
-      waterway_type: {type: str, description: "水系类型，如 river/stream"}
-      length_m: {type: float, description: "线对象长度，米"}
-      inside_basin_length_m: {type: float, description: "估算位于流域内的线段长度，米"}
-      inside_basin_ratio: {type: float, description: "估算位于流域内的长度占比"}
 
   HydrodynamicBoundary:
     kind: entity
@@ -316,6 +296,18 @@ objects:
       place_id: {type: str, description: "目标地点ID"}
       population: {type: int, description: "服务或转移人口"}
       length_m: {type: float, description: "路线长度，米"}
+      duration_s: {type: float, description: "预计通行时间，秒"}
+      status: {type: str, description: "路线状态，如 planned/approved/blocked"}
+      routing_engine: {type: str, description: "路线计算引擎"}
+      profile: {type: str, description: "路由交通模式，如 car/foot"}
+      forecast_id: {type: str, description: "规划依据的洪水预测ID"}
+      time_h: {type: float, description: "规划依据的预测时刻，小时"}
+      blocked_depth_m: {type: float, description: "道路禁行水深阈值，米"}
+      start_snap_distance_m: {type: float, description: "起点到 OSM 可通行道路的吸附距离，米"}
+      destination_snap_distance_m: {type: float, description: "终点到 OSM 可通行道路的吸附距离，米"}
+      detour_ratio: {type: float, description: "路线长度与起终点直线距离之比"}
+      start_object_type: {type: str, description: "起点对象类型"}
+      start_object_id: {type: str, description: "起点对象ID"}
 
   ForecastRun:
     kind: entity
@@ -481,14 +473,6 @@ links:
     link_type: contains
     cardinality: 1..n
 
-  watershed_waterways:
-    source: Watershed
-    target: Waterway
-    join: {source_key: watershed_id, target_key: watershed_id}
-    description: "流域内的河道或水系线"
-    link_type: contains
-    cardinality: 1..n
-
   county_towns:
     source: County
     target: Town
@@ -608,3 +592,25 @@ functions:
       min_depth_m: {type: float, description: "纳入影响判定的最低预测水深，单位 m", default: 0.15}
       max_distance_m: {type: float, description: "对象或采样点到预测淹没网格中心的最大匹配距离，单位 m", default: 120}
       time_h: {type: float, description: "可选预测时刻，单位小时；不传表示使用最大水深包络", default: ""}
+
+  plan_evacuation_route:
+    summary: "按洪水预测约束规划避洪路线"
+    description: "使用 GraphHopper 和 OSM 道路网络规划起点至安置点的路线。达到 blocked_depth_m 的 ForecastCell 会被聚合为空间禁行区域并通过请求级 custom model 排除；成功结果保存为可查询和绘制的 Route 对象。"
+    usage_prompt: "当用户要求路线规划、导航、绕开淹没区域前往安置点或为某个 Transfer 生成避洪路线时调用。优先使用 start_object_type + start_object_id 和 destination_place_id；只有没有领域对象时才传经纬度。如果前端处于水动力时间轴某一时刻，必须把 current_hydrodynamic_time_h 作为 time_h。驾车使用 profile=car 且默认禁行水深0.3米；步行使用 profile=foot 且默认禁行水深0.15米。avoid_flood 默认 true。成功后调用 ui_show_objects，object_type=Route，filters 使用结果 route.route_id，只显示本次动态路线。"
+    function_type: lookup
+    involves_objects: [Route, Transfer, Place, Road, ForecastRun, ForecastCell]
+    params:
+      start_object_type: {type: str, description: "起点领域对象类型，通常为 Transfer/Place/Facility", default: "Transfer"}
+      start_object_id: {type: str, description: "起点领域对象ID", default: ""}
+      destination_place_id: {type: str, description: "目标安置点 Place ID；Transfer 已关联 place_id 时可省略", default: ""}
+      start_lon: {type: float, description: "无起点对象时使用的起点经度", default: ""}
+      start_lat: {type: float, description: "无起点对象时使用的起点纬度", default: ""}
+      destination_lon: {type: float, description: "无安置点对象时使用的终点经度", default: ""}
+      destination_lat: {type: float, description: "无安置点对象时使用的终点纬度", default: ""}
+      forecast_id: {type: str, description: "洪水预测ID", default: "latest"}
+      time_h: {type: float, description: "可选预测时刻，小时；不传使用最大水深包络", default: ""}
+      blocked_depth_m: {type: float, description: "禁行水深阈值，米；不传时 car 使用0.3、foot 使用0.15", default: ""}
+      profile: {type: str, description: "GraphHopper 路由模式: car/foot", default: "car"}
+      avoid_flood: {type: bool, description: "是否应用预测淹没禁行约束", default: true}
+      max_snap_distance_m: {type: float, description: "起终点允许吸附到 OSM 道路的最大距离，米", default: 800}
+      max_detour_ratio: {type: float, description: "允许的最大路线绕行倍率", default: 10}
