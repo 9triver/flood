@@ -1,38 +1,13 @@
-# OSM 避洪路线规划
+# 高德避洪路线规划
 
-系统使用 GraphHopper 11 读取珊瑚河周边 OSM 道路网络，并提供 `car` 和 `foot` 两种路由模式。`plan_evacuation_route` 会把指定预测时刻中达到禁行水深的 `ForecastCell` 聚合为空间区域，并通过 GraphHopper 请求级 custom model 排除这些区域内的道路。驾车默认禁行水深为0.3米，步行默认为0.15米。
+`plan_evacuation_route` 只使用高德 Web 服务规划 `car` 或 `foot` 路线，并把高德返回的 GCJ-02 几何转换为对象库统一使用的 WGS84。驾车默认禁行水深为0.3米，步行默认为0.15米。步行规划使用高德路线规划 2.0，一次请求最多三条候选路线。
 
-规划结果还会校验起终点到 OSM 道路的吸附距离和路线绕行倍率。默认最大吸附距离为 800 米、最大绕行倍率为 10；超过限制时返回 `invalid_route`，不会把不可信路线写入对象库。
+函数逐条检查候选路线与指定预测时刻中达到禁行水深的 `ForecastCell` 是否相交，并从安全候选中选择距离最短的一条。所有候选均不安全时返回 `no_safe_route`，不会保存违反洪水约束的路线。高德步行接口不支持传入自定义淹没面进行二次绕行，因此此时需要调整目的地、预测时刻或生成绕行点后分段规划。
 
-## 启动 GraphHopper
-
-本机需要 Java 17 或更高版本。首次运行：
-
-```bash
-.venv/bin/python scripts/graphhopper.py prepare
-.venv/bin/python scripts/graphhopper.py serve
-```
-
-第一次启动会导入 OSM XML 并在 `local/routing/graph-cache` 建立路由图，后续启动直接读取缓存。服务监听 `http://127.0.0.1:8989`，状态检查：
-
-```bash
-.venv/bin/python scripts/graphhopper.py status
-```
-
-应用默认连接上述地址。远端部署可在 `.env` 中设置：
+高德 Web 服务配置在被 Git 忽略的 `.env` 中：
 
 ```dotenv
-GRAPHHOPPER_URL=http://127.0.0.1:8989
-GRAPHHOPPER_TIMEOUT_SECONDS=20
+AMAP_WEB_SERVICE_KEY=your-web-service-key
 ```
 
-## 数据边界
-
-路由网络由 `domains/flood/data/sources/osm_roads_shanhu.json` 构建，目前覆盖约 `111.04-111.48E, 24.22-24.59N`。更新 OSM 源数据后执行：
-
-```bash
-.venv/bin/python scripts/graphhopper.py prepare --force-osm
-rm -rf local/routing/graph-cache
-```
-
-删除图缓存是为了让 GraphHopper 重新导入更新后的路网。动态规划结果保存在 `domains/flood/data/generated/routing/planned_routes.jsonl`，并通过 `Route` repository 与静态转移路线一起查询。
+规划结果会校验高德路线起终点与领域对象坐标的距离以及路线绕行倍率。默认最大端点距离为 800 米、最大绕行倍率为 10；超过限制时返回 `invalid_route`。动态规划结果保存在 `domains/flood/data/generated/routing/planned_routes.jsonl`，并通过 `Route` repository 与静态转移路线一起查询。

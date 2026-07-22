@@ -17,12 +17,24 @@
       <main class="map-stage">
         <div class="map-toolbar">
           <div class="map-toolbar-left">
-            <button class="tool-button mock-toggle" id="mockToggleBtn" title="启动边界流量 mock 服务" aria-pressed="false">
+            <button class="tool-button playback-toggle" id="playbackToggleBtn" title="启动边界流量过程回放" aria-pressed="false">
               <i data-lucide="play"></i>
-              <span>启动 Mock</span>
+              <span>开始演进</span>
             </button>
+            <label class="playback-speed" title="演进速率">
+              <i data-lucide="gauge"></i>
+              <select id="playbackSpeedSelect" aria-label="演进速率">
+                <option value="1">1×</option>
+                <option value="2">2×</option>
+                <option value="5">5×</option>
+                <option value="10">10×</option>
+              </select>
+            </label>
             <button class="icon-button" id="layerPanelBtn" title="图层" aria-label="图层" aria-expanded="false">
               <i data-lucide="layers"></i>
+            </button>
+            <button class="icon-button" id="telemetryPanelBtn" title="演进数据" aria-label="演进数据" aria-expanded="false">
+              <i data-lucide="activity"></i>
             </button>
             <button class="icon-button" id="fitAllBtn" title="缩放到流域" aria-label="缩放到流域">
               <i data-lucide="scan"></i>
@@ -72,13 +84,67 @@
             </div>
           </section>
         </div>
+        <div class="map-telemetry-control" id="telemetryControl">
+          <section class="telemetry-panel" id="telemetryPanel" aria-label="演进数据">
+            <header class="telemetry-header">
+              <div>
+                <div class="telemetry-title">演进数据 <span>MOCK</span></div>
+                <time id="telemetryTime">--</time>
+              </div>
+              <div class="telemetry-header-actions">
+                <span class="telemetry-state" id="telemetryState">待机</span>
+                <button class="icon-button" id="telemetryCloseBtn" type="button" title="关闭演进数据" aria-label="关闭演进数据">
+                  <i data-lucide="x"></i>
+                </button>
+              </div>
+            </header>
+            <div class="telemetry-weather" id="telemetryWeather" data-weather="waiting" aria-live="polite">
+              <div class="telemetry-weather-icon" id="telemetryWeatherIcon" aria-hidden="true">
+                <i data-lucide="cloud-sun"></i>
+              </div>
+              <div class="telemetry-weather-copy">
+                <strong id="telemetryWeatherLabel">等待数据</strong>
+                <span id="telemetryWeatherDetail">当前时段降雨 -- mm</span>
+              </div>
+            </div>
+            <div class="telemetry-metrics">
+              <div><span>降雨</span><strong data-mock-field="rainfall_mm">--</strong><small>mm/h</small></div>
+              <div><span>水库水位</span><strong data-mock-field="reservoir_level_m">--</strong><small>m</small></div>
+              <div><span>入库流量</span><strong data-mock-field="reservoir_inflow_m3s">--</strong><small>m³/s</small></div>
+              <div><span>泄洪流量</span><strong data-mock-field="reservoir_release_m3s">--</strong><small>m³/s</small></div>
+            </div>
+            <div class="telemetry-flow-list">
+              <div><span>区间 1</span><strong data-mock-boundary="interval1">--</strong><small>m³/s</small></div>
+              <div><span>区间 2</span><strong data-mock-boundary="interval2">--</strong><small>m³/s</small></div>
+              <div><span>同古河</span><strong data-mock-boundary="tonggu">--</strong><small>m³/s</small></div>
+              <div><span>坝址</span><strong data-mock-boundary="upstream">--</strong><small>m³/s</small></div>
+            </div>
+            <footer class="telemetry-progress">
+              <div><span id="telemetryProgressBar"></span></div>
+              <output id="telemetryProgressText">0 / 0</output>
+            </footer>
+          </section>
+        </div>
+        <section class="impact-panel is-hidden" id="impactPanel" aria-label="受影响对象" aria-live="polite">
+          <header class="impact-panel-header">
+            <div>
+              <strong>受影响对象</strong>
+              <span id="impactStatus">等待水动力结果</span>
+            </div>
+            <div class="impact-panel-meta">
+              <time id="impactTimeLabel">--</time>
+              <output id="impactCount">0</output>
+            </div>
+          </header>
+          <div class="impact-list" id="impactList"></div>
+        </section>
         <div id="map"></div>
         <div class="hydro-timeline is-hidden" id="hydroTimeline" aria-label="预测淹没时间轴">
           <button class="icon-button" id="hydroPlayBtn" type="button" title="播放预测过程" aria-label="播放预测过程">
             <i data-lucide="play"></i>
           </button>
           <input id="hydroTimeSlider" type="range" min="0" max="0" value="0" step="1" aria-label="预测时刻" />
-          <div class="hydro-time-label" id="hydroTimeLabel">最大水深</div>
+          <div class="hydro-time-label" id="hydroTimeLabel">--</div>
         </div>
       </main>
 
@@ -133,6 +199,8 @@
           </section>
         </div>
       </aside>
+
+      <div class="conclusion-toast-region" id="conclusionToastRegion" aria-live="polite"></div>
     </div>
 
     <script

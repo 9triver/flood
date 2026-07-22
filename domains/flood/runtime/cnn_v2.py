@@ -9,14 +9,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .common import DOMAIN_DIR, GENERATED_DIR, PROJECT_DIR, rel
+from .common import DOMAIN_DIR, PROJECT_DIR, rel
+from .workspace import workspace_dir
 
 
 MODEL_DIR = DOMAIN_DIR / "model" / "cnn_v2"
 MODEL_SCRIPT = MODEL_DIR / "CNN_V2.py"
 GRID_PATH = MODEL_DIR / "GT.txt"
 WEIGHT_PATH = MODEL_DIR / "weights" / "FLOOD_CNN.pth"
-RUN_DIR = GENERATED_DIR / "cnn_v2" / "latest"
 
 BOUNDARY_FILENAMES = {
     "interval1": "校核后-cnn-区间1.csv",
@@ -40,11 +40,12 @@ def run_cnn_v2_forecast(boundary_flow: dict[str, Any],
         return {"error": "missing boundary flow summary"}
 
     case_name = str(summary.get("boundary_flow_id") or "latest")
-    test_dir = RUN_DIR / "TEST"
+    run_dir = workspace_dir(create=True) / "cnn_v2" / "latest"
+    test_dir = run_dir / "TEST"
     case_dir = test_dir / case_name
-    output_dir = RUN_DIR / "OUTPUT"
-    if RUN_DIR.exists():
-        shutil.rmtree(RUN_DIR)
+    output_dir = run_dir / "OUTPUT"
+    if run_dir.exists():
+        shutil.rmtree(run_dir)
     case_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
     _write_case_csvs(summary, case_dir)

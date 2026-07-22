@@ -22,7 +22,7 @@ TARGET_TYPES = POINT_TARGET_TYPES + LINE_TARGET_TYPES
 def analyze_inundation_impacts(resolver, forecast_id: str = "latest",
                                target_type: str = "all",
                                min_depth_m: float = 0.15,
-                               max_distance_m: float = 120.0,
+                               max_distance_m: float = 10.0,
                                time_h: float | None = None) -> dict[str, Any]:
     forecast_key = LATEST_FORECAST_ID if forecast_id in ("", "latest") else forecast_id
     analysis_time_h = coerce_time_h(time_h)
@@ -95,10 +95,10 @@ def analyze_inundation_impacts(resolver, forecast_id: str = "latest",
             "time_h": analysis_time_h,
         },
         "summary": summary,
-        "affected_object_ids": affected_object_ids(target_types, impacts, limit=20),
+        "affected_object_ids": affected_object_ids(target_types, impacts),
         "total_impacts": len(impacts),
         "basis": analysis_basis(actual_cell_time_h(cells, analysis_time_h)),
-        "impacts": impacts[:80],
+        "impacts": impacts,
     }
 
 
@@ -166,7 +166,14 @@ def analyze_point_objects(resolver, object_type: str, cell_index: Any,
         depth = float(cell.get("depth_m") or 0)
         if depth < min_depth_m:
             continue
-        impacts.append(make_impact(object_type, row, object_id_field, cell, "point_nearest_cell"))
+        impacts.append(make_impact(
+            object_type,
+            row,
+            object_id_field,
+            cell,
+            "point_nearest_cell",
+            point,
+        ))
     return impacts
 
 
@@ -180,21 +187,35 @@ def analyze_linear_objects(resolver, object_type: str, cell_index: Any,
         if not points:
             continue
         matched = [
-            nearest_cell(point, cell_index, max_distance_m=max_distance_m)
+            (point, nearest_cell(point, cell_index, max_distance_m=max_distance_m))
             for point in points
         ]
-        matched = [item for item in matched if item and float(item.get("depth_m") or 0) >= min_depth_m]
+        matched = [
+            (point, cell) for point, cell in matched
+            if cell and float(cell.get("depth_m") or 0) >= min_depth_m
+        ]
         if not matched:
             continue
-        deepest = max(matched, key=lambda item: float(item.get("depth_m") or 0))
-        impact = make_impact(object_type, row, object_id_field, deepest, "line_sample_nearest_cell")
+        impact_point, deepest = max(
+            matched,
+            key=lambda item: float(item[1].get("depth_m") or 0),
+        )
+        impact = make_impact(
+            object_type,
+            row,
+            object_id_field,
+            deepest,
+            "line_sample_nearest_cell",
+            impact_point,
+        )
         impact["sample_hits"] = len(matched)
         impacts.append(impact)
     return impacts
 
 
 def make_impact(object_type: str, row: dict[str, Any], object_id_field: str,
-                cell: dict[str, Any], basis: str) -> dict[str, Any]:
+                cell: dict[str, Any], basis: str,
+                impact_point: tuple[float, float]) -> dict[str, Any]:
     depth = float(cell.get("depth_m") or 0)
     velocity = float(cell.get("velocity_mps") or 0)
     return {
@@ -207,6 +228,8 @@ def make_impact(object_type: str, row: dict[str, Any], object_id_field: str,
         "distance_m": round(float(cell.get("_distance_m") or 0), 1),
         "forecast_cell_id": cell.get("forecast_cell_id", ""),
         "mesh_cell_id": cell.get("mesh_cell_id", ""),
+        "longitude": round(float(impact_point[0]), 7),
+        "latitude": round(float(impact_point[1]), 7),
         "basis": basis,
     }
 
@@ -231,7 +254,7 @@ def summarize_impacts(target_types: list[str], impacts: list[dict[str, Any]]) ->
 
 
 def affected_object_ids(target_types: list[str], impacts: list[dict[str, Any]],
-                        limit: int) -> dict[str, list[str]]:
+                        limit: int | None = None) -> dict[str, list[str]]:
     result: dict[str, list[str]] = {}
     for object_type in target_types:
         ids: list[str] = []
@@ -244,7 +267,7 @@ def affected_object_ids(target_types: list[str], impacts: list[dict[str, Any]],
                 continue
             ids.append(object_id)
             seen.add(object_id)
-            if len(ids) >= limit:
+            if limit is not None and len(ids) >= limit:
                 break
         result[object_type] = ids
     return result

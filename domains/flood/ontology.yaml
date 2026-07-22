@@ -299,12 +299,16 @@ objects:
       duration_s: {type: float, description: "预计通行时间，秒"}
       status: {type: str, description: "路线状态，如 planned/approved/blocked"}
       routing_engine: {type: str, description: "路线计算引擎"}
+      candidate_count: {type: int, description: "高德返回的候选路线数量"}
+      selected_candidate_index: {type: int, description: "最终采用的高德候选路线序号，从1开始"}
+      rejected_candidate_count: {type: int, description: "因涉水或校验失败被排除的候选路线数量"}
       profile: {type: str, description: "路由交通模式，如 car/foot"}
       forecast_id: {type: str, description: "规划依据的洪水预测ID"}
       time_h: {type: float, description: "规划依据的预测时刻，小时"}
       blocked_depth_m: {type: float, description: "道路禁行水深阈值，米"}
-      start_snap_distance_m: {type: float, description: "起点到 OSM 可通行道路的吸附距离，米"}
-      destination_snap_distance_m: {type: float, description: "终点到 OSM 可通行道路的吸附距离，米"}
+      start_endpoint_distance_m: {type: float, description: "高德路线起点到领域对象起点的距离，米"}
+      destination_endpoint_distance_m: {type: float, description: "高德路线终点到目标地点的距离，米"}
+      max_endpoint_distance_m: {type: float, description: "路线端点允许偏离领域对象坐标的最大距离，米"}
       detour_ratio: {type: float, description: "路线长度与起终点直线距离之比"}
       start_object_type: {type: str, description: "起点对象类型"}
       start_object_id: {type: str, description: "起点对象ID"}
@@ -563,8 +567,8 @@ rules:
 functions:
   run_flood_forecast:
     summary: "运行或读取最新洪水预测"
-    description: "读取最新四边界流量过程线，先执行干态门控规则；达到触发条件时调用 CNN_V2 水动力模型生成水动力网格 max_depth 预测结果和 ForecastRun 汇总。该函数不把 severity 或综合指标映射为 5/10/20/50/100 年一遇设计方案。"
-    usage_prompt: "当用户要求运行预测、查看实时预测、显示未来淹没，或水文异常事件中的 forecast_trigger.should_run_forecast 为 true 且需要推演时调用。该函数只返回 ForecastRun 汇总；如需在 GIS 展示预测淹没范围，LLM 应在本函数返回后调用 ui_show_objects，object_type=HydrodynamicCell，filters={\"forecast_id\":\"latest\"}，label=预测淹没结果，fit=false，refresh=true。"
+    description: "读取领域策略生成的最新版本化四边界流量输入快照，调用 CNN_V2 水动力模型生成水动力网格 max_depth 预测结果和 ForecastRun 汇总。普通边界观测不会直接改变该快照；该函数也不把 severity 或综合指标映射为 5/10/20/50/100 年一遇设计方案。"
+    usage_prompt: "当用户要求运行预测、查看实时预测、显示未来淹没，或收到 FloodForecastRequired 事件且判断需要推演时调用。该函数只返回 ForecastRun 汇总；如需在 GIS 展示预测淹没范围，LLM 应在本函数返回后调用 ui_show_objects，object_type=HydrodynamicCell，filters={\"forecast_id\":\"latest\"}，label=预测淹没结果，fit=false，refresh=true。"
     function_type: lookup
     involves_objects: [ForecastRun, ForecastCell, HydrodynamicCell, River, Reservoir]
     params:
@@ -573,7 +577,7 @@ functions:
 
   run_emergency_cycle:
     summary: "运行水文观测-预测-告警-调度闭环原型"
-    description: "使用 mock 水文观测与规则，运行简化水动力预测，生成预警级别、受影响转移对象、道路/路线关注对象和调度建议。预测结果直接来自 ForecastCell，不通过设计频率映射。"
+    description: "使用最新边界流量预测输入和水动力结果，生成预警级别、受影响转移对象、道路/路线关注对象和调度建议。预测结果直接来自 ForecastCell，不通过设计频率映射。"
     usage_prompt: "当用户要求自主观测、持续预测、自动告警、闭环调度、避洪转移调度或应急循环时调用。该函数只返回预测、预警、受影响对象和调度建议事实；如需 GIS 展示，LLM 应在本函数返回后调用 ui_show_objects 展示 HydrodynamicCell、Risk、Transfer、Place、Route 等领域对象。涉及发布预警、封路、转移等执行动作时必须说明需要人工审批。"
     function_type: lookup
     involves_objects: [ForecastRun, ForecastCell, Risk, Road, Route, Transfer, Place]
@@ -583,22 +587,22 @@ functions:
   analyze_inundation_impacts:
     summary: "根据预测淹没范围分析受影响对象"
     description: "读取最新或指定 ForecastCell 预测淹没网格，可按指定 time_h 分析某个预测时刻，也可默认使用最大水深包络；对道路、桥梁、重要设施、转移单元、安置地点和转移路线执行确定性空间邻近分析，返回受影响对象清单、风险等级和按类型汇总。"
-    usage_prompt: "收到 InundationGenerated 事件后应优先调用本函数，forecast_id 默认 latest，target_type 默认 all。该函数是本体层确定性空间分析入口：LLM 只能根据返回结果说明哪些对象受影响，不要自行猜测学校、医院、道路、桥梁、转移路线或安置点是否受淹。当前端上下文包含 current_hydrodynamic_time_h，或用户明确询问某个时间点/当前时间轴位置的影响时，必须把该值作为 time_h 传入；用户询问总体/最大影响时不要传 time_h，默认使用最大水深包络。需要在地图展示影响分析结果时，LLM 应在本函数返回后再调用 ui_show_objects：先显示 HydrodynamicCell 且 filters={\"forecast_id\":\"latest\"}、label=预测淹没结果、fit=false、refresh=true；再优先使用 affected_object_ids 中按对象类型汇总的 ID，分别传给对应对象类型并设置 highlight=true、show_only_object_ids=true，只显示并高亮这些受影响对象，不要额外加载同类型全量对象。需要缩窄范围时 target_type 可传 Road、Bridge、Facility、Route、Transfer、Place 或 all；min_depth_m 默认 0.15，max_distance_m 默认 120。"
+    usage_prompt: "收到 InundationGenerated 事件后应优先调用本函数，forecast_id 默认 latest，target_type 默认 all。该函数是本体层确定性空间分析入口：LLM 只能根据返回结果说明哪些对象受影响，不要自行猜测学校、医院、道路、桥梁、转移路线或安置点是否受淹。当前端上下文包含 current_hydrodynamic_time_h，或用户明确询问某个时间点/当前时间轴位置的影响时，必须把该值作为 time_h 传入；用户询问总体/最大影响时不要传 time_h，默认使用最大水深包络。需要在地图展示影响分析结果时，LLM 应在本函数返回后再调用 ui_show_objects：先显示 HydrodynamicCell 且 filters={\"forecast_id\":\"latest\"}、label=预测淹没结果、fit=false、refresh=true；再优先使用 affected_object_ids 中按对象类型汇总的 ID，分别传给对应对象类型并设置 highlight=true、show_only_object_ids=true，只显示并高亮这些受影响对象，不要额外加载同类型全量对象。需要缩窄范围时 target_type 可传 Road、Bridge、Facility、Route、Transfer、Place 或 all；min_depth_m 默认 0.15，max_distance_m 默认 10。"
     function_type: lookup
     involves_objects: [ForecastRun, ForecastCell, Road, Bridge, Facility, Route, Transfer, Place, Risk]
     params:
       forecast_id: {type: str, description: "预测运行ID；latest 表示最新预测", default: "latest"}
       target_type: {type: str, description: "分析目标类型: Road/Bridge/Facility/Route/Transfer/Place/all", default: "all"}
       min_depth_m: {type: float, description: "纳入影响判定的最低预测水深，单位 m", default: 0.15}
-      max_distance_m: {type: float, description: "对象或采样点到预测淹没网格中心的最大匹配距离，单位 m", default: 120}
+      max_distance_m: {type: float, description: "对象或采样点到预测淹没网格中心的最大匹配距离，单位 m", default: 10}
       time_h: {type: float, description: "可选预测时刻，单位小时；不传表示使用最大水深包络", default: ""}
 
   plan_evacuation_route:
     summary: "按洪水预测约束规划避洪路线"
-    description: "使用 GraphHopper 和 OSM 道路网络规划起点至安置点的路线。达到 blocked_depth_m 的 ForecastCell 会被聚合为空间禁行区域并通过请求级 custom model 排除；成功结果保存为可查询和绘制的 Route 对象。"
-    usage_prompt: "当用户要求路线规划、导航、绕开淹没区域前往安置点或为某个 Transfer 生成避洪路线时调用。优先使用 start_object_type + start_object_id 和 destination_place_id；只有没有领域对象时才传经纬度。如果前端处于水动力时间轴某一时刻，必须把 current_hydrodynamic_time_h 作为 time_h。驾车使用 profile=car 且默认禁行水深0.3米；步行使用 profile=foot 且默认禁行水深0.15米。avoid_flood 默认 true。成功后调用 ui_show_objects，object_type=Route，filters 使用结果 route.route_id，只显示本次动态路线。"
+    description: "使用高德 Web 服务规划起点至安置点的路线，并将 GCJ-02 路线转为 WGS84 Route 对象。步行规划请求最多三条候选路线，逐条排除穿过 blocked_depth_m 禁行 ForecastCell 的路线，再选择距离最短的安全路线。"
+    usage_prompt: "当用户要求路线规划、导航、绕开淹没区域前往安置点或为某个 Transfer 生成避洪路线时调用。优先使用 start_object_type + start_object_id 和 destination_place_id；只有没有领域对象时才传经纬度。如果前端处于水动力时间轴某一时刻，必须把 current_hydrodynamic_time_h 作为 time_h。驾车使用 profile=car 且默认禁行水深0.3米；步行使用 profile=foot 且默认禁行水深0.15米。avoid_flood 默认 true；函数会自行筛选高德候选路线，不要为了换路而关闭 avoid_flood 或重复调用。若全部候选路线均不安全，向用户明确说明当前没有满足约束的安全路线。成功后调用 ui_show_objects，object_type=Route，filters 使用结果 route.route_id，只显示本次动态路线。"
     function_type: lookup
-    involves_objects: [Route, Transfer, Place, Road, ForecastRun, ForecastCell]
+    involves_objects: [Route, Transfer, Place, ForecastRun, ForecastCell]
     params:
       start_object_type: {type: str, description: "起点领域对象类型，通常为 Transfer/Place/Facility", default: "Transfer"}
       start_object_id: {type: str, description: "起点领域对象ID", default: ""}
@@ -610,7 +614,7 @@ functions:
       forecast_id: {type: str, description: "洪水预测ID", default: "latest"}
       time_h: {type: float, description: "可选预测时刻，小时；不传使用最大水深包络", default: ""}
       blocked_depth_m: {type: float, description: "禁行水深阈值，米；不传时 car 使用0.3、foot 使用0.15", default: ""}
-      profile: {type: str, description: "GraphHopper 路由模式: car/foot", default: "car"}
+      profile: {type: str, description: "高德路由模式: car/foot", default: "car"}
       avoid_flood: {type: bool, description: "是否应用预测淹没禁行约束", default: true}
-      max_snap_distance_m: {type: float, description: "起终点允许吸附到 OSM 道路的最大距离，米", default: 800}
+      max_endpoint_distance_m: {type: float, description: "高德路线起终点与领域对象坐标允许的最大距离，米", default: 800}
       max_detour_ratio: {type: float, description: "允许的最大路线绕行倍率", default: 10}

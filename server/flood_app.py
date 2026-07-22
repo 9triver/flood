@@ -27,6 +27,7 @@ from domains.flood.runtime.geojson import export_objects_geojson  # noqa: E402
 from domains.flood.runtime.hydrodynamic_grid import hydrodynamic_grid_stats, hydrodynamic_grid_tile  # noqa: E402
 from domains.flood.runtime.impact_analysis import analyze_inundation_impacts  # noqa: E402
 from domains.flood.runtime.tools import list_mappable_objects  # noqa: E402
+from domains.flood.runtime.workspace import active_workspace_id  # noqa: E402
 
 
 ID_FIELDS = {
@@ -103,6 +104,7 @@ class FloodApp:
             },
             "llm_enabled": self.llm_enabled,
             "default_context": "基础态 · 领域对象地图",
+            "workspace_id": active_workspace_id(),
         }
 
     def autonomy_cycle(self, force_forecast: bool = False) -> dict:
@@ -133,7 +135,7 @@ class FloodApp:
     def analyze_inundation_impacts(self, forecast_id: str = "latest",
                                    target_type: str = "all",
                                    min_depth_m: float = 0.15,
-                                   max_distance_m: float = 120.0,
+                                   max_distance_m: float = 10.0,
                                    time_h: float | None = None) -> dict[str, Any]:
         return analyze_inundation_impacts(
             self.resolver,
@@ -163,15 +165,16 @@ class FloodApp:
             return
 
         agent_message = self._agent_message(run.message, selected)
+        agent_session_id = self.agent_session_id(run.session_id)
         try:
-            for event in self.agent.chat_stream(agent_message, session_id=run.session_id):
+            for event in self.agent.chat_stream(agent_message, session_id=agent_session_id):
                 if run.cancelled:
                     break
-                for map_event in self._pop_pending_map_events(run.session_id):
+                for map_event in self._pop_pending_map_events(agent_session_id):
                     self._append_map_event(run, map_event)
                 data = event_to_dict(event)
                 self._append_event(run, data["type"], data)
-            for map_event in self._pop_pending_map_events(run.session_id):
+            for map_event in self._pop_pending_map_events(agent_session_id):
                 self._append_map_event(run, map_event)
         except Exception as exc:
             print(f"OAG agent stream failed: {exc}")
@@ -284,6 +287,10 @@ class FloodApp:
             "如果用户询问总体或最大影响，不传 time_h。\n"
             f"{json.dumps(frontend_context, ensure_ascii=False, indent=2)}"
         )
+
+    @staticmethod
+    def agent_session_id(session_id: str) -> str:
+        return f"{active_workspace_id() or 'manual'}:{session_id}"
 
     def _capture_map_tool_event(self, context: dict[str, Any]) -> HookResult:
         tool_name = str(context.get("tool_name") or "")

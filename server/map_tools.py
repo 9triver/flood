@@ -12,7 +12,6 @@ from domains.flood.runtime.hydrodynamic_grid import hydrodynamic_grid_stats
 OBJECT_LABELS = {
     "River": "珊瑚河",
     "Watershed": "珊瑚河流域",
-    "HydrodynamicBoundary": "水动力边界",
     "County": "县级边界",
     "Town": "乡镇边界",
     "Road": "道路",
@@ -92,7 +91,6 @@ def register_map_tools(tools: ToolRegistry, resolver, registry) -> None:
         handler=lambda args: _show_objects(args, resolver, registry),
         usage_prompt=(
             "常用映射：珊瑚河/主河道/河道中心线 => River；"
-            "水动力边界/模型边界/入流边界/断面位置/河口水位/坝址边界 => HydrodynamicBoundary；"
             "流域/小流域 => Watershed；县级边界/行政边界 => County；危险区/风险点 => Risk；"
             "乡镇/乡镇边界/镇界 => Town；"
             "学校/医院/政府机构 => Facility 并分别过滤 facility_type=school/hospital/government；"
@@ -180,7 +178,7 @@ def register_map_tools(tools: ToolRegistry, resolver, registry) -> None:
         handler=lambda args: _show_event_marker(args),
         usage_prompt=(
             "只有事件对象包含明确经纬度时才调用 ui_show_event_marker。"
-            "BoundaryFlowSeriesGenerated 这类边界流量事件没有单点位置，通常应改用 ui_show_objects 展示 HydrodynamicBoundary。"
+            "FloodForecastRequired 这类边界流量策略事件没有单点位置，不应创建事件 marker。"
         ),
         category="ui",
         policy=policy,

@@ -13,7 +13,6 @@ DATA_DIR_CANDIDATES = [
 DATA_DIR = next((path for path in DATA_DIR_CANDIDATES if path.exists()), DATA_DIR_CANDIDATES[0])
 DOMAIN_DATA_DIR = DOMAIN_DIR / "data"
 OBJECTS_DIR = DOMAIN_DATA_DIR / "objects"
-GENERATED_DIR = DOMAIN_DATA_DIR / "generated"
 SOURCES_DIR = DOMAIN_DATA_DIR / "sources"
 
 OBJECT_LIBRARY_FILES = {
@@ -47,11 +46,6 @@ MAPPABLE_OBJECTS = {
         "label": "珊瑚河流域",
         "role": "base",
         "style": {"type": "fill", "color": "#111827", "weight": 1, "fillColor": "#9bc4df", "fillOpacity": 0.1},
-    },
-    "HydrodynamicBoundary": {
-        "label": "水动力边界",
-        "role": "forecast",
-        "style": {"type": "line", "color": "#64748b", "weight": 1},
     },
     "County": {
         "label": "县级边界",

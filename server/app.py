@@ -75,13 +75,19 @@ class Handler(BaseHTTPRequestHandler):
         try:
             payload = self._read_json()
             if parsed.path == "/api/autonomy/start":
-                return self._json(EVENT_RUNTIME.start_mock())
+                return self._json(EVENT_RUNTIME.start_playback(payload.get("speed_multiplier", 1)))
             if parsed.path == "/api/autonomy/stop":
-                return self._json(EVENT_RUNTIME.stop_mock())
+                return self._json(EVENT_RUNTIME.stop_playback())
+            if parsed.path == "/api/autonomy/pause":
+                return self._json(EVENT_RUNTIME.pause_playback())
+            if parsed.path == "/api/autonomy/resume":
+                return self._json(EVENT_RUNTIME.resume_playback(payload.get("speed_multiplier", 1)))
+            if parsed.path == "/api/autonomy/speed":
+                return self._json(EVENT_RUNTIME.set_playback_speed(payload.get("speed_multiplier", 1)))
             if parsed.path == "/api/agent/confirm":
                 return self._confirm(payload)
             if parsed.path == "/api/autonomy/reset":
-                return self._json(EVENT_RUNTIME.start_mock())
+                return self._json(EVENT_RUNTIME.start_playback(payload.get("speed_multiplier", 1)))
             if parsed.path.startswith("/api/agent/runs/") and parsed.path.endswith("/cancel"):
                 run_id = parsed.path.split("/")[-2]
                 return self._json({"ok": RUNS.cancel(run_id), "run_id": run_id})
@@ -124,7 +130,9 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(RUNS.active_info(session_id))
 
     def _confirm(self, payload: dict):
-        session_id = str(payload.get("session_id") or "frontend-default")
+        session_id = APP.agent_session_id(
+            str(payload.get("session_id") or "frontend-default")
+        )
         approved = bool(payload.get("approved"))
         answer = payload.get("answer")
         if not APP.agent or not APP.agent.has_pending(session_id):
@@ -206,7 +214,7 @@ class Handler(BaseHTTPRequestHandler):
             forecast_id=(params.get("forecast_id") or ["latest"])[0],
             target_type=(params.get("target_type") or ["all"])[0],
             min_depth_m=_coerce_float((params.get("min_depth_m") or ["0.15"])[0], 0.15),
-            max_distance_m=_coerce_float((params.get("max_distance_m") or ["120"])[0], 120.0),
+            max_distance_m=_coerce_float((params.get("max_distance_m") or ["10"])[0], 10.0),
             time_h=_coerce_optional_float((params.get("time_h") or [""])[0]),
         )
         return self._json(result)

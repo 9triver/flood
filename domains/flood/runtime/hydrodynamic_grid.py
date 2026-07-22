@@ -12,14 +12,13 @@ from typing import Any
 import numpy as np
 
 from .common import DOMAIN_DATA_DIR, DOMAIN_DIR, PROJECT_DIR, apply_filters, apply_order, apply_window
+from .coordinates import gcj02_to_wgs84
+from .workspace import workspace_dir
 
 
 MODEL_DIR = DOMAIN_DIR / "model" / "cnn_v2"
 GT_PATH = MODEL_DIR / "GT.txt"
 HYDRODYNAMIC_DATA_DIR = DOMAIN_DATA_DIR / "hydrodynamic"
-LATEST_FORECAST_DEPTH_PATH = HYDRODYNAMIC_DATA_DIR / "forecasts" / "latest" / "max_depth.csv"
-LATEST_FORECAST_SERIES_PATH = HYDRODYNAMIC_DATA_DIR / "forecasts" / "latest" / "depth_series.npy"
-LATEST_FORECAST_TIME_STEPS_PATH = HYDRODYNAMIC_DATA_DIR / "forecasts" / "latest" / "time_steps.json"
 MESH_DB_PATH = HYDRODYNAMIC_DATA_DIR / "mesh.sqlite"
 MIN_TILE_ZOOM = 13
 SUPPORTED_TILE_ZOOMS = (13, 14, 15)
@@ -578,7 +577,7 @@ def forecast_depth_path(forecast_id: str = LATEST_FORECAST_ID) -> Path:
     if forecast_id == MESH_ONLY_ID:
         return Path("")
     if forecast_id == LATEST_FORECAST_ID:
-        return LATEST_FORECAST_DEPTH_PATH
+        return workspace_dir() / "forecasts" / "latest" / "max_depth.csv"
     return HYDRODYNAMIC_DATA_DIR / "forecasts" / forecast_id / "max_depth.csv"
 
 
@@ -587,7 +586,7 @@ def forecast_series_path(forecast_id: str = LATEST_FORECAST_ID) -> Path:
     if forecast_id == MESH_ONLY_ID:
         return Path("")
     if forecast_id == LATEST_FORECAST_ID:
-        return LATEST_FORECAST_SERIES_PATH
+        return workspace_dir() / "forecasts" / "latest" / "depth_series.npy"
     return HYDRODYNAMIC_DATA_DIR / "forecasts" / forecast_id / "depth_series.npy"
 
 
@@ -596,7 +595,7 @@ def forecast_time_steps_path(forecast_id: str = LATEST_FORECAST_ID) -> Path:
     if forecast_id == MESH_ONLY_ID:
         return Path("")
     if forecast_id == LATEST_FORECAST_ID:
-        return LATEST_FORECAST_TIME_STEPS_PATH
+        return workspace_dir() / "forecasts" / "latest" / "time_steps.json"
     return HYDRODYNAMIC_DATA_DIR / "forecasts" / forecast_id / "time_steps.json"
 
 
@@ -683,55 +682,9 @@ def gcj02_tile_bounds_wgs84(z: int, x: int, y: int) -> tuple[float, float, float
     )
 
 
-def wgs84_to_gcj02(lng: float, lat: float) -> tuple[float, float]:
-    if outside_china(lng, lat):
-        return lng, lat
-    axis = 6378245.0
-    eccentricity = 0.006693421622965943
-    delta_lat = gcj_transform_lat(lng - 105.0, lat - 35.0)
-    delta_lng = gcj_transform_lng(lng - 105.0, lat - 35.0)
-    radians = math.radians(lat)
-    magic = 1 - eccentricity * math.sin(radians) ** 2
-    root_magic = math.sqrt(magic)
-    delta_lat = math.degrees(delta_lat / ((axis * (1 - eccentricity)) / (magic * root_magic)))
-    delta_lng = math.degrees(delta_lng / ((axis / root_magic) * math.cos(radians)))
-    return lng + delta_lng, lat + delta_lat
-
-
-def gcj02_to_wgs84(lng: float, lat: float) -> tuple[float, float]:
-    if outside_china(lng, lat):
-        return lng, lat
-    original_lng, original_lat = lng, lat
-    for _ in range(4):
-        shifted_lng, shifted_lat = wgs84_to_gcj02(original_lng, original_lat)
-        original_lng += lng - shifted_lng
-        original_lat += lat - shifted_lat
-    return original_lng, original_lat
-
-
-def outside_china(lng: float, lat: float) -> bool:
-    return lng < 72.004 or lng > 137.8347 or lat < 0.8293 or lat > 55.8271
-
-
-def gcj_transform_lat(x: float, y: float) -> float:
-    value = -100 + 2 * x + 3 * y + 0.2 * y ** 2 + 0.1 * x * y + 0.2 * math.sqrt(abs(x))
-    value += (20 * math.sin(6 * x * math.pi) + 20 * math.sin(2 * x * math.pi)) * 2 / 3
-    value += (20 * math.sin(y * math.pi) + 40 * math.sin(y / 3 * math.pi)) * 2 / 3
-    value += (160 * math.sin(y / 12 * math.pi) + 320 * math.sin(y * math.pi / 30)) * 2 / 3
-    return value
-
-
-def gcj_transform_lng(x: float, y: float) -> float:
-    value = 300 + x + 2 * y + 0.1 * x ** 2 + 0.1 * x * y + 0.1 * math.sqrt(abs(x))
-    value += (20 * math.sin(6 * x * math.pi) + 20 * math.sin(2 * x * math.pi)) * 2 / 3
-    value += (20 * math.sin(x * math.pi) + 40 * math.sin(x / 3 * math.pi)) * 2 / 3
-    value += (150 * math.sin(x / 12 * math.pi) + 300 * math.sin(x / 30 * math.pi)) * 2 / 3
-    return value
-
-
 def epsg4546_to_wgs84(easting: float, northing: float) -> tuple[float, float]:
     # EPSG:4546 is CGCS2000 / 3-degree Gauss-Kruger CM 111E. CGCS2000 is close
-    # enough to WGS84 for OSM display at this scale after the projection inverse.
+    # enough to WGS84 for web map display at this scale after the projection inverse.
     a = 6378137.0
     inv_f = 298.257222101
     f = 1 / inv_f

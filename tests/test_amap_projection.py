@@ -2,12 +2,9 @@ from __future__ import annotations
 
 import unittest
 
+from domains.flood.runtime.coordinates import gcj02_to_wgs84, wgs84_to_gcj02
 from domains.flood.runtime.hydrodynamic_grid import (
-    gcj02_tile_bounds_wgs84,
-    gcj02_to_wgs84,
-    lonlat_to_tile,
-    normalize_tile_crs,
-    wgs84_to_gcj02,
+    gcj02_tile_bounds_wgs84, lonlat_to_tile, normalize_tile_crs,
 )
 
 

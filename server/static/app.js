@@ -15,6 +15,7 @@ const state = {
   bootstrap: null,
   baseBounds: null,
   sessionId: getSessionId(),
+  workspaceId: null,
   activeStream: null,
   activeRunId: null,
   autonomyStream: null,
@@ -23,9 +24,15 @@ const state = {
   hydrodynamicGridMeta: null,
   hydrodynamicResultMeta: null,
   lastTrace: null,
-  boundaryFlowLayer: null,
-  boundaryFlowFeatures: null,
-  mockRunning: false,
+  playbackRunning: false,
+  playbackPaused: false,
+  playbackSpeed: 1,
+  playbackAutoPauseArmed: false,
+  playbackAutoPausePending: false,
+  playbackTotalRows: 0,
+  lastMockObservation: null,
+  conclusionToasts: [],
+  nextConclusionToastId: 1,
   hydrodynamicTimeline: {
     hours: [],
     index: 0,
@@ -36,10 +43,13 @@ const state = {
     playing: false,
   },
   impactAnalysis: null,
-  pendingImpactObjectTypes: new Set(),
+  impactMarkerLayer: null,
+  impactMarkers: new Map(),
+  selectedImpactKey: null,
+  selectedImpactLayerKey: null,
+  impactFocusSeq: 0,
   impactRefreshTimer: null,
   impactRefreshSeq: 0,
-  applyingImpactRefresh: false,
 };
 
 const BASEMAP_STORAGE_KEY = "flood-basemap";
@@ -110,7 +120,6 @@ const BASEMAPS = {
 const OBJECT_CONFIG = {
   River: { label: "珊瑚河", color: "#0e7490", swatch: "line" },
   Watershed: { label: "珊瑚河流域", color: "#1f2937", swatch: "fill" },
-  HydrodynamicBoundary: { label: "水动力边界", color: "#e11d48", swatch: "line" },
   County: { label: "县级边界", color: "#7b8794", swatch: "line" },
   Town: { label: "乡镇边界", color: "#7a6a22", swatch: "fill" },
   Road: { label: "道路", color: "#5f6772", swatch: "line" },
@@ -132,7 +141,6 @@ const OBJECT_CONFIG = {
 const ID_FIELDS = {
   River: "river_id",
   Watershed: "watershed_id",
-  HydrodynamicBoundary: "boundary_id",
   County: "county_id",
   Town: "town_id",
   Road: "road_id",
@@ -167,11 +175,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   bindEvents();
   await bootstrap();
   await loadObject("Watershed", {}, { fit: true });
-  await loadObject("County", {}, { fit: false });
-  await loadObject("HydrodynamicBoundary", {}, { fit: false });
+  await loadObject("River", {}, { fit: false });
   addMessage("agent", "基础对象已加载。");
   startAutonomyStream();
-  await refreshMockStatus();
+  await refreshPlaybackStatus();
   renderIcons();
 });
 
@@ -182,6 +189,9 @@ function initMap() {
     preferCanvas: true,
   }).setView([24.4, 111.35], 10);
 
+  state.map.createPane("impactPane");
+  state.map.getPane("impactPane").style.zIndex = "475";
+  state.impactMarkerLayer = L.layerGroup().addTo(state.map);
   L.control.zoom({ position: "bottomleft" }).addTo(state.map);
   setBasemap(readStoredBasemap(), { persist: false });
 }
@@ -345,13 +355,14 @@ function gcjTransformLng(x, y) {
 async function bootstrap() {
   const res = await fetch("/api/bootstrap");
   state.bootstrap = await res.json();
+  state.workspaceId = state.bootstrap.workspace_id || null;
   document.getElementById("contextPill").textContent = state.bootstrap.default_context;
   renderObjectList(state.bootstrap.mappable || []);
 }
 
 function renderObjectList(items) {
   const list = document.getElementById("objectList");
-  const visible = ["River", "Watershed", "HydrodynamicBoundary", "County", "Town", "HydrodynamicCell", "ForecastResult", "HydroStation", "Road", "Reservoir", "Sluice", "Bridge", "HydraulicStructure", "Risk", "Place", "Route"];
+  const visible = ["River", "Watershed", "County", "Town", "HydrodynamicCell", "ForecastResult", "HydroStation", "Road", "Reservoir", "Sluice", "Bridge", "HydraulicStructure", "Risk", "Place", "Route"];
   list.innerHTML = "";
 
   visible.forEach((objectType) => {
@@ -366,7 +377,10 @@ function renderObjectList(items) {
       <span>${config.label}</span>
       <span class="count">${item.feature_count ?? ""}</span>
     `;
-    btn.addEventListener("click", () => toggleObject(objectType));
+    btn.addEventListener("click", async () => {
+      await toggleObject(objectType);
+      if (window.matchMedia("(max-width: 900px)").matches) setLayerPanelOpen(false);
+    });
     list.appendChild(btn);
   });
 }
@@ -374,9 +388,12 @@ function renderObjectList(items) {
 function bindEvents() {
   document.getElementById("fitAllBtn").addEventListener("click", fitAll);
   document.getElementById("layerPanelBtn").addEventListener("click", toggleLayerPanel);
+  document.getElementById("telemetryPanelBtn").addEventListener("click", toggleTelemetryPanel);
+  document.getElementById("telemetryCloseBtn").addEventListener("click", () => setTelemetryPanelOpen(false));
   document.getElementById("agentDrawerBtn").addEventListener("click", () => setAgentDrawerOpen(true));
   document.getElementById("agentCloseBtn").addEventListener("click", () => setAgentDrawerOpen(false));
-  document.getElementById("mockToggleBtn").addEventListener("click", toggleMockService);
+  document.getElementById("playbackToggleBtn").addEventListener("click", toggleBoundaryFlowPlayback);
+  document.getElementById("playbackSpeedSelect").addEventListener("change", updatePlaybackSpeed);
   document.getElementById("hydroPlayBtn").addEventListener("click", toggleHydrodynamicTimelinePlayback);
   document.getElementById("hydroTimeSlider").addEventListener("input", (event) => {
     setHydrodynamicTimelineIndex(Number(event.target.value || 0));
@@ -403,8 +420,29 @@ function bindEvents() {
 
 function toggleLayerPanel() {
   const control = document.querySelector(".map-layer-control");
-  const btn = document.getElementById("layerPanelBtn");
   const isOpen = !control.classList.contains("is-open");
+  if (isOpen) setTelemetryPanelOpen(false);
+  setLayerPanelOpen(isOpen);
+}
+
+function setLayerPanelOpen(isOpen) {
+  const control = document.querySelector(".map-layer-control");
+  const btn = document.getElementById("layerPanelBtn");
+  control.classList.toggle("is-open", isOpen);
+  btn.classList.toggle("is-active", isOpen);
+  btn.setAttribute("aria-expanded", String(isOpen));
+}
+
+function toggleTelemetryPanel() {
+  const control = document.getElementById("telemetryControl");
+  const isOpen = !control.classList.contains("is-open");
+  if (isOpen) setLayerPanelOpen(false);
+  setTelemetryPanelOpen(isOpen);
+}
+
+function setTelemetryPanelOpen(isOpen) {
+  const control = document.getElementById("telemetryControl");
+  const btn = document.getElementById("telemetryPanelBtn");
   control.classList.toggle("is-open", isOpen);
   btn.classList.toggle("is-active", isOpen);
   btn.setAttribute("aria-expanded", String(isOpen));
@@ -592,7 +630,7 @@ function showHydrodynamicTimeline(meta, layer, key, filters) {
   const hours = (((meta || {}).forecast || {}).time_steps_h || [])
     .map((value) => Number(value))
     .filter((value) => Number.isFinite(value));
-  if (hours.length < 2) {
+  if (!hours.length) {
     hideHydrodynamicTimeline();
     return;
   }
@@ -608,7 +646,7 @@ function showHydrodynamicTimeline(meta, layer, key, filters) {
   const control = document.getElementById("hydroTimeline");
   const slider = document.getElementById("hydroTimeSlider");
   slider.min = "0";
-  slider.max = String(hours.length);
+  slider.max = String(hours.length - 1);
   slider.value = "0";
   control.classList.remove("is-hidden");
   setHydrodynamicTimelineIndex(0);
@@ -622,24 +660,21 @@ function hideHydrodynamicTimeline() {
   state.hydrodynamicTimeline.key = null;
   state.hydrodynamicTimeline.baseFilters = null;
   document.getElementById("hydroTimeline")?.classList.add("is-hidden");
+  clearImpactAnalysisState();
 }
 
 function setHydrodynamicTimelineIndex(index) {
   const timeline = state.hydrodynamicTimeline;
   if (!timeline.layer || !timeline.hours.length) return;
-  const nextIndex = Math.max(0, Math.min(timeline.hours.length, Math.round(index)));
+  const nextIndex = Math.max(0, Math.min(timeline.hours.length - 1, Math.round(index)));
   timeline.index = nextIndex;
   const slider = document.getElementById("hydroTimeSlider");
   const label = document.getElementById("hydroTimeLabel");
   if (slider) slider.value = String(nextIndex);
   const filters = { ...(timeline.baseFilters || {}) };
-  if (nextIndex === 0) {
-    label.textContent = "最大水深";
-  } else {
-    const hour = timeline.hours[nextIndex - 1];
-    filters.time_h = formatHydrodynamicHour(hour);
-    label.textContent = `${formatHydrodynamicHour(hour)} h`;
-  }
+  const hour = timeline.hours[nextIndex];
+  filters.time_h = formatHydrodynamicHour(hour);
+  label.textContent = `${formatHydrodynamicHour(hour)} h`;
   timeline.layer.options.resultFilters = filters;
   timeline.layer.clearSelection?.();
   timeline.layer.redraw();
@@ -656,7 +691,7 @@ function toggleHydrodynamicTimelinePlayback() {
   timeline.playing = true;
   setHydrodynamicPlayIcon(true);
   timeline.timer = window.setInterval(() => {
-    const next = timeline.index >= timeline.hours.length ? 1 : timeline.index + 1;
+    const next = timeline.index >= timeline.hours.length - 1 ? 0 : timeline.index + 1;
     setHydrodynamicTimelineIndex(next);
   }, 850);
 }
@@ -747,10 +782,9 @@ function resetMap() {
   clearHighlights();
   clearImpactAnalysisState();
   clearEventMarkers();
-  clearBoundaryFlowLayer();
   for (const key of Array.from(state.layerGroups.keys())) {
     const meta = state.layerMeta.get(key);
-    if (!["Watershed", "County"].includes(meta?.objectType)) {
+    if (!["River", "Watershed"].includes(meta?.objectType)) {
       removeLayer(key);
     }
   }
@@ -773,20 +807,19 @@ function clearImpactAnalysisState() {
   if (state.impactRefreshTimer) window.clearTimeout(state.impactRefreshTimer);
   state.impactRefreshTimer = null;
   state.impactRefreshSeq += 1;
+  state.impactFocusSeq += 1;
   state.impactAnalysis = null;
-  state.pendingImpactObjectTypes.clear();
+  state.impactMarkerLayer?.clearLayers();
+  state.impactMarkers.clear();
+  clearImpactObjectSelection({ removeLayer: true });
+  const panel = document.getElementById("impactPanel");
+  panel?.classList.add("is-hidden");
+  panel?.classList.remove("is-loading");
 }
 
 function clearEventMarkers() {
   state.eventMarkers.forEach((marker) => state.map.removeLayer(marker));
   state.eventMarkers.clear();
-}
-
-function clearBoundaryFlowLayer() {
-  if (state.boundaryFlowLayer) {
-    state.map.removeLayer(state.boundaryFlowLayer);
-    state.boundaryFlowLayer = null;
-  }
 }
 
 function startAutonomyStream() {
@@ -796,36 +829,39 @@ function startAutonomyStream() {
 
   es.addEventListener("runtime_status", (event) => {
     const data = parseEvent(event);
-    if (["等待水文事件", "等待边界流量事件", "等待启动 mock 服务"].includes(data.label)) return;
-    if (data.status === "running" || data.label === "边界流量 mock 服务已启动") setMockButtonState(true);
-    if (["stopped", "finished"].includes(data.status) || data.label === "边界流量 mock 服务已停止") {
-      setMockButtonState(false);
+    acceptWorkspace(data.workspace_id);
+    if (["等待水文事件", "等待边界流量事件", "等待启动边界流量回放"].includes(data.label)) return;
+    if (data.status === "running") setPlaybackButtonState(true, false);
+    if (["paused", "stopped", "finished"].includes(data.status)) {
+      setPlaybackButtonState(false, data.status === "paused");
     }
+    if (data.speed_multiplier) setPlaybackSpeedControl(data.speed_multiplier);
+    updateTelemetryRuntimeStatus(data);
     addTrace("AUTO", data.label || "事件运行时", data.detail || "");
   });
 
   es.addEventListener("domain_event", (event) => {
     const data = parseEvent(event);
+    acceptWorkspace(data.workspace_id);
     renderDomainEvent(data);
   });
 
   es.addEventListener("boundary_flow_data", (event) => {
     const data = parseEvent(event);
-    const domainEvent = data.event || {};
-    addTrace("FLOW", data.label || "四边界流量数据", data.detail || eventDetail(domainEvent));
-    if (domainEvent.event_type === "BoundaryFlowSeriesGenerated") {
-      renderBoundaryFlowLayer(domainEvent).catch((error) => console.warn("boundary flow render failed", error));
-    }
+    acceptWorkspace(data.workspace_id);
+    renderMockObservation(data.event || {});
   });
 
   es.addEventListener("agent_trace", (event) => {
     const data = parseEvent(event);
+    acceptWorkspace(data.workspace_id);
     if (shouldHideAutonomyTrace(data)) return;
     addTrace(data.tag || "AGENT", data.label || "智能体事件处理", data.detail || "");
   });
 
   es.addEventListener("map_actions", async (event) => {
     const data = parseEvent(event);
+    acceptWorkspace(data.workspace_id);
     try {
       if (data.context) document.getElementById("contextPill").textContent = data.context;
       await executeActions(data.map_actions || []);
@@ -844,77 +880,288 @@ function startAutonomyStream() {
   };
 }
 
-async function refreshMockStatus() {
+async function refreshPlaybackStatus() {
   try {
     const res = await fetch("/api/autonomy/status");
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
-    setMockButtonState(Boolean(data.running));
+    setPlaybackButtonState(Boolean(data.running), Boolean(data.paused));
+    setPlaybackSpeedControl(data.speed_multiplier || 1);
+    updateTelemetryRuntimeStatus(data);
   } catch (error) {
-    console.warn("mock status failed", error);
-    setMockButtonState(false);
+    console.warn("boundary flow playback status failed", error);
+    setPlaybackButtonState(false);
   }
 }
 
-async function toggleMockService() {
-  const nextRunning = !state.mockRunning;
-  const btn = document.getElementById("mockToggleBtn");
+async function toggleBoundaryFlowPlayback() {
+  const wasRunning = state.playbackRunning;
+  const wasPaused = state.playbackPaused;
+  const action = wasRunning ? "stop" : (wasPaused ? "resume" : "start");
+  const btn = document.getElementById("playbackToggleBtn");
   btn.disabled = true;
   try {
-    if (nextRunning) resetMap();
-    const res = await fetch(nextRunning ? "/api/autonomy/start" : "/api/autonomy/stop", {
+    if (action === "start") {
+      setPlaybackSpeedControl(10);
+      state.playbackAutoPauseArmed = true;
+      state.playbackAutoPausePending = false;
+      resetMap();
+      clearMockTelemetry();
+      setLayerPanelOpen(false);
+      setTelemetryPanelOpen(true);
+    } else if (action === "resume") {
+      state.playbackAutoPauseArmed = true;
+      state.playbackAutoPausePending = false;
+    } else {
+      state.playbackAutoPauseArmed = false;
+    }
+    const res = await fetch(`/api/autonomy/${action}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: "{}",
+      body: JSON.stringify({ speed_multiplier: state.playbackSpeed }),
     });
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
-    setMockButtonState(Boolean(data.running));
+    acceptWorkspace(data.workspace_id);
+    setPlaybackButtonState(Boolean(data.running), Boolean(data.paused));
+    if (!data.running) state.playbackAutoPauseArmed = false;
+    updateTelemetryRuntimeStatus(data);
+    const labels = {
+      start: ["边界流量过程回放已启动", "后台开始按时间顺序回放四边界流量。"],
+      resume: ["边界流量过程回放已继续", "后台从暂停位置继续回放四边界流量。"],
+      stop: ["边界流量过程回放已停止", "后台已停止回放新的边界流量观测。"],
+    };
     addTrace(
       "AUTO",
-      data.running ? "边界流量 mock 服务已启动" : "边界流量 mock 服务已停止",
-      data.running ? "后台开始生成四边界流量数据。" : "后台已停止生成新的边界流量数据。",
+      labels[action][0],
+      labels[action][1],
     );
   } catch (error) {
-    addTrace("ERR", "mock 服务切换失败", error.message || String(error));
-    setMockButtonState(state.mockRunning);
+    if (action !== "stop") state.playbackAutoPauseArmed = false;
+    addTrace("ERR", "边界流量回放切换失败", error.message || String(error));
+    setPlaybackButtonState(wasRunning, wasPaused);
   } finally {
     btn.disabled = false;
   }
 }
 
-function setMockButtonState(running) {
-  state.mockRunning = running;
-  const btn = document.getElementById("mockToggleBtn");
+function acceptWorkspace(workspaceId) {
+  const next = String(workspaceId || "");
+  if (!next || next === state.workspaceId) return;
+  state.workspaceId = next;
+  clearRuntimeWorkspaceView();
+}
+
+function clearRuntimeWorkspaceView() {
+  resetMap();
+  clearMockTelemetry();
+  state.lastTrace = null;
+  const trace = document.getElementById("agentTrace");
+  const chat = document.getElementById("chatLog");
+  if (trace) trace.innerHTML = "";
+  if (chat) chat.innerHTML = "";
+  state.conclusionToasts.forEach((item) => item.element?.remove());
+  state.conclusionToasts = [];
+  document.getElementById("conclusionToastRegion")?.replaceChildren();
+}
+
+async function updatePlaybackSpeed(event) {
+  const previousSpeed = state.playbackSpeed;
+  const speed = Number(event.target.value || 1);
+  setPlaybackSpeedControl(speed);
+  if (!state.playbackRunning) return;
+  event.target.disabled = true;
+  try {
+    const res = await fetch("/api/autonomy/speed", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ speed_multiplier: speed }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    setPlaybackSpeedControl(data.speed_multiplier || speed);
+  } catch (error) {
+    setPlaybackSpeedControl(previousSpeed);
+    addTrace("ERR", "演进速率调整失败", error.message || String(error));
+  } finally {
+    event.target.disabled = false;
+  }
+}
+
+function setPlaybackSpeedControl(speed) {
+  const value = [1, 2, 5, 10].includes(Number(speed)) ? Number(speed) : 1;
+  state.playbackSpeed = value;
+  const select = document.getElementById("playbackSpeedSelect");
+  if (select) select.value = String(value);
+}
+
+function setPlaybackButtonState(running, paused = false) {
+  state.playbackRunning = running;
+  state.playbackPaused = !running && paused;
+  const btn = document.getElementById("playbackToggleBtn");
   if (!btn) return;
   btn.classList.toggle("is-running", running);
+  btn.classList.toggle("is-paused", state.playbackPaused);
   btn.setAttribute("aria-pressed", String(running));
-  btn.title = running ? "停止边界流量 mock 服务" : "启动边界流量 mock 服务";
+  btn.title = running
+    ? "停止边界流量过程回放"
+    : (state.playbackPaused ? "从暂停位置继续边界流量过程回放" : "启动边界流量过程回放");
   btn.innerHTML = running
-    ? '<i data-lucide="pause"></i><span>停止 Mock</span>'
-    : '<i data-lucide="play"></i><span>启动 Mock</span>';
+    ? '<i data-lucide="pause"></i><span>停止演进</span>'
+    : `<i data-lucide="play"></i><span>${state.playbackPaused ? "继续演进" : "开始演进"}</span>`;
   renderIcons();
+}
+
+function updateTelemetryRuntimeStatus(data) {
+  if (Number(data.total_rows || 0) > 0) state.playbackTotalRows = Number(data.total_rows);
+  if (data.running) {
+    if (!state.lastMockObservation) setTelemetryState("等待", "normal");
+    return;
+  }
+  if (data.status === "finished") {
+    setTelemetryState("完成", "normal");
+  } else if (data.status === "paused" || data.paused) {
+    setTelemetryState("已暂停", "stopped");
+  } else if (data.status === "stopped" || data.running === false) {
+    setTelemetryState(state.lastMockObservation ? "已停止" : "待机", "stopped");
+  }
+}
+
+function renderMockObservation(event) {
+  const observation = event.payload?.observation;
+  if (!observation) return;
+  state.lastMockObservation = observation;
+  document.getElementById("telemetryTime").textContent = formatMockTime(observation.observed_at);
+  renderTelemetryWeather(observation.rainfall_mm);
+  setMockField("rainfall_mm", observation.rainfall_mm, 1);
+  setMockField("reservoir_level_m", observation.reservoir_level_m, 3);
+  setMockField("reservoir_inflow_m3s", observation.reservoir_inflow_m3s, 2);
+  setMockField("reservoir_release_m3s", observation.reservoir_release_m3s, 2);
+  ["interval1", "interval2", "tonggu", "upstream"].forEach((key) => {
+    const target = document.querySelector(`[data-mock-boundary="${key}"]`);
+    const flow = observation.boundaries?.[key]?.flow_m3s;
+    if (target) target.textContent = formatMockNumber(flow, 2);
+  });
+
+  const rainfall = Number(observation.rainfall_mm || 0);
+  const totalFlow = Number(observation.total_flow_m3s || 0);
+  const baseflowTotal = Number(observation.baseflow_total_m3s || 0);
+  if (rainfall > 0) setTelemetryState("降雨", "raining");
+  else if (baseflowTotal > 0 && totalFlow > baseflowTotal * 1.25) setTelemetryState("退水", "receding");
+  else setTelemetryState("正常", "normal");
+
+  const current = Number(observation.sequence || 0) + 1;
+  const total = Math.max(state.playbackTotalRows, current);
+  const ratio = total > 0 ? Math.min(100, current / total * 100) : 0;
+  document.getElementById("telemetryProgressBar").style.width = `${ratio.toFixed(2)}%`;
+  document.getElementById("telemetryProgressText").textContent = `${current} / ${total}`;
+}
+
+function clearMockTelemetry() {
+  state.lastMockObservation = null;
+  document.getElementById("telemetryTime").textContent = "--";
+  renderTelemetryWeather(null);
+  document.querySelectorAll("[data-mock-field], [data-mock-boundary]").forEach((element) => {
+    element.textContent = "--";
+  });
+  document.getElementById("telemetryProgressBar").style.width = "0%";
+  document.getElementById("telemetryProgressText").textContent = `0 / ${state.playbackTotalRows}`;
+  setTelemetryState("等待", "normal");
+}
+
+function renderTelemetryWeather(value) {
+  const parsed = value === null || value === undefined || value === "" ? null : Number(value);
+  const rainfall = Number.isFinite(parsed) ? parsed : null;
+  const weather = telemetryWeatherForRainfall(rainfall);
+  const container = document.getElementById("telemetryWeather");
+  container.dataset.weather = weather.key;
+  document.getElementById("telemetryWeatherIcon").innerHTML = `<i data-lucide="${weather.icon}"></i>`;
+  document.getElementById("telemetryWeatherLabel").textContent = weather.label;
+  document.getElementById("telemetryWeatherDetail").textContent = rainfall === null
+    ? "当前时段降雨 -- mm"
+    : `当前时段降雨 ${rainfall.toFixed(1)} mm`;
+  renderIcons();
+}
+
+function telemetryWeatherForRainfall(rainfall) {
+  if (rainfall === null) return { key: "waiting", label: "等待数据", icon: "cloud-sun" };
+  if (rainfall <= 0) return { key: "dry", label: "无降雨", icon: "cloud-sun" };
+  if (rainfall < 2.5) return { key: "light", label: "小雨", icon: "cloud-drizzle" };
+  if (rainfall < 8) return { key: "moderate", label: "中雨", icon: "cloud-rain" };
+  if (rainfall < 16) return { key: "heavy", label: "大雨", icon: "cloud-rain-wind" };
+  if (rainfall < 30) return { key: "storm", label: "暴雨", icon: "cloud-lightning" };
+  return { key: "severe", label: "大暴雨", icon: "cloud-lightning" };
+}
+
+function setMockField(field, value, digits) {
+  const target = document.querySelector(`[data-mock-field="${field}"]`);
+  if (target) target.textContent = formatMockNumber(value, digits);
+}
+
+function formatMockNumber(value, digits) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(digits) : "--";
+}
+
+function formatMockTime(value) {
+  if (!value) return "--";
+  return String(value).replace("T", " ").replace(/:00\+08:00$/, "");
+}
+
+function setTelemetryState(label, stateName) {
+  const element = document.getElementById("telemetryState");
+  element.textContent = label;
+  element.className = `telemetry-state is-${stateName}`;
 }
 
 function renderDomainEvent(data) {
   if (!data || !data.event_type) return;
-  if (data.event_type === "ImpactAnalyzed") {
-    registerImpactAnalysisResult(data.payload || null, { preserveVisibleTypes: false });
+  if (data.event_type === "InundationGenerated") {
+    void pausePlaybackAfterInundation();
   }
-  const tag = data.event_type === "BoundaryFlowSeriesGenerated" ? "ALERT" : (data.event_type === "HydroThresholdExceeded" ? "HYDRO" : "EVENT");
-  const label = data.event_type === "BoundaryFlowSeriesGenerated" ? "警戒事件进入智能体" : (data.title || data.event_type);
+  if (data.event_type === "ImpactAnalyzed") {
+    registerImpactAnalysisResult(data.payload || null);
+  }
+  const tag = data.event_type === "FloodForecastRequired" ? "ALERT" : "EVENT";
+  const label = data.event_type === "FloodForecastRequired" ? "洪水预测请求进入智能体" : (data.title || data.event_type);
   addTrace(tag, label, eventDetail(data));
   setCyclePhase(eventPhase(data.event_type));
 }
 
+async function pausePlaybackAfterInundation() {
+  if (!state.playbackRunning || !state.playbackAutoPauseArmed || state.playbackAutoPausePending) return;
+  state.playbackAutoPauseArmed = false;
+  state.playbackAutoPausePending = true;
+  const btn = document.getElementById("playbackToggleBtn");
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/autonomy/pause", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const status = await res.json();
+    setPlaybackButtonState(Boolean(status.running), true);
+    updateTelemetryRuntimeStatus(status);
+    addTrace("AUTO", "演进已自动暂停", "已收到 InundationGenerated，停止继续回放边界流量观测。");
+  } catch (error) {
+    state.playbackAutoPauseArmed = state.playbackRunning;
+    addTrace("ERR", "演进自动暂停失败", error.message || String(error));
+  } finally {
+    state.playbackAutoPausePending = false;
+    btn.disabled = false;
+  }
+}
+
 function eventDetail(data) {
   const payload = data.payload || {};
-  if (data.event_type === "BoundaryFlowSeriesGenerated") {
-    const flow = payload.boundary_flow || {};
-    return boundaryFlowSummary(flow);
+  if (data.event_type === "FloodForecastRequired") {
+    const trigger = payload.forecast_trigger || {};
+    return trigger.reason || "领域策略要求运行洪水预测";
   }
-  if (data.event_type === "HydroThresholdExceeded") {
-    return `${payload.station_name || data.source_id}: ${payload.metric_label || payload.metric} ${payload.value} ${payload.unit} / 阈值 ${payload.threshold} ${payload.unit}`;
+  if (data.event_type === "FloodEpisodeEnded") {
+    return `${payload.ended_at || ""}，预测输入 ${Number(payload.forecast_versions || 0)} 个版本`;
   }
   if (data.event_type === "InundationGenerated") {
     return `预测单元 ${payload.forecast_cell_count || 0} 个，淹没面积 ${(Number(payload.inundated_area_km2 || 0)).toFixed(2)} km²`;
@@ -931,148 +1178,11 @@ function eventDetail(data) {
   return data.severity || "";
 }
 
-function boundaryFlowSummary(flow) {
-  const boundaries = flow.boundaries || {};
-  const labels = ["interval1", "interval2", "tonggu", "upstream"].map((key) => {
-    const item = boundaries[key] || {};
-    if (!item.label) return "";
-    return `${item.label}${Number(item.peak_flow_m3s || 0).toFixed(1)}m³/s`;
-  }).filter(Boolean);
-  return `${flow.boundary_flow_id || "boundary_flow"} ${labels.join("，")}`;
-}
-
-async function renderBoundaryFlowLayer(event) {
-  const payload = event.payload || {};
-  const flow = payload.boundary_flow || {};
-  const boundaries = flow.boundaries || {};
-  const features = await getModelBoundaryFeatures();
-  clearBoundaryFlowLayer();
-
-  const layer = L.layerGroup();
-  const maxFlow = Math.max(
-    1,
-    ...Object.values(boundaries).flatMap((item) => (item.series || []).map((point) => Number(point.flow_m3s || 0))),
-  );
-
-  ["interval1", "interval2", "tonggu", "upstream"].forEach((key) => {
-    const item = boundaries[key];
-    const feature = features.find((entry) => entry.properties?.boundary_group === key);
-    if (!item || !feature) return;
-    const center = featureCenter(feature);
-    if (!center) return;
-
-    const color = boundaryFlowColor(key);
-    const marker = L.circleMarker(center, {
-      radius: 6,
-      color: "#ffffff",
-      weight: 2,
-      fillColor: color,
-      fillOpacity: 0.96,
-      className: "boundary-flow-marker",
-    });
-    marker.bindTooltip(`${item.label} 峰值 ${Number(item.peak_flow_m3s || 0).toFixed(1)} m³/s`, {
-      direction: "top",
-      offset: [0, -8],
-    });
-    marker.bindPopup(boundaryFlowPopupHtml(item, flow));
-    marker.addTo(layer);
-
-    L.marker(center, {
-      interactive: true,
-      icon: L.divIcon({
-        className: "boundary-flow-chart-icon",
-        html: boundaryFlowChartHtml(key, item, maxFlow),
-        iconSize: [178, 86],
-        iconAnchor: [-12, 72],
-      }),
-    }).addTo(layer);
-  });
-
-  layer.addTo(state.map);
-  state.boundaryFlowLayer = layer;
-}
-
-async function getModelBoundaryFeatures() {
-  if (state.boundaryFlowFeatures) return state.boundaryFlowFeatures;
-  const params = new URLSearchParams({
-    object_type: "HydrodynamicBoundary",
-    is_model_input_boundary: "true",
-  });
-  const res = await fetch(`/api/geojson?${params.toString()}`);
-  if (!res.ok) throw new Error(await res.text());
-  const geojson = await res.json();
-  state.boundaryFlowFeatures = geojson.features || [];
-  return state.boundaryFlowFeatures;
-}
-
-function featureCenter(feature) {
-  const coords = collectCoordinates(feature.geometry?.coordinates || []);
-  if (!coords.length) return null;
-  const mid = coords[Math.floor(coords.length / 2)];
-  return [mid[1], mid[0]];
-}
-
-function collectCoordinates(value) {
-  if (!Array.isArray(value)) return [];
-  if (value.length >= 2 && typeof value[0] === "number" && typeof value[1] === "number") {
-    return [[value[0], value[1]]];
-  }
-  return value.flatMap((item) => collectCoordinates(item));
-}
-
-function boundaryFlowChartHtml(key, item, maxFlow) {
-  const series = item.series || [];
-  const color = boundaryFlowColor(key);
-  const points = sparklinePoints(series, maxFlow, 142, 40);
-  const peak = Number(item.peak_flow_m3s || 0).toFixed(1);
-  const label = escapeHtml(item.label || key);
-  return `
-    <div class="boundary-flow-chart" style="--flow-color:${color}">
-      <div class="flow-chart-head">
-        <span>${label}</span>
-        <strong>${peak}</strong>
-      </div>
-      <svg viewBox="0 0 154 48" aria-hidden="true">
-        <path class="flow-chart-grid" d="M6 8 H148 M6 24 H148 M6 40 H148" />
-        <polyline class="flow-chart-line" points="${points}" />
-      </svg>
-      <div class="flow-chart-unit">m³/s</div>
-    </div>
-  `;
-}
-
-function sparklinePoints(series, maxFlow, width, height) {
-  if (!series.length) return "";
-  const maxTime = Math.max(...series.map((point) => Number(point.time_h || 0)), 1);
-  return series.map((point) => {
-    const x = 6 + (Number(point.time_h || 0) / maxTime) * width;
-    const y = 6 + height - (Number(point.flow_m3s || 0) / maxFlow) * height;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(" ");
-}
-
-function boundaryFlowColor(key) {
-  return {
-    interval1: "#b7791f",
-    interval2: "#c05621",
-    tonggu: "#047481",
-    upstream: "#b42318",
-  }[key] || "#475569";
-}
-
-function boundaryFlowPopupHtml(item, flow) {
-  return `
-    <div class="popup-title">${escapeHtml(item.label || "边界流量")}</div>
-    <div class="popup-meta">数据编号: ${escapeHtml(flow.boundary_flow_id || "")}</div>
-    <div class="popup-meta">峰值: ${escapeHtml(Number(item.peak_flow_m3s || 0).toFixed(2))} m³/s</div>
-    <div class="popup-meta">均值: ${escapeHtml(Number(item.mean_flow_m3s || 0).toFixed(2))} m³/s</div>
-  `;
-}
-
 function eventPhase(eventType) {
   return {
-    BoundaryFlowSeriesGenerated: "observe",
-    HydroThresholdExceeded: "observe",
+    BoundaryFlowObserved: "observe",
+    FloodForecastRequired: "analyze",
+    FloodEpisodeEnded: "monitor",
     InundationGenerated: "compute",
     ImpactAnalyzed: "analyze",
     ExposureAnalyzed: "decide",
@@ -1176,14 +1286,6 @@ function featureStyle(objectType, feature) {
   }
   if (objectType === "Watershed") return { color: "#1f2937", weight: 1.3, fillColor: "#9bc4df", fillOpacity: 0.1 };
   if (objectType === "River") return { color: "#0e7490", weight: 4, opacity: 0.95 };
-  if (objectType === "HydrodynamicBoundary") return {
-    color: boundaryColor(feature),
-    weight: boundaryWeight(feature),
-    opacity: boundaryOpacity(feature),
-    dashArray: boundaryDash(feature),
-    lineCap: "round",
-    lineJoin: "round",
-  };
   if (objectType === "County") return { color: "#7b8794", weight: 1.2, fillOpacity: 0 };
   if (objectType === "Town") return { color: "#7a6a22", weight: 1, fillColor: "#facc15", fillOpacity: 0.08 };
   if (objectType === "Road") return { color: "#5f6772", weight: 2, opacity: 0.82 };
@@ -1253,33 +1355,6 @@ function objectIconInfo(objectType, feature) {
     Risk: { key: "risk", emoji: "⚠️", label: "危险区" },
     HydroStation: { key: "station", emoji: "📡", label: "水文测站" },
   }[objectType] || { key: "default", emoji: "📍", label: OBJECT_CONFIG[objectType]?.label || objectType };
-}
-
-function boundaryColor(feature) {
-  if (!isModelInputBoundary(feature)) return "#64748b";
-  const role = feature?.properties?.boundary_role || "";
-  return {
-    upstream_inflow: "#b42318",
-    lateral_inflow: "#b7791f",
-    tributary_inflow: "#047481",
-    downstream_water_level: "#1d4ed8",
-  }[role] || "#475569";
-}
-
-function boundaryWeight(feature) {
-  return isModelInputBoundary(feature) ? 4.2 : 1.4;
-}
-
-function boundaryOpacity(feature) {
-  return isModelInputBoundary(feature) ? 0.95 : 0.48;
-}
-
-function boundaryDash(feature) {
-  return isModelInputBoundary(feature) ? "" : "5 6";
-}
-
-function isModelInputBoundary(feature) {
-  return feature?.properties?.is_model_input_boundary === true;
 }
 
 function pointRadius(objectType) {
@@ -1467,7 +1542,6 @@ async function highlightObjects(action = {}) {
     const entry = state.featureIndex.get(featureIndexKey(objectType, objectId));
     if (entry) applyHighlight(entry.layer, objectType);
   });
-  rememberImpactObjectLayer(objectType);
   if (action.fit) fitHighlighted();
   return true;
 }
@@ -1556,7 +1630,7 @@ function connectChatStream({ message = "", assistant, runId = "", since = 0 }) {
     const data = parseEvent(event);
     addTrace(data.blocked ? "BLOCK" : "RESULT", data.name || "tool result", compactText(data.result || ""));
     if (!data.blocked && data.name === "analyze_inundation_impacts") {
-      registerImpactAnalysisResult(parseToolJsonResult(data.result), { preserveVisibleTypes: false });
+      registerImpactAnalysisResult(parseToolJsonResult(data.result));
     }
   });
 
@@ -2032,7 +2106,130 @@ function addTrace(tag, label, detail) {
   wrap.appendChild(item);
   state.lastTrace = { key, item, count: 1 };
   wrap.scrollTop = wrap.scrollHeight;
+  if (String(label || "").trim() === "智能体结论") {
+    enqueueConclusionToast(label, detail);
+  }
   return item;
+}
+
+function enqueueConclusionToast(label, detail) {
+  const item = {
+    id: state.nextConclusionToastId++,
+    label: String(label || "智能体结论"),
+    detail: String(detail || ""),
+    dragX: 0,
+    dragY: 0,
+    element: null,
+  };
+  item.element = createConclusionToastElement(item);
+  state.conclusionToasts.push(item);
+  document.getElementById("conclusionToastRegion").appendChild(item.element);
+  bindConclusionToastDrag(item);
+  updateConclusionToastStack();
+  renderIcons();
+  requestAnimationFrame(() => item.element?.classList.add("is-visible"));
+}
+
+function createConclusionToastElement(item) {
+  const toast = document.createElement("article");
+  toast.className = "conclusion-toast";
+  toast.dataset.toastId = String(item.id);
+  toast.setAttribute("role", "status");
+  toast.innerHTML = `
+    <header class="conclusion-toast-drag-handle" title="拖动">
+      <div class="conclusion-toast-heading">
+        <i data-lucide="sparkles"></i>
+        <span>${escapeHtml(item.label)}</span>
+      </div>
+      <div class="conclusion-toast-header-actions">
+        <span class="conclusion-toast-queue" hidden></span>
+        <i class="conclusion-toast-grip" data-lucide="grip-horizontal" aria-hidden="true"></i>
+      </div>
+    </header>
+    <div class="conclusion-toast-body markdown-body">${renderMarkdown(item.detail)}</div>
+    <footer>
+      <button class="conclusion-dismiss" type="button">
+        <i data-lucide="x"></i>
+        <span>Dismiss</span>
+      </button>
+    </footer>
+  `;
+  toast.querySelector(".conclusion-dismiss").addEventListener("click", () => {
+    dismissConclusionToast(item.id);
+  });
+  return toast;
+}
+
+function dismissConclusionToast(id) {
+  const index = state.conclusionToasts.findIndex((item) => item.id === id);
+  if (index < 0) return;
+  const [item] = state.conclusionToasts.splice(index, 1);
+  item.element?.remove();
+  updateConclusionToastStack();
+}
+
+function updateConclusionToastStack() {
+  const total = state.conclusionToasts.length;
+  state.conclusionToasts.forEach((item, index) => {
+    const depth = Math.min(index, 4);
+    item.element.style.setProperty("--stack-x", `${depth * 7}px`);
+    item.element.style.setProperty("--stack-y", `${depth * -8}px`);
+    item.element.style.setProperty("--drag-x", `${item.dragX}px`);
+    item.element.style.setProperty("--drag-y", `${item.dragY}px`);
+    item.element.style.zIndex = String(Math.max(1, 1000 - index));
+    const count = item.element.querySelector(".conclusion-toast-queue");
+    count.hidden = index !== 0 || total < 2;
+    count.textContent = index === 0 && total > 1 ? `+${total - 1}` : "";
+  });
+}
+
+function bindConclusionToastDrag(item) {
+  const toast = item.element;
+  const handle = toast.querySelector(".conclusion-toast-drag-handle");
+  let drag = null;
+
+  const finish = (event) => {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+    toast.classList.remove("is-dragging");
+    drag = null;
+  };
+
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    drag = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: item.dragX,
+      originY: item.dragY,
+      rect: toast.getBoundingClientRect(),
+    };
+    toast.classList.add("is-dragging");
+    handle.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+
+  handle.addEventListener("pointermove", (event) => {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    const deltaX = event.clientX - drag.startX;
+    const deltaY = event.clientY - drag.startY;
+    const clampedX = Math.max(72 - drag.rect.right, Math.min(
+      window.innerWidth - 72 - drag.rect.left,
+      deltaX,
+    ));
+    const clampedY = Math.max(8 - drag.rect.top, Math.min(
+      window.innerHeight - 48 - drag.rect.top,
+      deltaY,
+    ));
+    item.dragX = drag.originX + clampedX;
+    item.dragY = drag.originY + clampedY;
+    toast.style.setProperty("--drag-x", `${item.dragX}px`);
+    toast.style.setProperty("--drag-y", `${item.dragY}px`);
+  });
+
+  handle.addEventListener("pointerup", finish);
+  handle.addEventListener("pointercancel", finish);
 }
 
 function traceTagClass(tag) {
@@ -2074,14 +2271,14 @@ function currentHydrodynamicTimelineContext() {
       current_hydrodynamic_time_h: null,
     };
   }
-  if (!timeline.hours.length || timeline.index === 0) {
+  if (!timeline.hours.length) {
     return {
       active: true,
-      mode: "max_depth",
+      mode: "none",
       current_hydrodynamic_time_h: null,
     };
   }
-  const hour = Number(timeline.hours[timeline.index - 1]);
+  const hour = Number(timeline.hours[timeline.index]);
   return {
     active: true,
     mode: "time_slice",
@@ -2103,98 +2300,304 @@ function parseToolJsonResult(value) {
 function registerImpactAnalysisResult(result, options = {}) {
   if (!result || typeof result !== "object") return;
   if (!["completed", "no_forecast_cells"].includes(result.status)) return;
-  const previous = state.impactAnalysis;
-  const visibleTypes = options.preserveVisibleTypes && previous?.visibleTypes
-    ? previous.visibleTypes
-    : visibleImpactObjectTypes(result);
   const params = result.parameters || {};
   state.impactAnalysis = {
     forecastId: result.forecast_id || "latest",
     targetType: result.target_type || "all",
     minDepthM: Number(params.min_depth_m ?? 0.15),
-    maxDistanceM: Number(params.max_distance_m ?? 120),
-    visibleTypes,
+    maxDistanceM: Number(params.max_distance_m ?? 10),
     lastResult: result,
   };
-  state.pendingImpactObjectTypes.clear();
-  if (!options.preserveVisibleTypes) scheduleImpactAnalysisRefresh();
-}
-
-function rememberImpactObjectLayer(objectType) {
-  if (!objectType || state.applyingImpactRefresh) return;
-  if (!state.impactAnalysis) {
-    state.pendingImpactObjectTypes.add(objectType);
-    return;
+  if (options.render === false) return;
+  const timeline = currentHydrodynamicTimelineContext();
+  if (timeline.mode === "time_slice") {
+    const resultHour = Number(result.time_h);
+    const currentHour = Number(timeline.current_hydrodynamic_time_h);
+    if (!Number.isFinite(resultHour) || Math.abs(resultHour - currentHour) > 0.001) {
+      scheduleImpactAnalysisRefresh();
+      return;
+    }
   }
-  state.impactAnalysis.visibleTypes.add(objectType);
-  scheduleImpactAnalysisRefresh();
-}
-
-function visibleImpactObjectTypes(result) {
-  const affected = result?.affected_object_ids || {};
-  const types = Object.keys(affected).filter((objectType) => Array.isArray(affected[objectType]) && affected[objectType].length);
-  const visible = types.filter((objectType) => state.pendingImpactObjectTypes.has(objectType) || hasObjectType(objectType));
-  return new Set(visible);
+  renderImpactAnalysisResult(result);
 }
 
 function scheduleImpactAnalysisRefresh() {
-  if (!state.impactAnalysis || !state.impactAnalysis.visibleTypes?.size) return;
+  if (currentHydrodynamicTimelineContext().mode !== "time_slice") return;
   if (state.impactRefreshTimer) window.clearTimeout(state.impactRefreshTimer);
   state.impactRefreshTimer = window.setTimeout(refreshImpactAnalysisForTimeline, 260);
 }
 
 async function refreshImpactAnalysisForTimeline() {
-  const analysis = state.impactAnalysis;
-  if (!analysis || !analysis.visibleTypes?.size) return;
   const timeline = currentHydrodynamicTimelineContext();
+  if (timeline.mode !== "time_slice" || timeline.current_hydrodynamic_time_h == null) return;
+  const forecastId = state.hydrodynamicTimeline.baseFilters?.forecast_id
+    || state.hydrodynamicResultMeta?.forecast?.forecast_id
+    || "latest";
   const params = new URLSearchParams({
-    forecast_id: analysis.forecastId || "latest",
-    target_type: analysis.targetType || "all",
-    min_depth_m: String(Number.isFinite(analysis.minDepthM) ? analysis.minDepthM : 0.15),
-    max_distance_m: String(Number.isFinite(analysis.maxDistanceM) ? analysis.maxDistanceM : 120),
+    forecast_id: forecastId,
+    target_type: "all",
+    min_depth_m: "0.15",
+    max_distance_m: "10",
+    time_h: String(timeline.current_hydrodynamic_time_h),
   });
-  if (timeline.mode === "time_slice" && timeline.current_hydrodynamic_time_h != null) {
-    params.set("time_h", String(timeline.current_hydrodynamic_time_h));
-  }
   const seq = ++state.impactRefreshSeq;
+  setImpactAnalysisLoading(timeline.current_hydrodynamic_time_h);
   try {
     const res = await fetch(`/api/impact-analysis?${params.toString()}`);
     if (!res.ok) throw new Error(await res.text());
     const result = await res.json();
     if (seq !== state.impactRefreshSeq) return;
-    registerImpactAnalysisResult(result, { preserveVisibleTypes: true });
-    await renderImpactAnalysisObjects(result, Array.from(analysis.visibleTypes));
+    registerImpactAnalysisResult(result, { render: false });
+    renderImpactAnalysisResult(result);
   } catch (error) {
+    if (seq !== state.impactRefreshSeq) return;
+    setImpactAnalysisError(error);
     console.warn("impact analysis refresh failed", error);
   }
 }
 
-async function renderImpactAnalysisObjects(result, objectTypes) {
-  const affected = result?.affected_object_ids || {};
-  state.applyingImpactRefresh = true;
-  clearHighlights();
-  try {
-    for (const objectType of objectTypes) {
-      removeObjectTypeLayers(objectType);
-      const objectIds = (affected[objectType] || []).map(String).filter(Boolean);
-      if (!objectIds.length) continue;
-      const label = `${OBJECT_CONFIG[objectType]?.label || objectType}受影响对象`;
+function setImpactAnalysisLoading(hour) {
+  const panel = document.getElementById("impactPanel");
+  panel?.classList.remove("is-hidden");
+  panel?.classList.add("is-loading");
+  const time = document.getElementById("impactTimeLabel");
+  const status = document.getElementById("impactStatus");
+  if (time) time.textContent = `${formatHydrodynamicHour(hour)} h`;
+  if (status) status.textContent = "正在计算当前时刻的受影响对象...";
+}
+
+function setImpactAnalysisError(error) {
+  document.getElementById("impactPanel")?.classList.remove("is-loading");
+  const status = document.getElementById("impactStatus");
+  if (status) status.textContent = `影响分析失败：${String(error?.message || error)}`;
+}
+
+function renderImpactAnalysisResult(result) {
+  const impacts = (result?.impacts || []).filter((impact) => (
+    impact?.object_type
+    && impact?.object_id != null
+    && Number.isFinite(Number(impact.longitude))
+    && Number.isFinite(Number(impact.latitude))
+  ));
+  const currentKeys = new Set(impacts.map(impactObjectKey));
+  if (state.selectedImpactKey && !currentKeys.has(state.selectedImpactKey)) {
+    clearImpactObjectSelection({ removeLayer: true });
+  }
+  state.impactAnalysis = {
+    ...(state.impactAnalysis || {}),
+    lastResult: result,
+  };
+  renderImpactMarkers(impacts);
+  renderImpactList(result, impacts);
+  updateSelectedImpactDetails(impacts);
+}
+
+function renderImpactMarkers(impacts) {
+  state.impactMarkerLayer?.clearLayers();
+  state.impactMarkers.clear();
+  impacts.forEach((impact) => {
+    const key = impactObjectKey(impact);
+    const selected = key === state.selectedImpactKey;
+    const marker = L.marker([Number(impact.latitude), Number(impact.longitude)], {
+      icon: impactMarkerIcon(impact, selected),
+      pane: "impactPane",
+      interactive: true,
+      keyboard: true,
+      riseOnHover: true,
+      zIndexOffset: selected ? 900 : 0,
+    });
+    marker._impactData = impact;
+    marker.bindTooltip(impactTooltipHtml(impact), {
+      direction: "top",
+      offset: [0, -8],
+    });
+    marker.on("click", () => void focusImpactObject(impact));
+    marker.addTo(state.impactMarkerLayer);
+    state.impactMarkers.set(key, marker);
+  });
+}
+
+function impactMarkerIcon(impact, selected = false) {
+  const riskLevel = ["critical", "high", "medium", "low"].includes(impact.risk_level)
+    ? impact.risk_level
+    : "unknown";
+  return L.divIcon({
+    className: `impact-point-marker is-${riskLevel}${selected ? " is-selected" : ""}`,
+    html: '<span class="impact-point-core" aria-hidden="true"></span>',
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
+    tooltipAnchor: [0, -8],
+  });
+}
+
+function impactTooltipHtml(impact) {
+  return `<strong>${escapeHtml(impact.name || impact.object_id)}</strong><br>${escapeHtml(impactTypeLabel(impact.object_type))} · 水深 ${formatImpactNumber(impact.depth_m, 2)} m`;
+}
+
+function renderImpactList(result, impacts) {
+  const panel = document.getElementById("impactPanel");
+  const count = document.getElementById("impactCount");
+  const time = document.getElementById("impactTimeLabel");
+  const status = document.getElementById("impactStatus");
+  const list = document.getElementById("impactList");
+  if (!panel || !count || !time || !status || !list) return;
+  panel.classList.remove("is-hidden", "is-loading");
+  count.textContent = String(impacts.length);
+  time.textContent = result?.time_h == null ? "最大包络" : `${formatHydrodynamicHour(result.time_h)} h`;
+  status.textContent = impacts.length
+    ? `按水深与风险排序，共 ${impacts.length} 个对象`
+    : "当前时刻未发现受影响对象";
+  list.innerHTML = "";
+  impacts.forEach((impact) => {
+    const key = impactObjectKey(impact);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "impact-list-item";
+    button.classList.toggle("is-selected", key === state.selectedImpactKey);
+    button.dataset.impactKey = key;
+    button.innerHTML = `
+      <span class="impact-risk-dot is-${escapeHtml(impact.risk_level || "unknown")}"></span>
+      <span class="impact-list-copy">
+        <strong>${escapeHtml(impact.name || impact.object_id)}</strong>
+        <small>${escapeHtml(impactTypeLabel(impact.object_type))} · ${escapeHtml(String(impact.object_id))}</small>
+      </span>
+      <span class="impact-list-depth">${formatImpactNumber(impact.depth_m, 2)}<small>m</small></span>
+    `;
+    button.addEventListener("click", () => void focusImpactObject(impact));
+    list.appendChild(button);
+  });
+}
+
+async function focusImpactObject(impact) {
+  const objectType = impact?.object_type;
+  const objectId = String(impact?.object_id || "");
+  if (!objectType || !objectId) return;
+  const key = impactObjectKey(impact);
+  const focusSeq = ++state.impactFocusSeq;
+  if (state.selectedImpactLayerKey && state.selectedImpactKey !== key) {
+    removeLayer(state.selectedImpactLayerKey);
+    state.selectedImpactLayerKey = null;
+  }
+  state.selectedImpactKey = key;
+  updateImpactSelectionStyles();
+
+  let entry = state.featureIndex.get(featureIndexKey(objectType, objectId));
+  if (!entry) {
+    const filters = filtersWithObjectIds(objectType, {}, [objectId]);
+    const detailLayerKey = layerKey(objectType, filters);
+    try {
       await loadObject(objectType, {}, {
         fit: false,
-        label,
-        objectIds,
+        label: `${impactTypeLabel(objectType)} ${objectId}`,
+        objectIds: [objectId],
       });
-      await highlightObjects({
-        object_type: objectType,
-        object_ids: objectIds,
-        filters: {},
-        label,
-        fit: false,
-      });
+    } catch (error) {
+      addTrace("MISS", "受影响对象加载失败", String(error?.message || error));
+      clearImpactObjectSelection({ removeLayer: true });
+      updateImpactSelectionStyles();
+      return;
     }
-  } finally {
-    state.applyingImpactRefresh = false;
+    if (focusSeq !== state.impactFocusSeq || state.selectedImpactKey !== key) {
+      if (state.layerGroups.has(detailLayerKey)) removeLayer(detailLayerKey);
+      return;
+    }
+    state.selectedImpactLayerKey = detailLayerKey;
+    entry = state.featureIndex.get(featureIndexKey(objectType, objectId));
   }
+  if (!entry) {
+    addTrace("MISS", "未找到受影响对象", `${objectType} ${objectId}`);
+    clearImpactObjectSelection({ removeLayer: true });
+    updateImpactSelectionStyles();
+    return;
+  }
+  selectFeature(objectType, entry.feature, entry.layer);
+  entry.layer.setPopupContent?.(impactPopupHtml(impact));
+  entry.layer.openPopup?.();
+  document.getElementById("selectedObject").innerHTML = impactDetailHtml(impact, entry.feature?.properties || {});
+  fitFeatureLayer(entry.layer);
+}
+
+function updateImpactSelectionStyles() {
+  state.impactMarkers.forEach((marker, key) => {
+    const impact = marker._impactData;
+    if (!impact) return;
+    const selected = key === state.selectedImpactKey;
+    marker.setIcon(impactMarkerIcon(impact, selected));
+    marker.setZIndexOffset(selected ? 900 : 0);
+  });
+  document.querySelectorAll(".impact-list-item").forEach((item) => {
+    item.classList.toggle("is-selected", item.dataset.impactKey === state.selectedImpactKey);
+  });
+}
+
+function updateSelectedImpactDetails(impacts) {
+  if (!state.selectedImpactKey) return;
+  const impact = impacts.find((item) => impactObjectKey(item) === state.selectedImpactKey);
+  if (!impact) return;
+  const entry = state.featureIndex.get(featureIndexKey(impact.object_type, impact.object_id));
+  if (!entry) return;
+  entry.layer.setPopupContent?.(impactPopupHtml(impact));
+  document.getElementById("selectedObject").innerHTML = impactDetailHtml(impact, entry.feature?.properties || {});
+}
+
+function clearImpactObjectSelection(options = {}) {
+  const selectedKey = state.selectedImpactKey;
+  state.selectedImpactKey = null;
+  state.impactFocusSeq += 1;
+  state.map?.closePopup();
+  if (options.removeLayer && state.selectedImpactLayerKey) {
+    const key = state.selectedImpactLayerKey;
+    state.selectedImpactLayerKey = null;
+    if (state.layerGroups.has(key)) removeLayer(key);
+  }
+  if (selectedKey && state.selected && impactObjectKey(state.selected) === selectedKey) {
+    clearFocus();
+    state.selected = null;
+    const selected = document.getElementById("selectedObject");
+    if (selected) selected.innerHTML = '<span class="muted">未选中</span>';
+  }
+}
+
+function impactObjectKey(impact) {
+  return `${impact?.object_type || ""}:${String(impact?.object_id ?? impact?.id ?? "")}`;
+}
+
+function impactTypeLabel(objectType) {
+  return OBJECT_CONFIG[objectType]?.label || objectType || "领域对象";
+}
+
+function impactRiskLabel(level) {
+  return {
+    critical: "极高风险",
+    high: "高风险",
+    medium: "中风险",
+    low: "低风险",
+  }[level] || "受影响";
+}
+
+function impactPopupHtml(impact) {
+  return `
+    <div class="popup-title">${escapeHtml(impact.name || impact.object_id)}</div>
+    <div class="popup-meta">${escapeHtml(impactTypeLabel(impact.object_type))} ${escapeHtml(impact.object_id)}</div>
+    <div class="popup-depth">${formatImpactNumber(impact.depth_m, 2)} <span>m 水深</span></div>
+    <div class="popup-meta">${escapeHtml(impactRiskLabel(impact.risk_level))} · 流速 ${formatImpactNumber(impact.velocity_mps, 2)} m/s · 距网格 ${formatImpactNumber(impact.distance_m, 1)} m</div>
+  `;
+}
+
+function impactDetailHtml(impact, props) {
+  return `
+    <div class="impact-selected-summary">
+      <strong>${escapeHtml(impactRiskLabel(impact.risk_level))}</strong>
+      <span>水深 ${formatImpactNumber(impact.depth_m, 2)} m</span>
+      <span>流速 ${formatImpactNumber(impact.velocity_mps, 2)} m/s</span>
+    </div>
+    ${detailHtml(impact.object_type, props)}
+  `;
+}
+
+function formatImpactNumber(value, digits) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(digits) : "--";
 }
 
 function parseEvent(event) {

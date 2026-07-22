@@ -9,30 +9,42 @@ from pathlib import Path
 from typing import Any
 
 from .cnn_v2 import GRID_PATH, run_cnn_v2_forecast
-from .common import DOMAIN_DATA_DIR, GENERATED_DIR, apply_filters, apply_order, apply_window, rel
+from .common import apply_filters, apply_order, apply_window, rel
 from .hydrodynamic_grid import MESH_DB_PATH, coerce_optional_float, forecast_depth_entry
-from .mock_boundary_flow import evaluate_forecast_trigger, read_latest_boundary_flow
+from .boundary_flow import read_latest_forecast_input
+from .workspace import WORKSPACES, active_workspace_id, workspace_dir
 
 
-FORECAST_DIR = GENERATED_DIR / "forecast"
-FORECAST_RUNS_PATH = FORECAST_DIR / "forecast_runs.jsonl"
-FORECAST_CELLS_PATH = FORECAST_DIR / "forecast_cells_latest.jsonl"
-FORECAST_CYCLE_PATH = FORECAST_DIR / "emergency_cycle_latest.json"
-HYDRODYNAMIC_FORECAST_DEPTH_PATH = DOMAIN_DATA_DIR / "hydrodynamic" / "forecasts" / "latest" / "max_depth.csv"
-HYDRODYNAMIC_FORECAST_SERIES_PATH = HYDRODYNAMIC_FORECAST_DEPTH_PATH.with_name("depth_series.npy")
-HYDRODYNAMIC_FORECAST_TIME_STEPS_PATH = HYDRODYNAMIC_FORECAST_DEPTH_PATH.with_name("time_steps.json")
 LATEST_FORECAST_ID = "forecast_latest"
-FORECAST_SCHEMA_VERSION = 3
+FORECAST_SCHEMA_VERSION = 4
 
 
-MOCK_HYDROLOGY = {
-    "observed_rainfall_6h_mm": 146.0,
-    "forecast_rainfall_3h_mm": 58.0,
-    "reservoir_water_level_m": 193.6,
-    "reservoir_flood_limit_level_m": 191.2,
-    "reservoir_outflow_m3s": 520.0,
-    "river_boundary_flow_m3s": 780.0,
-}
+def forecast_dir(*, create: bool = False) -> Path:
+    return workspace_dir(create=create) / "forecasts" / "latest"
+
+
+def forecast_runs_path() -> Path:
+    return forecast_dir() / "forecast_runs.jsonl"
+
+
+def forecast_cells_path() -> Path:
+    return forecast_dir() / "forecast_cells.jsonl"
+
+
+def forecast_cycle_path() -> Path:
+    return forecast_dir() / "emergency_cycle.json"
+
+
+def hydrodynamic_forecast_depth_path() -> Path:
+    return forecast_dir() / "max_depth.csv"
+
+
+def hydrodynamic_forecast_series_path() -> Path:
+    return forecast_dir() / "depth_series.npy"
+
+
+def hydrodynamic_forecast_time_steps_path() -> Path:
+    return forecast_dir() / "time_steps.json"
 
 
 def run_flood_forecast(resolver, forecast_id: str = "latest",
@@ -64,7 +76,7 @@ def run_emergency_cycle(resolver, force_forecast: bool = False,
         "cycle_id": f"cycle_{LATEST_FORECAST_ID}",
         "status": "completed",
         "stage": "observe_forecast_warn_dispatch",
-        "observations": MOCK_HYDROLOGY,
+        "observations": hydrology_inputs_from_forecast(forecast),
         "forecast": forecast,
         "warning": warning,
         "transfer_impacts": transfer_impacts,
@@ -80,8 +92,10 @@ def query_forecast_runs(resolver, filters: dict[str, Any] | None = None,
                         limit: int | None = None,
                         order_by: str | None = None,
                         offset: int | None = None) -> list[dict]:
+    if not active_workspace_id():
+        return []
     ensure_latest_forecast(resolver)
-    rows = read_jsonl(FORECAST_RUNS_PATH)
+    rows = read_jsonl(forecast_runs_path())
     rows = apply_filters(rows, normalize_forecast_filters(filters))
     rows = apply_order(rows, order_by)
     return apply_window(rows, limit, offset)
@@ -91,11 +105,13 @@ def query_forecast_cells(resolver, filters: dict[str, Any] | None = None,
                          limit: int | None = None,
                          order_by: str | None = None,
                          offset: int | None = None) -> list[dict]:
+    if not active_workspace_id():
+        return []
     ensure_latest_forecast(resolver)
     normalized_filters = normalize_forecast_filters(filters)
     time_h = coerce_optional_float(normalized_filters.get("time_h"))
     if time_h is None:
-        rows = read_jsonl(FORECAST_CELLS_PATH)
+        rows = read_jsonl(forecast_cells_path())
     else:
         depth_entry = forecast_depth_entry(
             str(normalized_filters.get("forecast_id") or LATEST_FORECAST_ID),
@@ -124,27 +140,29 @@ def count_forecast_cells(resolver, filters: dict[str, Any] | None = None) -> int
 
 
 def ensure_latest_forecast(resolver, force: bool = False) -> dict[str, Any]:
-    if not force and FORECAST_RUNS_PATH.exists() and FORECAST_CELLS_PATH.exists():
-        rows = read_jsonl(FORECAST_RUNS_PATH)
-        latest_boundary_flow = read_latest_boundary_flow()
+    if not active_workspace_id():
+        WORKSPACES.create()
+    if not force and forecast_runs_path().exists() and forecast_cells_path().exists():
+        rows = read_jsonl(forecast_runs_path())
+        latest_boundary_flow = read_latest_forecast_input()
         if (
             rows
             and rows[-1].get("schema_version") == FORECAST_SCHEMA_VERSION
-            and cached_forecast_matches_boundary_flow(rows[-1], latest_boundary_flow)
+            and cached_forecast_matches_input(rows[-1], latest_boundary_flow)
         ):
             return rows[-1]
 
-    FORECAST_DIR.mkdir(parents=True, exist_ok=True)
+    forecast_dir(create=True).mkdir(parents=True, exist_ok=True)
     run, cells = generate_forecast(resolver)
-    write_jsonl(FORECAST_RUNS_PATH, [run])
-    write_jsonl(FORECAST_CELLS_PATH, cells)
+    write_jsonl(forecast_runs_path(), [run])
+    write_jsonl(forecast_cells_path(), cells)
     clear_cached_cycle()
     clear_cached_geojson()
     return run
 
 
-def cached_forecast_matches_boundary_flow(forecast: dict[str, Any],
-                                          boundary_flow: dict[str, Any] | None) -> bool:
+def cached_forecast_matches_input(forecast: dict[str, Any],
+                                  boundary_flow: dict[str, Any] | None) -> bool:
     if not boundary_flow:
         return not forecast.get("boundary_flow")
     expected_id = str((boundary_flow.get("summary") or {}).get("boundary_flow_id") or "")
@@ -158,8 +176,8 @@ def cached_forecast_matches_boundary_flow(forecast: dict[str, Any],
 
 
 def generate_forecast(resolver) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    boundary_flow = read_latest_boundary_flow()
-    trigger = evaluate_forecast_trigger(boundary_flow) if boundary_flow else None
+    boundary_flow = read_latest_forecast_input()
+    trigger = boundary_flow.get("forecast_trigger") if boundary_flow else None
     if not boundary_flow:
         generated_at = datetime.now(timezone.utc).isoformat()
         reset_hydrodynamic_forecast_outputs()
@@ -182,44 +200,17 @@ def generate_forecast(resolver) -> tuple[dict[str, Any], list[dict[str, Any]]]:
             "mean_depth_m": 0.0,
             "boundary_flow": "{}",
             "forecast_trigger": "{}",
-            "data_path": rel(FORECAST_CELLS_PATH),
-            "hydrodynamic_depth_path": rel(HYDRODYNAMIC_FORECAST_DEPTH_PATH),
+            "forecast_input_id": "",
+            "data_path": rel(forecast_cells_path()),
+            "hydrodynamic_depth_path": rel(hydrodynamic_forecast_depth_path()),
             "hydrodynamic_series_path": "",
             "hydrodynamic_time_steps_path": "",
         }
         return run, []
-    if trigger and not trigger.get("should_run_forecast"):
-        generated_at = datetime.now(timezone.utc).isoformat()
-        reset_hydrodynamic_forecast_outputs()
-        run = {
-            "schema_version": FORECAST_SCHEMA_VERSION,
-            "forecast_id": LATEST_FORECAST_ID,
-            "name": "珊瑚河实时预测演算",
-            "status": "skipped_dry_condition",
-            "model_name": "shanhu_boundary_flow_gate",
-            "model_description": "领域规则判断四边界流量未达到水动力模型触发条件，本轮不运行 CNN。",
-            "generated_at": generated_at,
-            "lead_time_h": 0.0,
-            "mesh_source_id": "",
-            "mesh_source_path": "",
-            "hydrology_inputs": json.dumps(boundary_flow.get("summary") if boundary_flow else {}, ensure_ascii=False),
-            "forcing_index": 0.0,
-            "forecast_cell_count": 0,
-            "inundated_area_km2": 0.0,
-            "max_depth_m": 0.0,
-            "mean_depth_m": 0.0,
-            "forecast_trigger": json.dumps(trigger, ensure_ascii=False),
-            "data_path": rel(HYDRODYNAMIC_FORECAST_DEPTH_PATH),
-            "hydrodynamic_depth_path": rel(HYDRODYNAMIC_FORECAST_DEPTH_PATH),
-            "hydrodynamic_series_path": "",
-            "hydrodynamic_time_steps_path": "",
-        }
-        return run, []
-
-    hydrology_inputs = hydrology_inputs_from_boundary_flow(boundary_flow) if boundary_flow else MOCK_HYDROLOGY
+    hydrology_inputs = hydrology_inputs_from_boundary_flow(boundary_flow)
     forcing = forcing_index(hydrology_inputs)
     generated_at = datetime.now(timezone.utc).isoformat()
-    cnn_result = run_cnn_v2_forecast(boundary_flow, HYDRODYNAMIC_FORECAST_DEPTH_PATH)
+    cnn_result = run_cnn_v2_forecast(boundary_flow, hydrodynamic_forecast_depth_path())
     if cnn_result.get("error"):
         reset_hydrodynamic_forecast_outputs()
         run = {
@@ -236,20 +227,21 @@ def generate_forecast(resolver) -> tuple[dict[str, Any], list[dict[str, Any]]]:
             "hydrology_inputs": json.dumps(hydrology_inputs, ensure_ascii=False),
             "boundary_flow": json.dumps(boundary_flow.get("summary") if boundary_flow else {}, ensure_ascii=False),
             "forecast_trigger": json.dumps(trigger or {}, ensure_ascii=False),
+            "forecast_input_id": str((boundary_flow.get("summary") or {}).get("boundary_flow_id") or ""),
             "forcing_index": round(forcing, 3),
             "forecast_cell_count": 0,
             "inundated_area_km2": 0.0,
             "max_depth_m": 0.0,
             "mean_depth_m": 0.0,
-            "data_path": rel(FORECAST_CELLS_PATH),
-            "hydrodynamic_depth_path": rel(HYDRODYNAMIC_FORECAST_DEPTH_PATH),
+            "data_path": rel(forecast_cells_path()),
+            "hydrodynamic_depth_path": rel(hydrodynamic_forecast_depth_path()),
             "hydrodynamic_series_path": "",
             "hydrodynamic_time_steps_path": "",
             "error_detail": json.dumps(cnn_result, ensure_ascii=False),
         }
         return run, []
 
-    depths = read_hydrodynamic_depth_csv(HYDRODYNAMIC_FORECAST_DEPTH_PATH)
+    depths = read_hydrodynamic_depth_csv(hydrodynamic_forecast_depth_path())
     cells = forecast_cells_from_hydrodynamic_mesh(depths, generated_at)
 
     total_area_km2 = sum(float(row.get("area_m2") or 0) for row in cells) / 1_000_000
@@ -261,19 +253,20 @@ def generate_forecast(resolver) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         "model_name": cnn_result.get("model_name", "FLOOD_CNN_V2"),
         "model_description": cnn_result.get("model_description", "CNN_V2 水动力模型预测。"),
         "generated_at": generated_at,
-        "lead_time_h": 3.0,
+        "lead_time_h": float((boundary_flow.get("summary") or {}).get("forecast_horizon_h") or 0),
         "mesh_source_id": "cnn_v2_gt",
         "mesh_source_path": rel(GRID_PATH),
         "hydrology_inputs": json.dumps(hydrology_inputs, ensure_ascii=False),
         "boundary_flow": json.dumps(boundary_flow.get("summary") if boundary_flow else {}, ensure_ascii=False),
         "forecast_trigger": json.dumps(trigger or {}, ensure_ascii=False),
+        "forecast_input_id": str((boundary_flow.get("summary") or {}).get("boundary_flow_id") or ""),
         "forcing_index": round(forcing, 3),
         "forecast_cell_count": int(cnn_result.get("flooded_count") or len(cells)),
         "inundated_area_km2": round(total_area_km2, 4),
         "max_depth_m": round(float(cnn_result.get("max_depth_m") or 0), 3),
         "mean_depth_m": round(float(cnn_result.get("mean_depth_m") or 0), 3),
-        "data_path": rel(FORECAST_CELLS_PATH),
-        "hydrodynamic_depth_path": rel(HYDRODYNAMIC_FORECAST_DEPTH_PATH),
+        "data_path": rel(forecast_cells_path()),
+        "hydrodynamic_depth_path": rel(hydrodynamic_forecast_depth_path()),
         "hydrodynamic_series_path": str(cnn_result.get("hydrodynamic_series_path") or ""),
         "hydrodynamic_time_steps_path": str(cnn_result.get("hydrodynamic_time_steps_path") or ""),
         "time_step_count": int(cnn_result.get("time_step_count") or 0),
@@ -286,16 +279,28 @@ def generate_forecast(resolver) -> tuple[dict[str, Any], list[dict[str, Any]]]:
 def hydrology_inputs_from_boundary_flow(boundary_flow: dict[str, Any] | None) -> dict[str, float]:
     summary = (boundary_flow or {}).get("summary") or {}
     boundaries = summary.get("boundaries") or {}
-    total_peak = sum(float(row.get("peak_flow_m3s") or 0) for row in boundaries.values())
-    flow_index_value = float(summary.get("flow_index") or 0)
+    observed_point_count = max(1, int(summary.get("observed_point_count") or 1))
+    current_flows = [
+        float((row.get("series") or [{}])[min(observed_point_count - 1, len(row.get("series") or [{}]) - 1)].get("flow_m3s") or 0)
+        for row in boundaries.values()
+    ]
+    total_current = sum(current_flows)
     return {
-        "observed_rainfall_6h_mm": min(220.0, 42.0 + total_peak * 0.22),
-        "forecast_rainfall_3h_mm": min(110.0, 18.0 + flow_index_value * 11.0),
-        "reservoir_water_level_m": 190.8 + flow_index_value * 0.55,
-        "reservoir_flood_limit_level_m": 191.2,
-        "reservoir_outflow_m3s": float((boundaries.get("upstream") or {}).get("peak_flow_m3s") or 0) * 2.8,
-        "river_boundary_flow_m3s": total_peak,
+        "observed_rainfall_6h_mm": float(summary.get("observed_rainfall_mm") or 0),
+        "forecast_rainfall_3h_mm": float(summary.get("forecast_rainfall_mm") or 0),
+        "reservoir_water_level_m": float(summary.get("reservoir_level_m") or 0),
+        "reservoir_flood_limit_level_m": 245.3,
+        "reservoir_outflow_m3s": float(current_flows[-1] if current_flows else 0),
+        "river_boundary_flow_m3s": total_current,
     }
+
+
+def hydrology_inputs_from_forecast(forecast: dict[str, Any]) -> dict[str, Any]:
+    try:
+        value = json.loads(str(forecast.get("hydrology_inputs") or "{}"))
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 def read_hydrodynamic_depth_csv(path: Path) -> dict[int, float]:
@@ -374,7 +379,7 @@ def forecast_cells_from_hydrodynamic_mesh(depths: dict[int, float],
 
 
 def latest_forecast_generated_at() -> str:
-    rows = read_jsonl(FORECAST_RUNS_PATH)
+    rows = read_jsonl(forecast_runs_path())
     if rows:
         return str(rows[-1].get("generated_at") or "")
     return datetime.now(timezone.utc).isoformat()
@@ -399,8 +404,8 @@ def write_hydrodynamic_depth_csv(depths: dict[int, float], path: Path) -> None:
 
 
 def reset_hydrodynamic_forecast_outputs() -> None:
-    write_hydrodynamic_depth_csv({}, HYDRODYNAMIC_FORECAST_DEPTH_PATH)
-    for path in (HYDRODYNAMIC_FORECAST_SERIES_PATH, HYDRODYNAMIC_FORECAST_TIME_STEPS_PATH):
+    write_hydrodynamic_depth_csv({}, hydrodynamic_forecast_depth_path())
+    for path in (hydrodynamic_forecast_series_path(), hydrodynamic_forecast_time_steps_path()):
         if path.exists():
             path.unlink()
 
@@ -746,10 +751,10 @@ def write_jsonl(path: Path, rows: list[dict]) -> None:
 
 
 def read_cached_emergency_cycle(forecast: dict[str, Any]) -> dict[str, Any] | None:
-    if not FORECAST_CYCLE_PATH.exists():
+    if not forecast_cycle_path().exists():
         return None
     try:
-        cached = json.loads(FORECAST_CYCLE_PATH.read_text(encoding="utf-8"))
+        cached = json.loads(forecast_cycle_path().read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return None
     cached_forecast = cached.get("forecast") or {}
@@ -763,20 +768,21 @@ def read_cached_emergency_cycle(forecast: dict[str, Any]) -> dict[str, Any] | No
 
 
 def write_cached_emergency_cycle(result: dict[str, Any]) -> None:
-    FORECAST_CYCLE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    FORECAST_CYCLE_PATH.write_text(
+    forecast_cycle_path().parent.mkdir(parents=True, exist_ok=True)
+    forecast_cycle_path().write_text(
         json.dumps(result, ensure_ascii=False, sort_keys=True),
         encoding="utf-8",
     )
 
 
 def clear_cached_cycle() -> None:
-    if FORECAST_CYCLE_PATH.exists():
-        FORECAST_CYCLE_PATH.unlink()
+    if forecast_cycle_path().exists():
+        forecast_cycle_path().unlink()
 
 
 def clear_cached_geojson() -> None:
-    if not GENERATED_DIR.exists():
+    cache_dir = workspace_dir(create=True) / "cache" / "geojson"
+    if not cache_dir.exists():
         return
-    for path in GENERATED_DIR.glob("forecastcell*.geojson"):
+    for path in cache_dir.glob("forecastcell*.geojson"):
         path.unlink()

@@ -9,14 +9,14 @@ from typing import Any, Callable
 
 from oag.runtime.events import event_to_dict
 
-from domains.flood.runtime.mock_boundary_flow import BoundaryFlowMockService
+from domains.flood.runtime.boundary_flow import BoundaryFlowPlayback
+from domains.flood.runtime.workspace import WORKSPACES, active_workspace_id, workspace_scope
 
 
 BOUNDARY_FLOW_EVENT_TOOLS = frozenset({
     "inspect",
     "query",
     "count",
-    "ui_show_objects",
     "run_flood_forecast",
 })
 
@@ -25,7 +25,6 @@ INUNDATION_EVENT_TOOLS = frozenset({
     "query",
     "count",
     "ui_show_objects",
-    "analyze_inundation_impacts",
 })
 
 
@@ -34,36 +33,90 @@ def format_sse(event: str, data: dict) -> bytes:
     return f"event: {event}\ndata: {payload}\n\n".encode("utf-8")
 
 
-class BoundaryFlowMockRunner:
-    def __init__(self, source: BoundaryFlowMockService | None = None,
+class BoundaryFlowPlaybackRunner:
+    def __init__(self, playback: BoundaryFlowPlayback | None = None,
                  interval_seconds: float = 5.0):
-        self.source = source or BoundaryFlowMockService()
-        self.interval_seconds = interval_seconds
+        self.playback = playback or BoundaryFlowPlayback()
+        self.base_interval_seconds = interval_seconds
+        self._speed_multiplier = 1.0
+        self._speed_lock = threading.Lock()
+
+    @property
+    def interval_seconds(self) -> float:
+        with self._speed_lock:
+            return self.base_interval_seconds / self._speed_multiplier
+
+    @property
+    def speed_multiplier(self) -> float:
+        with self._speed_lock:
+            return self._speed_multiplier
+
+    def set_speed(self, multiplier: float) -> float:
+        value = float(multiplier)
+        if value not in {1.0, 2.0, 5.0, 10.0}:
+            raise ValueError("playback speed must be one of 1, 2, 5, 10")
+        with self._speed_lock:
+            self._speed_multiplier = value
+        return value
 
     def reset(self) -> None:
-        self.source.reset()
+        self.playback.reset()
+
+    def mark_forecast_started(self, forecast_input_id: str) -> bool:
+        return self.playback.mark_forecast_started(forecast_input_id)
+
+    def mark_forecast_completed(self, forecast_input_id: str) -> bool:
+        return self.playback.mark_forecast_completed(forecast_input_id)
+
+    def mark_forecast_failed(self, forecast_input_id: str) -> bool:
+        return self.playback.mark_forecast_failed(forecast_input_id)
+
+    def status(self) -> dict[str, Any]:
+        return {
+            **self.playback.status(),
+            "speed_multiplier": self.speed_multiplier,
+            "interval_seconds": self.interval_seconds,
+        }
 
     def run_forever(self, *,
                     wait_until_running: Callable[[], int],
                     is_running: Callable[[int], bool],
-                    publish_data: Callable[[dict[str, Any]], None],
-                    should_promote: Callable[[dict[str, Any]], bool],
-                    publish_event: Callable[[dict[str, Any]], None],
-                    finish_sequence: Callable[[int, dict[str, Any]], None],
+                    publish_observation: Callable[[dict[str, Any]], None],
+                    publish_policy_event: Callable[[dict[str, Any]], None],
+                    finish_sequence: Callable[[int, dict[str, Any] | None], None],
                     sleep_while_running: Callable[[float, int], None]) -> None:
         while True:
             generation = wait_until_running()
             time.sleep(1.0)
             if not is_running(generation):
                 continue
-            data = self.source.next_boundary_flow_data()
+            self.play_generation(
+                generation=generation,
+                is_running=is_running,
+                publish_observation=publish_observation,
+                publish_policy_event=publish_policy_event,
+                finish_sequence=finish_sequence,
+                sleep_while_running=sleep_while_running,
+            )
+
+    def play_generation(self, *, generation: int,
+                        is_running: Callable[[int], bool],
+                        publish_observation: Callable[[dict[str, Any]], None],
+                        publish_policy_event: Callable[[dict[str, Any]], None],
+                        finish_sequence: Callable[[int, dict[str, Any] | None], None],
+                        sleep_while_running: Callable[[float, int], None]) -> None:
+        last_observation: dict[str, Any] | None = None
+        while is_running(generation):
+            observation_event, policy_events = self.playback.next_events()
+            if observation_event is None:
+                finish_sequence(generation, last_observation)
+                return
             if not is_running(generation):
-                continue
-            publish_data(data)
-            if should_promote(data):
-                publish_event(data)
-                finish_sequence(generation, data)
-                continue
+                return
+            last_observation = observation_event
+            publish_observation(observation_event)
+            for event in policy_events:
+                publish_policy_event(event)
             sleep_while_running(self.interval_seconds, generation)
 
 
@@ -75,17 +128,19 @@ class EventRuntime:
         self.outputs: list[dict[str, Any]] = []
         self.condition = threading.Condition()
         self._started = False
-        self._mock_running = False
+        self._playback_running = False
+        self._playback_paused = False
         self._event_queue: collections.deque[tuple[dict[str, Any], int]] = collections.deque()
         self._event_queue_condition = threading.Condition()
         self._generation = 0
         self._published_inundation_sources: set[str] = set()
         self._published_impact_sources: set[str] = set()
-        self._boundary_flow_runner = BoundaryFlowMockRunner()
+        self._boundary_flow_runner = BoundaryFlowPlaybackRunner()
 
     def reset(self) -> None:
         with self.condition:
             self._generation += 1
+            self._playback_paused = False
             self.events.clear()
             self.outputs.clear()
             self._boundary_flow_runner.reset()
@@ -95,8 +150,10 @@ class EventRuntime:
             self.outputs.append({"event": "runtime_status", "data": {
                 "type": "runtime_status",
                 "status": "running",
-                "label": "边界流量 mock 服务已启动",
-                "detail": "后台边界流量 mock 服务正在生成四边界流量数据。",
+                "label": "边界流量过程回放已启动",
+                "detail": f"后台正以 {self._boundary_flow_runner.speed_multiplier:g}× 速率按时间顺序回放边界流量观测。",
+                "speed_multiplier": self._boundary_flow_runner.speed_multiplier,
+                "workspace_id": active_workspace_id(),
             }})
             self.condition.notify_all()
 
@@ -107,51 +164,115 @@ class EventRuntime:
         threading.Thread(
             target=self._boundary_flow_runner.run_forever,
             kwargs={
-                "wait_until_running": self._wait_until_mock_running,
-                "is_running": self._is_mock_running,
-                "publish_data": self._publish_boundary_flow_data,
-                "should_promote": self._should_promote_boundary_flow_data,
-                "publish_event": self._publish_event,
-                "finish_sequence": self._finish_mock_sequence,
-                "sleep_while_running": self._sleep_while_mock_running,
+                "wait_until_running": self._wait_until_playback_running,
+                "is_running": self._is_playback_running,
+                "publish_observation": self._publish_boundary_flow_observation,
+                "publish_policy_event": self._publish_policy_event,
+                "finish_sequence": self._finish_playback_sequence,
+                "sleep_while_running": self._sleep_while_playback_running,
             },
             daemon=True,
         ).start()
         threading.Thread(target=self._event_worker_loop, daemon=True).start()
 
-    def start_mock(self) -> dict[str, Any]:
+    def start_playback(self, speed_multiplier: float = 1.0) -> dict[str, Any]:
         self.ensure_started()
+        self._boundary_flow_runner.set_speed(speed_multiplier)
         with self.condition:
-            if self._mock_running:
+            if self._playback_running:
                 return self.status()
-            self._mock_running = True
+        WORKSPACES.create()
+        with self.condition:
+            self._playback_running = True
         self.reset()
         return self.status()
 
-    def stop_mock(self) -> dict[str, Any]:
+    def set_playback_speed(self, speed_multiplier: float) -> dict[str, Any]:
         self.ensure_started()
+        speed = self._boundary_flow_runner.set_speed(speed_multiplier)
         with self.condition:
-            if not self._mock_running:
-                return self.status()
-            self._mock_running = False
-            self._generation += 1
-            self._clear_event_queue()
             self.outputs.append({"event": "runtime_status", "data": {
                 "type": "runtime_status",
-                "status": "stopped",
-                "label": "边界流量 mock 服务已停止",
-                "detail": "后台不再生成新的边界流量事件；已清空待处理事件队列。",
+                "status": "speed_changed",
+                "label": "演进速率已调整",
+                "detail": f"边界流量过程回放速率调整为 {speed:g}×。",
+                "speed_multiplier": speed,
+                "workspace_id": active_workspace_id(),
             }})
             self.condition.notify_all()
         return self.status()
 
+    def stop_playback(self) -> dict[str, Any]:
+        self.ensure_started()
+        with self.condition:
+            if not self._playback_running and not self._playback_paused:
+                return self.status()
+            self._playback_running = False
+            self._playback_paused = False
+            self._generation += 1
+            self._clear_event_queue()
+            WORKSPACES.update_manifest(status="stopped")
+            self.outputs.append({"event": "runtime_status", "data": {
+                "type": "runtime_status",
+                "status": "stopped",
+                "label": "边界流量过程回放已停止",
+                "detail": "后台不再回放新的边界流量观测；已清空待处理事件队列。",
+                "workspace_id": active_workspace_id(),
+            }})
+            self.condition.notify_all()
+        return self.status()
+
+    def pause_playback(self) -> dict[str, Any]:
+        self.ensure_started()
+        with self.condition:
+            if not self._playback_running:
+                return self.status()
+            self._playback_running = False
+            self._playback_paused = True
+            WORKSPACES.update_manifest(status="paused")
+            self.outputs.append({"event": "runtime_status", "data": {
+                "type": "runtime_status",
+                "status": "paused",
+                "label": "边界流量过程回放已暂停",
+                "detail": "后台已暂停新的边界流量观测；已产生的领域事件继续由智能体处理。",
+                "speed_multiplier": self._boundary_flow_runner.speed_multiplier,
+                "workspace_id": active_workspace_id(),
+            }})
+            self.condition.notify_all()
+        return {**self.status(), "status": "paused"}
+
+    def resume_playback(self, speed_multiplier: float = 1.0) -> dict[str, Any]:
+        self.ensure_started()
+        self._boundary_flow_runner.set_speed(speed_multiplier)
+        with self.condition:
+            if self._playback_running:
+                return self.status()
+            if not self._playback_paused:
+                raise ValueError("boundary flow playback is not paused")
+            self._playback_running = True
+            self._playback_paused = False
+            WORKSPACES.update_manifest(status="active")
+            self.outputs.append({"event": "runtime_status", "data": {
+                "type": "runtime_status",
+                "status": "running",
+                "label": "边界流量过程回放已继续",
+                "detail": "后台从暂停位置继续回放边界流量观测。",
+                "speed_multiplier": self._boundary_flow_runner.speed_multiplier,
+                "workspace_id": active_workspace_id(),
+            }})
+            self.condition.notify_all()
+        return {**self.status(), "status": "running"}
+
     def status(self) -> dict[str, Any]:
         with self.condition:
             return {
-                "running": self._mock_running,
+                "running": self._playback_running,
+                "paused": self._playback_paused,
                 "started": self._started,
                 "event_count": len(self.events),
                 "output_count": len(self.outputs),
+                "workspace_id": active_workspace_id(),
+                **self._boundary_flow_runner.status(),
             }
 
     def stream(self, interval: int):
@@ -169,11 +290,11 @@ class EventRuntime:
                     if len(self.outputs) < next_seq:
                         next_seq = 0
                     if len(self.outputs) <= next_seq:
-                        if not self._mock_running:
+                        if not self._playback_running:
                             heartbeat = {
                                 "type": "runtime_status",
-                                "label": "等待启动 mock 服务",
-                                "detail": "点击前端按钮后，后台才会生成边界流量 mock 数据。",
+                                "label": "等待启动边界流量回放",
+                                "detail": "点击前端按钮后，后台才会按 CSV 时间过程回放边界流量。",
                             }
                     else:
                         pending = self.outputs[next_seq:]
@@ -186,20 +307,20 @@ class EventRuntime:
             for item in pending:
                 yield format_sse(item["event"], item["data"])
 
-    def _wait_until_mock_running(self) -> int:
+    def _wait_until_playback_running(self) -> int:
         with self.condition:
-            while not self._mock_running:
+            while not self._playback_running:
                 self.condition.wait()
             return self._generation
 
-    def _is_mock_running(self, generation: int) -> bool:
+    def _is_playback_running(self, generation: int) -> bool:
         with self.condition:
-            return self._mock_running and generation == self._generation
+            return self._playback_running and generation == self._generation
 
-    def _sleep_while_mock_running(self, seconds: float, generation: int) -> None:
+    def _sleep_while_playback_running(self, seconds: float, generation: int) -> None:
         deadline = time.time() + seconds
         with self.condition:
-            while self._mock_running and generation == self._generation:
+            while self._playback_running and generation == self._generation:
                 remaining = deadline - time.time()
                 if remaining <= 0:
                     return
@@ -210,39 +331,49 @@ class EventRuntime:
             self._event_queue.clear()
             self._event_queue_condition.notify_all()
 
-    def _publish_boundary_flow_data(self, data: dict[str, Any]) -> None:
-        payload = data.get("payload") or {}
-        boundary_flow = payload.get("boundary_flow") or {}
+    def _publish_boundary_flow_observation(self, data: dict[str, Any]) -> None:
+        data = {**data, "workspace_id": active_workspace_id()}
+        observation = (data.get("payload") or {}).get("observation") or {}
         with self.condition:
             self.outputs.append({"event": "boundary_flow_data", "data": {
                 "type": "boundary_flow_data",
-                "label": "四边界流量数据",
+                "label": "四边界流量观测",
                 "event": data,
-                "detail": boundary_flow_detail(boundary_flow),
+                "detail": boundary_flow_observation_detail(observation),
+                "workspace_id": active_workspace_id(),
             }})
             self.condition.notify_all()
 
-    def _should_promote_boundary_flow_data(self, data: dict[str, Any]) -> bool:
-        payload = data.get("payload") or {}
-        trigger = payload.get("forecast_trigger") or {}
-        return bool(trigger.get("should_run_forecast"))
+    def _publish_policy_event(self, event: dict[str, Any]) -> None:
+        event = {**event, "workspace_id": active_workspace_id()}
+        if event.get("event_type") == "FloodForecastRequired":
+            self._publish_event(event)
+            return
+        with self.condition:
+            self.events.append(event)
+            self.outputs.append({"event": "domain_event", "data": event})
+            self.condition.notify_all()
 
-    def _finish_mock_sequence(self, generation: int, data: dict[str, Any]) -> None:
-        payload = data.get("payload") or {}
-        boundary_flow = payload.get("boundary_flow") or {}
+    def _finish_playback_sequence(self, generation: int,
+                                  data: dict[str, Any] | None) -> None:
+        observation = ((data or {}).get("payload") or {}).get("observation") or {}
         with self.condition:
             if generation != self._generation:
                 return
-            self._mock_running = False
+            self._playback_running = False
+            self._playback_paused = False
+            WORKSPACES.update_manifest(status="finished")
             self.outputs.append({"event": "runtime_status", "data": {
                 "type": "runtime_status",
                 "status": "finished",
-                "label": "边界流量 mock 服务已结束",
-                "detail": boundary_flow_detail(boundary_flow),
+                "label": "边界流量过程回放已结束",
+                "detail": boundary_flow_observation_detail(observation),
+                "workspace_id": active_workspace_id(),
             }})
             self.condition.notify_all()
 
     def _publish_event(self, event: dict[str, Any]) -> None:
+        event = {**event, "workspace_id": event.get("workspace_id") or active_workspace_id()}
         generation = self._generation
         with self.condition:
             self.events.append(event)
@@ -277,36 +408,40 @@ class EventRuntime:
                 }, generation)
 
     def _handle_event(self, event: dict[str, Any], generation: int) -> None:
-        if generation != self._generation:
-            return
-        if event.get("event_type") == "BoundaryFlowSeriesGenerated":
-            agent_result = self._run_agent_for_boundary_flow_event(event, generation)
-            trace = self._reason_about_boundary_flow_event(event)
-            self._append_output("agent_trace", trace, generation)
-            forecast_result = agent_result.get("forecast_result")
-            if not forecast_result and agent_result.get("forecast_requested"):
-                forecast_result = self.app.forecast(force=False)
-            if forecast_result and not forecast_was_skipped(forecast_result):
-                inundation_event = self._make_inundation_event(event, forecast_result, trace.get("severity", "warning"))
-                self._publish_inundation_event_once(inundation_event, generation)
-            return
-        if event.get("event_type") == "InundationGenerated":
-            self._run_agent_for_inundation_event(event, generation)
-            return
+        workspace_id = str(event.get("workspace_id") or active_workspace_id() or "")
+        with workspace_scope(workspace_id or None):
+            if generation != self._generation:
+                return
+            if event.get("event_type") == "FloodForecastRequired":
+                agent_result = self._run_agent_for_forecast_required_event(event, generation)
+                trace = self._reason_about_forecast_required_event(event)
+                self._append_output("agent_trace", trace, generation)
+                forecast_result = agent_result.get("forecast_result")
+                if not forecast_result and agent_result.get("forecast_requested"):
+                    forecast_result = self.app.forecast(force=False)
+                if forecast_result:
+                    self._record_forecast_policy_result(event, forecast_result, agent_result)
+                if forecast_completed(forecast_result):
+                    inundation_event = self._make_inundation_event(event, forecast_result, trace.get("severity", "warning"))
+                    self._publish_inundation_event_once(inundation_event, generation)
+                return
+            if event.get("event_type") == "InundationGenerated":
+                self._run_agent_for_inundation_event(event, generation)
+                return
 
-    def _run_agent_for_boundary_flow_event(self, event: dict[str, Any], generation: int) -> dict[str, Any]:
+    def _run_agent_for_forecast_required_event(self, event: dict[str, Any], generation: int) -> dict[str, Any]:
         if not self.app.agent:
             return {}
         session_id = f"event-{event['event_id']}"
         prompt = (
             "/no_think\n"
             "你正在作为珊瑚河洪水应急智能体接收后台事件。"
-            "本轮链路调试放开到水动力预测：你需要判断这组四边界流量数据是否需要驱动水动力模型。"
-            "如果你认为该事件需要用户在地图上感知，可以调用 ui_show_objects 展示 HydrodynamicBoundary，filters 使用 {\"is_model_input_boundary\": true}，fit=false。"
-            "事件 payload 中包含 boundary_flow 和 forecast_trigger。"
-            "只有当 forecast_trigger.should_run_forecast 为 true，且你判断确需推演时，才调用 run_flood_forecast，forecast_id 使用 latest。"
+            "领域策略已根据连续边界流量观测生成 FloodForecastRequired 事件。"
+            "你需要结合事件中的当前观测、触发原因和模型输入摘要，判断是否调用水动力模型。"
+            "事件 payload 中包含 observation、forecast_input 和 forecast_trigger。"
+            "如果确需推演，调用 run_flood_forecast，forecast_id 使用 latest；该函数会读取事件对应的稳定输入快照。"
             "禁止调用 run_emergency_cycle；影响评估和防洪响应预案仍然切断。"
-            "请用简短结论说明四边界流量峰值，以及是否调用了预测模型。"
+            "请用简短结论说明当前四边界流量、触发原因，以及是否调用了预测模型。"
             "原始事件如下：\n"
             f"{json.dumps(event, ensure_ascii=False, indent=2)}"
         )
@@ -329,6 +464,7 @@ class EventRuntime:
                     tool_name = data.get("name", "")
                     if tool_name == "run_flood_forecast":
                         agent_result["forecast_requested"] = True
+                        self._boundary_flow_runner.mark_forecast_started(str(event.get("source_id") or ""))
                     self._append_output("agent_trace", {
                         "type": "agent_trace",
                         "tag": "CALL",
@@ -391,12 +527,13 @@ class EventRuntime:
         prompt = (
             "/no_think\n"
             "你正在作为珊瑚河洪水应急智能体接收水动力模型输出事件。"
-            "本轮链路放开到预测淹没范围展示和受影响对象分析。"
-            "请按领域工具自身的语义说明调用可用函数完成对象影响分析，不要自行猜测受淹对象。"
+            "本轮链路只放开到预测淹没结果研判和地图展示。"
             "如果你认为该淹没事件需要在 GIS 上展示，必须调用 ui_show_objects 显示预测淹没结果，"
             "对象使用 HydrodynamicCell，filters 使用 {\"forecast_id\":\"latest\"}，fit=false，refresh=true；地图工具会拆成显示网格和应用水深结果。"
+            "受影响对象由前端根据水动力时间轴自动计算，并以独立轻量 Marker 展示；"
+            "不要分析、猜测或通过 ui_show_objects 加载和高亮 Facility、Bridge、Transfer、Place、Road、Route。"
             "禁止调用 run_emergency_cycle；防洪响应预案仍然切断。"
-            "请用简短结论说明：预测运行、淹没面积、最大水深、影响分析结果，以及是否已请求地图展示。"
+            "请用简短结论说明：预测运行、淹没面积、最大水深，以及是否已请求地图展示。"
             "原始事件如下：\n"
             f"{json.dumps(event, ensure_ascii=False, indent=2)}"
         )
@@ -406,15 +543,19 @@ class EventRuntime:
             generation,
             allowed_tools=INUNDATION_EVENT_TOOLS,
             fallback_label="LLM 淹没事件推理失败",
+            map_event_filter=filter_inundation_map_event,
         )
 
     def _publish_forecast_result_from_agent(self, source_event: dict[str, Any],
                                             agent_result: dict[str, Any],
                                             generation: int) -> None:
         forecast_result = agent_result.get("forecast_result")
-        if not forecast_result or agent_result.get("forecast_event_published") or forecast_was_skipped(forecast_result):
+        if not forecast_result or agent_result.get("forecast_event_published"):
             return
-        trace = self._reason_about_boundary_flow_event(source_event)
+        self._record_forecast_policy_result(source_event, forecast_result, agent_result)
+        if not forecast_completed(forecast_result):
+            return
+        trace = self._reason_about_forecast_required_event(source_event)
         inundation_event = self._make_inundation_event(
             source_event,
             forecast_result,
@@ -423,9 +564,26 @@ class EventRuntime:
         self._publish_inundation_event_once(inundation_event, generation)
         agent_result["forecast_event_published"] = True
 
+    def _record_forecast_policy_result(self, source_event: dict[str, Any],
+                                       forecast_result: dict[str, Any],
+                                       agent_result: dict[str, Any]) -> None:
+        if agent_result.get("forecast_policy_recorded"):
+            return
+        forecast = forecast_result.get("forecast") or {}
+        status = str(forecast.get("status") or "")
+        forecast_input_id = str(event_forecast_input_id(source_event) or "")
+        if status == "completed":
+            self._boundary_flow_runner.mark_forecast_completed(forecast_input_id)
+            agent_result["forecast_policy_recorded"] = True
+        elif status == "failed":
+            self._boundary_flow_runner.mark_forecast_failed(forecast_input_id)
+            agent_result["forecast_policy_recorded"] = True
+
     def _run_agent_for_followup_event(self, prompt: str, session_id: str, generation: int,
                                       allowed_tools: frozenset[str],
-                                      fallback_label: str) -> dict[str, Any]:
+                                      fallback_label: str,
+                                      map_event_filter: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None,
+                                      ) -> dict[str, Any]:
         result: dict[str, Any] = {}
         reasoning_chunks: list[str] = []
         text_chunks: list[str] = []
@@ -437,7 +595,12 @@ class EventRuntime:
             ):
                 if generation != self._generation:
                     return result
-                self._collect_agent_side_effects(session_id, result, generation)
+                self._collect_agent_side_effects(
+                    session_id,
+                    result,
+                    generation,
+                    map_event_filter=map_event_filter,
+                )
                 data = event_to_dict(raw_event)
                 event_type = data.get("type")
                 if event_type == "tool_call":
@@ -466,7 +629,12 @@ class EventRuntime:
                     reasoning_chunks.append(str(data.get("content") or ""))
                 elif event_type == "text":
                     text_chunks.append(str(data.get("content") or ""))
-            self._collect_agent_side_effects(session_id, result, generation)
+            self._collect_agent_side_effects(
+                session_id,
+                result,
+                generation,
+                map_event_filter=map_event_filter,
+            )
             reasoning = "".join(reasoning_chunks).strip()
             if reasoning:
                 self._append_output("agent_trace", {
@@ -493,7 +661,9 @@ class EventRuntime:
             }, generation)
         return result
 
-    def _collect_agent_side_effects(self, session_id: str, result: dict[str, Any], generation: int) -> None:
+    def _collect_agent_side_effects(self, session_id: str, result: dict[str, Any], generation: int,
+                                    map_event_filter: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None,
+                                    ) -> None:
         for forecast_result in self.app._pop_pending_forecast_results(session_id):
             result["forecast_result"] = forecast_result
         for impact_result in self.app._pop_pending_impact_results(session_id):
@@ -503,7 +673,9 @@ class EventRuntime:
                 generation,
             )
         for map_event in self.app._pop_pending_map_events(session_id):
-            self._append_output("map_actions", map_event, generation)
+            filtered_event = map_event_filter(map_event) if map_event_filter else map_event
+            if filtered_event:
+                self._append_output("map_actions", filtered_event, generation)
 
     def _append_followup_complete_trace(self, result: dict[str, Any], generation: int) -> None:
         impact_result = result.get("impact_result")
@@ -527,7 +699,10 @@ class EventRuntime:
             "event_id": f"evt_{uuid.uuid4().hex[:10]}",
             "event_type": "InundationGenerated",
             "source_type": "HydrodynamicModel",
-            "source_id": forecast.get("forecast_id", "latest"),
+            "source_id": (
+                f"{forecast.get('forecast_id', 'latest')}:"
+                f"{forecast.get('forecast_input_id') or event_forecast_input_id(source_event) or forecast.get('generated_at', '')}"
+            ),
             "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "severity": severity,
             "title": "水动力模型生成预测淹没范围",
@@ -573,6 +748,7 @@ class EventRuntime:
         self._publish_child_event(event, generation)
 
     def _publish_child_event(self, event: dict[str, Any], generation: int) -> None:
+        event = {**event, "workspace_id": event.get("workspace_id") or active_workspace_id()}
         with self.condition:
             if generation != self._generation:
                 return
@@ -588,20 +764,20 @@ class EventRuntime:
             self.condition.notify_all()
         self._enqueue_event(event, generation, priority=True)
 
-    def _reason_about_boundary_flow_event(self, event: dict[str, Any]) -> dict[str, Any]:
+    def _reason_about_forecast_required_event(self, event: dict[str, Any]) -> dict[str, Any]:
         payload = event.get("payload") or {}
         trigger = payload.get("forecast_trigger") or {}
-        boundary_flow = payload.get("boundary_flow") or {}
+        observation = payload.get("observation") or {}
         should_run = bool(trigger.get("should_run_forecast"))
         if self.app.agent:
-            detail = "智能体接收四边界流量数据。"
+            detail = "智能体接收洪水预测请求。"
         else:
-            detail = "未启用 LLM，已接收四边界流量数据。"
+            detail = "未启用 LLM，洪水预测请求保持待处理。"
         return {
             "type": "agent_trace",
             "tag": "SYSTEM",
-            "label": "四边界流量数据",
-            "detail": f"{detail} {boundary_flow_detail(boundary_flow)}",
+            "label": "洪水预测请求",
+            "detail": f"{detail} {boundary_flow_observation_detail(observation)} {trigger.get('reason', '')}",
             "should_run_model": should_run,
             "severity": event.get("severity", "warning"),
         }
@@ -610,8 +786,27 @@ class EventRuntime:
         with self.condition:
             if generation is not None and generation != self._generation:
                 return
-            self.outputs.append({"event": event_name, "data": data})
+            self.outputs.append({
+                "event": event_name,
+                "data": {**data, "workspace_id": data.get("workspace_id") or active_workspace_id()},
+            })
             self.condition.notify_all()
+
+
+def filter_inundation_map_event(event: dict[str, Any]) -> dict[str, Any] | None:
+    allowed_types = {"show_hydrodynamic_mesh", "apply_hydrodynamic_result"}
+    actions = [
+        action for action in event.get("map_actions") or []
+        if isinstance(action, dict) and action.get("type") in allowed_types
+    ]
+    if not actions:
+        return None
+    return {
+        **event,
+        "map_actions": actions,
+        "result_cards": [],
+    }
+
 
 def readable_event_tool(name: str) -> str:
     return {
@@ -649,30 +844,43 @@ def is_impact_result(value: dict[str, Any] | None) -> bool:
     )
 
 
-def boundary_flow_detail(summary: dict[str, Any]) -> str:
-    boundaries = summary.get("boundaries") or {}
+def boundary_flow_observation_detail(observation: dict[str, Any]) -> str:
+    boundaries = observation.get("boundaries") or {}
     parts = []
     for key in ("interval1", "interval2", "tonggu", "upstream"):
         item = boundaries.get(key) or {}
         if item:
-            parts.append(f"{item.get('label', key)}峰值 {format_float(item.get('peak_flow_m3s'), 2)} m³/s")
+            parts.append(f"{item.get('label', key)} {format_float(item.get('flow_m3s'), 2)} m³/s")
     return (
-        f"{summary.get('boundary_flow_id')}: "
+        f"{observation.get('observed_at', '')}: "
         + "，".join(parts)
     )
 
 
 def boundary_flow_event_detail(event: dict[str, Any]) -> str:
     payload = event.get("payload") or {}
-    return boundary_flow_detail(payload.get("boundary_flow") or {})
+    return boundary_flow_observation_detail(payload.get("observation") or {})
 
 
-def forecast_was_skipped(result: dict[str, Any]) -> bool:
+def event_forecast_input_id(event: dict[str, Any]) -> str:
+    payload = event.get("payload") or {}
+    forecast_input = payload.get("forecast_input") or {}
+    return str(forecast_input.get("boundary_flow_id") or event.get("source_id") or "")
+
+
+def forecast_completed(result: dict[str, Any] | None) -> bool:
     forecast = result.get("forecast") if isinstance(result, dict) else None
-    return isinstance(forecast, dict) and str(forecast.get("status") or "").startswith("skipped")
+    return isinstance(forecast, dict) and str(forecast.get("status") or "") == "completed"
 
 
 def domain_event_detail(event: dict[str, Any]) -> str:
+    if event.get("event_type") == "FloodForecastRequired":
+        payload = event.get("payload") or {}
+        trigger = payload.get("forecast_trigger") or {}
+        return f"{boundary_flow_event_detail(event)}；{trigger.get('reason', '')}"
+    if event.get("event_type") == "FloodEpisodeEnded":
+        payload = event.get("payload") or {}
+        return f"{payload.get('ended_at', '')}，共生成 {payload.get('forecast_versions', 0)} 个预测输入版本"
     if event.get("event_type") == "InundationGenerated":
         return inundation_event_detail(event)
     if event.get("event_type") == "ImpactAnalyzed":

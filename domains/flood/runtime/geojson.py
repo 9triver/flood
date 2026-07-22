@@ -4,7 +4,14 @@ import hashlib
 import json
 from typing import Any
 
-from .common import GENERATED_DIR, MAPPABLE_OBJECTS, rel
+from .common import MAPPABLE_OBJECTS, rel
+from .workspace import SHARED_CACHE_DIR, active_workspace_id, workspace_dir
+
+
+def geojson_cache_dir():
+    if active_workspace_id():
+        return workspace_dir(create=True) / "cache" / "geojson"
+    return SHARED_CACHE_DIR / "geojson"
 
 
 def export_objects_geojson(resolver, object_type: str,
@@ -12,10 +19,11 @@ def export_objects_geojson(resolver, object_type: str,
                            simplify_tolerance: float = 0,
                            force: bool = False) -> dict:
     filters = filters or {}
-    GENERATED_DIR.mkdir(parents=True, exist_ok=True)
+    cache_dir = geojson_cache_dir()
+    cache_dir.mkdir(parents=True, exist_ok=True)
     key = export_key(object_type, filters)
     suffix = f"_s{simplify_tolerance:g}" if simplify_tolerance else ""
-    target = GENERATED_DIR / f"{key}{suffix}.geojson"
+    target = cache_dir / f"{key}{suffix}.geojson"
     if target.exists() and not force:
         return geojson_result(object_type, filters, target, cached=True)
 
