@@ -50,6 +50,8 @@ const state = {
   impactFocusSeq: 0,
   impactRefreshTimer: null,
   impactRefreshSeq: 0,
+  mapLayoutFrame: null,
+  mapLayoutTimer: null,
 };
 
 const BASEMAP_STORAGE_KEY = "flood-basemap";
@@ -173,10 +175,11 @@ const ICON_OBJECT_TYPES = new Set([
 document.addEventListener("DOMContentLoaded", async () => {
   initMap();
   bindEvents();
+  initDraggableMapPanels();
+  initAgentResize();
   await bootstrap();
   await loadObject("Watershed", {}, { fit: true });
   await loadObject("River", {}, { fit: false });
-  addMessage("agent", "基础对象已加载。");
   startAutonomyStream();
   await refreshPlaybackStatus();
   renderIcons();
@@ -188,6 +191,7 @@ function initMap() {
     zoomControl: false,
     preferCanvas: true,
   }).setView([24.4, 111.35], 10);
+  state.map.attributionControl.setPrefix(false);
 
   state.map.createPane("impactPane");
   state.map.getPane("impactPane").style.zIndex = "475";
@@ -388,8 +392,11 @@ function renderObjectList(items) {
 function bindEvents() {
   document.getElementById("fitAllBtn").addEventListener("click", fitAll);
   document.getElementById("layerPanelBtn").addEventListener("click", toggleLayerPanel);
+  document.getElementById("layerPanelCloseBtn").addEventListener("click", () => setLayerPanelOpen(false));
   document.getElementById("telemetryPanelBtn").addEventListener("click", toggleTelemetryPanel);
-  document.getElementById("telemetryCloseBtn").addEventListener("click", () => setTelemetryPanelOpen(false));
+  document.getElementById("situationToggleBtn").addEventListener("click", toggleTelemetryPanel);
+  document.getElementById("telemetryFloatBtn").addEventListener("click", () => toggleSituationPanelFloating("telemetryPanel"));
+  document.getElementById("impactFloatBtn").addEventListener("click", () => toggleSituationPanelFloating("impactPanel"));
   document.getElementById("agentDrawerBtn").addEventListener("click", () => setAgentDrawerOpen(true));
   document.getElementById("agentCloseBtn").addEventListener("click", () => setAgentDrawerOpen(false));
   document.getElementById("playbackToggleBtn").addEventListener("click", toggleBoundaryFlowPlayback);
@@ -400,6 +407,12 @@ function bindEvents() {
   });
   document.querySelectorAll("[data-basemap]").forEach((button) => {
     button.addEventListener("click", () => setBasemap(button.dataset.basemap));
+  });
+  document.querySelectorAll("[data-layer-tab]").forEach((button) => {
+    button.addEventListener("click", () => setLayerPanelTab(button.dataset.layerTab));
+  });
+  document.querySelectorAll("[data-situation-view]").forEach((button) => {
+    button.addEventListener("click", () => setSituationView(button.dataset.situationView));
   });
   document.querySelectorAll("[data-panel-toggle]").forEach((btn) => {
     btn.addEventListener("click", () => activateAgentPane(btn.dataset.panelToggle));
@@ -418,10 +431,151 @@ function bindEvents() {
   document.getElementById("chatForm").addEventListener("submit", onChatSubmit);
 }
 
+function initDraggableMapPanels() {
+  document.querySelectorAll(".map-draggable-panel").forEach((panel) => {
+    const handle = panel.querySelector("[data-panel-drag-handle]");
+    if (!handle) return;
+    let drag = null;
+
+    const finish = (event) => {
+      if (!drag || (event?.pointerId != null && event.pointerId !== drag.pointerId)) return;
+      if (handle.hasPointerCapture(drag.pointerId)) handle.releasePointerCapture(drag.pointerId);
+      panel.classList.remove("is-dragging");
+      drag = null;
+    };
+
+    handle.addEventListener("pointerdown", (event) => {
+      if (!panel.classList.contains("is-floating")) return;
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      if (event.target.closest("button, a, input, select, textarea")) return;
+      const rect = panel.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      drag = {
+        pointerId: event.pointerId,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        rect,
+        x: Number(panel.dataset.dragX || 0),
+        y: Number(panel.dataset.dragY || 0),
+      };
+      panel.classList.add("is-dragging");
+      handle.setPointerCapture(event.pointerId);
+      event.preventDefault();
+      event.stopPropagation();
+    });
+
+    handle.addEventListener("pointermove", (event) => {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      const stage = panel.closest(".map-stage")?.getBoundingClientRect();
+      if (!stage) return;
+      const requestedLeft = drag.rect.left + event.clientX - drag.clientX;
+      const requestedTop = drag.rect.top + event.clientY - drag.clientY;
+      const left = clampPanelCoordinate(requestedLeft, stage.left + 8, stage.right - drag.rect.width - 8);
+      const top = clampPanelCoordinate(requestedTop, stage.top + 8, stage.bottom - drag.rect.height - 8);
+      setMapPanelTranslation(
+        panel,
+        drag.x + left - drag.rect.left,
+        drag.y + top - drag.rect.top,
+      );
+      event.preventDefault();
+      event.stopPropagation();
+    });
+
+    handle.addEventListener("pointerup", finish);
+    handle.addEventListener("pointercancel", finish);
+    handle.addEventListener("lostpointercapture", finish);
+  });
+  window.addEventListener("resize", () => {
+    document.querySelectorAll(".map-draggable-panel.is-floating").forEach(clampMapPanelToStage);
+    clampConclusionToastsToMap();
+  });
+}
+
+function initAgentResize() {
+  const panel = document.querySelector(".agent-panel");
+  const handle = document.getElementById("agentResizeHandle");
+  if (!panel || !handle) return;
+  let resize = null;
+
+  const finish = (event) => {
+    if (!resize || (event?.pointerId != null && event.pointerId !== resize.pointerId)) return;
+    if (handle.hasPointerCapture(resize.pointerId)) handle.releasePointerCapture(resize.pointerId);
+    panel.classList.remove("is-resizing");
+    resize = null;
+    invalidateMapLayout();
+  };
+
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    const mobile = window.matchMedia("(max-width: 900px)").matches;
+    const rect = panel.getBoundingClientRect();
+    resize = {
+      pointerId: event.pointerId,
+      mobile,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      width: rect.width,
+      height: rect.height,
+    };
+    panel.classList.add("is-resizing");
+    handle.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+
+  handle.addEventListener("pointermove", (event) => {
+    if (!resize || event.pointerId !== resize.pointerId) return;
+    if (resize.mobile) {
+      const height = clampPanelCoordinate(
+        resize.height + resize.clientY - event.clientY,
+        280,
+        window.innerHeight * 0.9,
+      );
+      document.documentElement.style.setProperty("--agent-mobile-height", `${height}px`);
+      handle.setAttribute("aria-valuenow", String(Math.round(height)));
+    } else {
+      const width = clampPanelCoordinate(
+        resize.width + resize.clientX - event.clientX,
+        340,
+        Math.min(620, window.innerWidth * 0.56),
+      );
+      document.documentElement.style.setProperty("--agent-drawer-width", `${width}px`);
+      handle.setAttribute("aria-valuenow", String(Math.round(width)));
+    }
+    invalidateMapLayout();
+    event.preventDefault();
+  });
+
+  handle.addEventListener("pointerup", finish);
+  handle.addEventListener("pointercancel", finish);
+  handle.addEventListener("lostpointercapture", finish);
+}
+
+function clampPanelCoordinate(value, minimum, maximum) {
+  if (maximum < minimum) return minimum;
+  return Math.max(minimum, Math.min(maximum, value));
+}
+
+function setMapPanelTranslation(panel, x, y) {
+  panel.dataset.dragX = String(x);
+  panel.dataset.dragY = String(y);
+  panel.style.setProperty("--panel-drag-x", `${x}px`);
+  panel.style.setProperty("--panel-drag-y", `${y}px`);
+}
+
+function clampMapPanelToStage(panel) {
+  const rect = panel.getBoundingClientRect();
+  const stage = panel.closest(".map-stage")?.getBoundingClientRect();
+  if (!stage || !rect.width || !rect.height) return;
+  const left = clampPanelCoordinate(rect.left, stage.left + 8, stage.right - rect.width - 8);
+  const top = clampPanelCoordinate(rect.top, stage.top + 8, stage.bottom - rect.height - 8);
+  const x = Number(panel.dataset.dragX || 0) + left - rect.left;
+  const y = Number(panel.dataset.dragY || 0) + top - rect.top;
+  setMapPanelTranslation(panel, x, y);
+}
+
 function toggleLayerPanel() {
   const control = document.querySelector(".map-layer-control");
   const isOpen = !control.classList.contains("is-open");
-  if (isOpen) setTelemetryPanelOpen(false);
   setLayerPanelOpen(isOpen);
 }
 
@@ -433,27 +587,101 @@ function setLayerPanelOpen(isOpen) {
   btn.setAttribute("aria-expanded", String(isOpen));
 }
 
+function setLayerPanelTab(name) {
+  const active = name === "basemap" ? "basemap" : "objects";
+  document.querySelectorAll("[data-layer-tab]").forEach((button) => {
+    const selected = button.dataset.layerTab === active;
+    button.classList.toggle("is-active", selected);
+    button.setAttribute("aria-selected", String(selected));
+  });
+  document.querySelectorAll("[data-layer-pane]").forEach((pane) => {
+    pane.classList.toggle("is-active", pane.dataset.layerPane === active);
+  });
+}
+
 function toggleTelemetryPanel() {
-  const control = document.getElementById("telemetryControl");
-  const isOpen = !control.classList.contains("is-open");
-  if (isOpen) setLayerPanelOpen(false);
+  const workbench = document.getElementById("situationWorkbench");
+  const isOpen = workbench.classList.contains("is-collapsed");
   setTelemetryPanelOpen(isOpen);
 }
 
 function setTelemetryPanelOpen(isOpen) {
-  const control = document.getElementById("telemetryControl");
+  const workbench = document.getElementById("situationWorkbench");
   const btn = document.getElementById("telemetryPanelBtn");
-  control.classList.toggle("is-open", isOpen);
+  const toggle = document.getElementById("situationToggleBtn");
+  if (!isOpen) {
+    document.querySelectorAll(".situation-pane.is-floating").forEach((panel) => {
+      setSituationPanelFloating(panel, false);
+    });
+  }
+  workbench.classList.toggle("is-collapsed", !isOpen);
   btn.classList.toggle("is-active", isOpen);
   btn.setAttribute("aria-expanded", String(isOpen));
+  toggle.setAttribute("aria-expanded", String(isOpen));
+  toggle.title = isOpen ? "收起态势工作台" : "展开态势工作台";
+  toggle.setAttribute("aria-label", toggle.title);
+  toggle.innerHTML = `<i data-lucide="${isOpen ? "panel-bottom-close" : "panel-bottom-open"}"></i>`;
+  renderIcons();
+  invalidateMapLayout();
+}
+
+function setSituationView(name) {
+  const active = name === "impact" ? "impact" : "telemetry";
+  const workbench = document.getElementById("situationWorkbench");
+  workbench.dataset.view = active;
+  document.querySelectorAll("[data-situation-view]").forEach((button) => {
+    const selected = button.dataset.situationView === active;
+    button.classList.toggle("is-active", selected);
+    button.setAttribute("aria-selected", String(selected));
+  });
+}
+
+function toggleSituationPanelFloating(panelId) {
+  const panel = document.getElementById(panelId);
+  if (!panel) return;
+  setTelemetryPanelOpen(true);
+  setSituationPanelFloating(panel, !panel.classList.contains("is-floating"));
+}
+
+function setSituationPanelFloating(panel, floating) {
+  panel.classList.toggle("is-floating", floating);
+  if (!floating) setMapPanelTranslation(panel, 0, 0);
+  const button = panel.querySelector("#telemetryFloatBtn, #impactFloatBtn");
+  if (button) {
+    const label = panel.id === "impactPanel" ? "受影响对象" : "演进数据";
+    button.title = floating ? `停靠${label}` : `浮动${label}`;
+    button.setAttribute("aria-label", button.title);
+    button.innerHTML = `<i data-lucide="${floating ? "panel-bottom" : "picture-in-picture-2"}"></i>`;
+  }
+  renderIcons();
+  if (floating) window.requestAnimationFrame(() => clampMapPanelToStage(panel));
+  invalidateMapLayout();
+}
+
+function invalidateMapLayout() {
+  if (state.mapLayoutFrame) window.cancelAnimationFrame(state.mapLayoutFrame);
+  if (state.mapLayoutTimer) window.clearTimeout(state.mapLayoutTimer);
+  state.mapLayoutFrame = window.requestAnimationFrame(() => {
+    state.mapLayoutFrame = null;
+    state.map?.invalidateSize({ pan: false });
+    clampConclusionToastsToMap();
+  });
+  state.mapLayoutTimer = window.setTimeout(() => {
+    state.mapLayoutTimer = null;
+    state.map?.invalidateSize({ pan: false });
+    clampConclusionToastsToMap();
+  }, 240);
 }
 
 function setAgentDrawerOpen(isOpen) {
+  const shell = document.querySelector(".app-shell");
   const panel = document.querySelector(".agent-panel");
   const btn = document.getElementById("agentDrawerBtn");
+  shell.classList.toggle("is-agent-open", isOpen);
   panel.classList.toggle("is-open", isOpen);
   btn.classList.toggle("is-open", isOpen);
   btn.setAttribute("aria-expanded", String(isOpen));
+  invalidateMapLayout();
 }
 
 async function toggleObject(objectType) {
@@ -649,6 +877,7 @@ function showHydrodynamicTimeline(meta, layer, key, filters) {
   slider.max = String(hours.length - 1);
   slider.value = "0";
   control.classList.remove("is-hidden");
+  setTelemetryPanelOpen(true);
   setHydrodynamicTimelineIndex(0);
 }
 
@@ -813,8 +1042,15 @@ function clearImpactAnalysisState() {
   state.impactMarkers.clear();
   clearImpactObjectSelection({ removeLayer: true });
   const panel = document.getElementById("impactPanel");
-  panel?.classList.add("is-hidden");
   panel?.classList.remove("is-loading");
+  const count = document.getElementById("impactCount");
+  const time = document.getElementById("impactTimeLabel");
+  const status = document.getElementById("impactStatus");
+  const list = document.getElementById("impactList");
+  if (count) count.textContent = "0";
+  if (time) time.textContent = "--";
+  if (status) status.textContent = "等待水动力结果";
+  if (list) list.innerHTML = "";
 }
 
 function clearEventMarkers() {
@@ -908,6 +1144,7 @@ async function toggleBoundaryFlowPlayback() {
       resetMap();
       clearMockTelemetry();
       setLayerPanelOpen(false);
+      setSituationView("telemetry");
       setTelemetryPanelOpen(true);
     } else if (action === "resume") {
       state.playbackAutoPauseArmed = true;
@@ -959,6 +1196,8 @@ function clearRuntimeWorkspaceView() {
   const trace = document.getElementById("agentTrace");
   const chat = document.getElementById("chatLog");
   if (trace) trace.innerHTML = "";
+  const traceCount = document.getElementById("traceCount");
+  if (traceCount) traceCount.textContent = "0";
   if (chat) chat.innerHTML = "";
   state.conclusionToasts.forEach((item) => item.element?.remove());
   state.conclusionToasts = [];
@@ -1055,6 +1294,7 @@ function renderMockObservation(event) {
   const ratio = total > 0 ? Math.min(100, current / total * 100) : 0;
   document.getElementById("telemetryProgressBar").style.width = `${ratio.toFixed(2)}%`;
   document.getElementById("telemetryProgressText").textContent = `${current} / ${total}`;
+  setSituationSummary(`${formatMockTime(observation.observed_at)} · 降雨 ${formatMockNumber(observation.rainfall_mm, 1)} mm`);
 }
 
 function clearMockTelemetry() {
@@ -1067,6 +1307,12 @@ function clearMockTelemetry() {
   document.getElementById("telemetryProgressBar").style.width = "0%";
   document.getElementById("telemetryProgressText").textContent = `0 / ${state.playbackTotalRows}`;
   setTelemetryState("等待", "normal");
+  setSituationSummary("等待演进数据");
+}
+
+function setSituationSummary(value) {
+  const summary = document.getElementById("situationSummary");
+  if (summary) summary.textContent = String(value || "等待演进数据");
 }
 
 function renderTelemetryWeather(value) {
@@ -1117,6 +1363,7 @@ function setTelemetryState(label, stateName) {
 function renderDomainEvent(data) {
   if (!data || !data.event_type) return;
   if (data.event_type === "InundationGenerated") {
+    setTelemetryPanelOpen(true);
     void pausePlaybackAfterInundation();
   }
   if (data.event_type === "ImpactAnalyzed") {
@@ -1863,17 +2110,24 @@ function drawHydrodynamicTile(ctx, size, coords, data, renderMode = "mesh") {
   ctx.clearRect(0, 0, size.x, size.y);
   if (!data || data.too_coarse || !Array.isArray(data.cells)) return;
   const origin = tilePoint(coords.x, coords.y, coords.z);
-  data.cells.forEach((cell) => {
+  const cells = data.cells.map((cell) => {
     const depth = Number(cell[1] || 0);
-    const p1 = latLngToTilePixel(Number(cell[3]), Number(cell[2]), coords.z, origin);
-    const p2 = latLngToTilePixel(Number(cell[5]), Number(cell[4]), coords.z, origin);
-    const p3 = latLngToTilePixel(Number(cell[7]), Number(cell[6]), coords.z, origin);
-    const style = renderMode === "result" ? hydrodynamicCellStyle(depth) : hydrodynamicMeshStyle();
-    ctx.beginPath();
-    ctx.moveTo(p1.x, p1.y);
-    ctx.lineTo(p2.x, p2.y);
-    ctx.lineTo(p3.x, p3.y);
-    ctx.closePath();
+    return {
+      depth,
+      points: [
+        latLngToTilePixel(Number(cell[3]), Number(cell[2]), coords.z, origin),
+        latLngToTilePixel(Number(cell[5]), Number(cell[4]), coords.z, origin),
+        latLngToTilePixel(Number(cell[7]), Number(cell[6]), coords.z, origin),
+      ],
+    };
+  });
+  if (renderMode === "result") {
+    drawHydrodynamicResultTile(ctx, size, cells);
+    return;
+  }
+  const style = hydrodynamicMeshStyle();
+  cells.forEach((cell) => {
+    traceHydrodynamicTriangle(ctx, cell.points);
     ctx.fillStyle = style.fillColor;
     ctx.globalAlpha = style.fillOpacity;
     ctx.fill();
@@ -1883,6 +2137,54 @@ function drawHydrodynamicTile(ctx, size, coords, data, renderMode = "mesh") {
     ctx.stroke();
   });
   ctx.globalAlpha = 1;
+}
+
+function drawHydrodynamicResultTile(ctx, size, cells) {
+  if (!cells.length) return;
+  const mask = document.createElement("canvas");
+  mask.width = size.x;
+  mask.height = size.y;
+  const maskCtx = mask.getContext("2d");
+  maskCtx.fillStyle = "#fff";
+  cells.forEach((cell) => {
+    traceHydrodynamicTriangle(maskCtx, cell.points);
+    maskCtx.fill();
+  });
+
+  const outline = document.createElement("canvas");
+  outline.width = size.x;
+  outline.height = size.y;
+  const outlineCtx = outline.getContext("2d");
+  const offsets = [[-1, 0], [1, 0], [0, -1], [0, 1], [-0.75, -0.75], [0.75, -0.75], [-0.75, 0.75], [0.75, 0.75]];
+  offsets.forEach(([x, y]) => outlineCtx.drawImage(mask, x, y));
+  outlineCtx.globalCompositeOperation = "destination-out";
+  outlineCtx.drawImage(mask, 0, 0);
+  outlineCtx.globalCompositeOperation = "source-in";
+  outlineCtx.fillStyle = "rgba(127, 29, 29, 0.58)";
+  outlineCtx.fillRect(0, 0, size.x, size.y);
+  outlineCtx.globalCompositeOperation = "source-over";
+  ctx.drawImage(outline, 0, 0);
+
+  cells.forEach((cell) => {
+    const style = hydrodynamicCellStyle(cell.depth);
+    traceHydrodynamicTriangle(ctx, cell.points);
+    ctx.fillStyle = style.fillColor;
+    ctx.globalAlpha = style.fillOpacity;
+    ctx.fill();
+    ctx.globalAlpha = style.opacity;
+    ctx.strokeStyle = style.color;
+    ctx.lineWidth = style.weight;
+    ctx.stroke();
+  });
+  ctx.globalAlpha = 1;
+}
+
+function traceHydrodynamicTriangle(ctx, points) {
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  ctx.lineTo(points[1].x, points[1].y);
+  ctx.lineTo(points[2].x, points[2].y);
+  ctx.closePath();
 }
 
 function hydrodynamicClickHitsAnotherObject(event) {
@@ -1922,11 +2224,11 @@ function hydrodynamicCellPopupHtml(cell) {
 
 function hydrodynamicMeshStyle() {
   return {
-    color: "rgba(100, 116, 139, 0.34)",
-    weight: 0.35,
+    color: "rgba(71, 85, 105, 0.46)",
+    weight: 0.5,
     fillColor: "rgba(255, 255, 255, 0)",
     fillOpacity: 0,
-    opacity: 0.65,
+    opacity: 0.82,
   };
 }
 
@@ -1940,15 +2242,33 @@ function hydrodynamicCellStyle(depth) {
       opacity: 0.65,
     };
   }
-  const t = Math.max(0, Math.min(1, depth / 4.2));
-  const color = interpolateColor([254, 226, 226], [127, 29, 29], Math.pow(t, 0.58));
+  const t = Math.max(0, Math.min(1, depth / 2.5));
+  const color = hydrodynamicDepthColor(depth);
   return {
-    color: "rgba(127, 29, 29, 0.46)",
-    weight: 0.35,
+    color: "rgba(127, 29, 29, 0.34)",
+    weight: 0.38,
     fillColor: color,
-    fillOpacity: 0.24 + t * 0.55,
-    opacity: 0.82,
+    fillOpacity: 0.62 + t * 0.3,
+    opacity: 0.76,
   };
+}
+
+function hydrodynamicDepthColor(depth) {
+  const stops = [
+    [0, [254, 202, 202]],
+    [0.25, [252, 165, 165]],
+    [0.6, [248, 113, 113]],
+    [1.2, [220, 38, 38]],
+    [2.5, [127, 29, 29]],
+  ];
+  for (let index = 1; index < stops.length; index += 1) {
+    const [limit, color] = stops[index];
+    if (depth > limit) continue;
+    const [previousLimit, previousColor] = stops[index - 1];
+    const ratio = (depth - previousLimit) / Math.max(limit - previousLimit, 0.0001);
+    return interpolateColor(previousColor, color, ratio);
+  }
+  return interpolateColor(stops.at(-1)[1], [69, 10, 10], Math.min(1, (depth - 2.5) / 1.5));
 }
 
 function interpolateColor(start, end, t) {
@@ -2095,21 +2415,41 @@ function addTrace(tag, label, detail) {
     return state.lastTrace.item;
   }
   const item = document.createElement("div");
+  const normalizedTag = String(tag || "").toUpperCase();
+  const traceTime = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+  const detailHtml = detail ? renderTraceDetail(normalizedTag, String(detail)) : "";
   item.className = `trace-item ${traceTagClass(tag)}`;
   item.innerHTML = `
     <div class="trace-label">
-      <span>${escapeHtml(label || "")}</span>
-      <span class="trace-badges"><span class="trace-count" hidden></span><span class="trace-tag">${escapeHtml(tag)}</span></span>
+      <span class="trace-title">${escapeHtml(label || "")}</span>
+      <span class="trace-meta">
+        <time class="trace-time">${escapeHtml(traceTime)}</time>
+        <span class="trace-badges"><span class="trace-count" hidden></span><span class="trace-tag">${escapeHtml(tag)}</span></span>
+      </span>
     </div>
-    ${detail ? `<div class="trace-detail markdown-body">${renderMarkdown(String(detail))}</div>` : ""}
+    ${detailHtml}
   `;
   wrap.appendChild(item);
+  const traceCount = document.getElementById("traceCount");
+  if (traceCount) traceCount.textContent = String(wrap.childElementCount);
   state.lastTrace = { key, item, count: 1 };
   wrap.scrollTop = wrap.scrollHeight;
   if (String(label || "").trim() === "智能体结论") {
     enqueueConclusionToast(label, detail);
   }
   return item;
+}
+
+function renderTraceDetail(tag, detail) {
+  const rendered = `<div class="trace-detail markdown-body">${renderMarkdown(detail)}</div>`;
+  const disclosureLabels = {
+    CALL: "查看调用参数",
+    RESULT: "查看返回结果",
+    MAP: "查看地图动作",
+  };
+  const summary = disclosureLabels[tag];
+  if (!summary) return rendered;
+  return `<details class="trace-detail-disclosure"><summary>${summary}</summary>${rendered}</details>`;
 }
 
 function enqueueConclusionToast(label, detail) {
@@ -2127,7 +2467,10 @@ function enqueueConclusionToast(label, detail) {
   bindConclusionToastDrag(item);
   updateConclusionToastStack();
   renderIcons();
-  requestAnimationFrame(() => item.element?.classList.add("is-visible"));
+  requestAnimationFrame(() => {
+    item.element?.classList.add("is-visible");
+    clampConclusionToastsToMap();
+  });
 }
 
 function createConclusionToastElement(item) {
@@ -2148,9 +2491,9 @@ function createConclusionToastElement(item) {
     </header>
     <div class="conclusion-toast-body markdown-body">${renderMarkdown(item.detail)}</div>
     <footer>
-      <button class="conclusion-dismiss" type="button">
+      <button class="conclusion-dismiss" type="button" aria-label="关闭智能体结论">
         <i data-lucide="x"></i>
-        <span>Dismiss</span>
+        <span>关闭</span>
       </button>
     </footer>
   `;
@@ -2173,7 +2516,7 @@ function updateConclusionToastStack() {
   state.conclusionToasts.forEach((item, index) => {
     const depth = Math.min(index, 4);
     item.element.style.setProperty("--stack-x", `${depth * 7}px`);
-    item.element.style.setProperty("--stack-y", `${depth * -8}px`);
+    item.element.style.setProperty("--stack-y", `${depth * 8}px`);
     item.element.style.setProperty("--drag-x", `${item.dragX}px`);
     item.element.style.setProperty("--drag-y", `${item.dragY}px`);
     item.element.style.zIndex = String(Math.max(1, 1000 - index));
@@ -2214,14 +2557,18 @@ function bindConclusionToastDrag(item) {
     if (!drag || event.pointerId !== drag.pointerId) return;
     const deltaX = event.clientX - drag.startX;
     const deltaY = event.clientY - drag.startY;
-    const clampedX = Math.max(72 - drag.rect.right, Math.min(
-      window.innerWidth - 72 - drag.rect.left,
+    const bounds = conclusionToastMapBounds();
+    if (!bounds) return;
+    const clampedX = clampPanelCoordinate(
       deltaX,
-    ));
-    const clampedY = Math.max(8 - drag.rect.top, Math.min(
-      window.innerHeight - 48 - drag.rect.top,
+      bounds.left - drag.rect.left,
+      bounds.right - drag.rect.right,
+    );
+    const clampedY = clampPanelCoordinate(
       deltaY,
-    ));
+      bounds.top - drag.rect.top,
+      bounds.bottom - drag.rect.bottom,
+    );
     item.dragX = drag.originX + clampedX;
     item.dragY = drag.originY + clampedY;
     toast.style.setProperty("--drag-x", `${item.dragX}px`);
@@ -2230,6 +2577,37 @@ function bindConclusionToastDrag(item) {
 
   handle.addEventListener("pointerup", finish);
   handle.addEventListener("pointercancel", finish);
+  handle.addEventListener("lostpointercapture", finish);
+}
+
+function conclusionToastMapBounds() {
+  const mapRect = document.getElementById("map")?.getBoundingClientRect();
+  const toolbarRect = document.querySelector(".map-toolbar")?.getBoundingClientRect();
+  if (!mapRect?.width || !mapRect?.height) return null;
+  return {
+    left: mapRect.left + 8,
+    right: mapRect.right - 8,
+    top: Math.max(mapRect.top + 8, (toolbarRect?.bottom || mapRect.top) + 8),
+    bottom: mapRect.bottom - 8,
+  };
+}
+
+function clampConclusionToastsToMap() {
+  const bounds = conclusionToastMapBounds();
+  const region = document.getElementById("conclusionToastRegion");
+  if (!bounds || !region) return;
+  const availableHeight = Math.max(72, bounds.bottom - bounds.top - 108);
+  region.style.setProperty("--conclusion-body-max-height", `${Math.min(360, availableHeight)}px`);
+  state.conclusionToasts.forEach((item) => {
+    const rect = item.element?.getBoundingClientRect();
+    if (!rect?.width || !rect?.height) return;
+    const left = clampPanelCoordinate(rect.left, bounds.left, bounds.right - rect.width);
+    const top = clampPanelCoordinate(rect.top, bounds.top, bounds.bottom - rect.height);
+    item.dragX += left - rect.left;
+    item.dragY += top - rect.top;
+    item.element.style.setProperty("--drag-x", `${item.dragX}px`);
+    item.element.style.setProperty("--drag-y", `${item.dragY}px`);
+  });
 }
 
 function traceTagClass(tag) {
@@ -2358,8 +2736,8 @@ async function refreshImpactAnalysisForTimeline() {
 
 function setImpactAnalysisLoading(hour) {
   const panel = document.getElementById("impactPanel");
-  panel?.classList.remove("is-hidden");
   panel?.classList.add("is-loading");
+  setSituationView("impact");
   const time = document.getElementById("impactTimeLabel");
   const status = document.getElementById("impactStatus");
   if (time) time.textContent = `${formatHydrodynamicHour(hour)} h`;
@@ -2441,12 +2819,13 @@ function renderImpactList(result, impacts) {
   const status = document.getElementById("impactStatus");
   const list = document.getElementById("impactList");
   if (!panel || !count || !time || !status || !list) return;
-  panel.classList.remove("is-hidden", "is-loading");
+  panel.classList.remove("is-loading");
   count.textContent = String(impacts.length);
   time.textContent = result?.time_h == null ? "最大包络" : `${formatHydrodynamicHour(result.time_h)} h`;
   status.textContent = impacts.length
     ? `按水深与风险排序，共 ${impacts.length} 个对象`
     : "当前时刻未发现受影响对象";
+  setSituationSummary(`${time.textContent} · 受影响对象 ${impacts.length} 个`);
   list.innerHTML = "";
   impacts.forEach((impact) => {
     const key = impactObjectKey(impact);
@@ -2466,6 +2845,9 @@ function renderImpactList(result, impacts) {
     button.addEventListener("click", () => void focusImpactObject(impact));
     list.appendChild(button);
   });
+  if (panel.classList.contains("is-floating")) {
+    window.requestAnimationFrame(() => clampMapPanelToStage(panel));
+  }
 }
 
 async function focusImpactObject(impact) {

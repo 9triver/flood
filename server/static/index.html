@@ -33,7 +33,7 @@
             <button class="icon-button" id="layerPanelBtn" title="图层" aria-label="图层" aria-expanded="false">
               <i data-lucide="layers"></i>
             </button>
-            <button class="icon-button" id="telemetryPanelBtn" title="演进数据" aria-label="演进数据" aria-expanded="false">
+            <button class="icon-button" id="telemetryPanelBtn" title="态势工作台" aria-label="态势工作台" aria-expanded="false">
               <i data-lucide="activity"></i>
             </button>
             <button class="icon-button" id="fitAllBtn" title="缩放到流域" aria-label="缩放到流域">
@@ -46,106 +46,152 @@
         </div>
         <div class="map-layer-control">
           <section class="layer-panel" id="layerPanel" aria-label="图层控制">
-            <div class="panel-section basemap-section">
-              <div class="section-title">底图</div>
-              <div class="basemap-options" role="radiogroup" aria-label="底图选择">
-                <button type="button" class="basemap-option" data-basemap="standard" role="radio" aria-checked="true">
-                  <i data-lucide="map"></i>
-                  <span>标准</span>
-                </button>
-                <button type="button" class="basemap-option" data-basemap="satellite" role="radio" aria-checked="false">
-                  <i data-lucide="satellite"></i>
-                  <span>卫星</span>
-                </button>
-                <button type="button" class="basemap-option" data-basemap="hybrid" role="radio" aria-checked="false">
-                  <i data-lucide="layers"></i>
-                  <span>混合</span>
-                </button>
+            <header class="layer-panel-header">
+              <div>
+                <strong>地图管理</strong>
+                <span>底图与业务对象</span>
               </div>
-            </div>
-
-            <div class="panel-section">
-              <div class="section-title">领域对象</div>
-              <div class="object-list" id="objectList"></div>
-            </div>
-
-            <div class="panel-section">
-              <div class="section-title">设施筛选</div>
-              <div class="segmented">
-                <button data-facility="school">学校</button>
-                <button data-facility="hospital">医院</button>
-                <button data-facility="government">政府</button>
+              <button class="icon-button" id="layerPanelCloseBtn" type="button" title="关闭地图管理" aria-label="关闭地图管理">
+                <i data-lucide="x"></i>
+              </button>
+            </header>
+            <nav class="layer-panel-tabs" aria-label="地图管理视图">
+              <button class="is-active" type="button" data-layer-tab="objects" aria-selected="true">
+                <i data-lucide="list-tree"></i><span>业务图层</span>
+              </button>
+              <button type="button" data-layer-tab="basemap" aria-selected="false">
+                <i data-lucide="map"></i><span>底图</span>
+              </button>
+            </nav>
+            <div class="layer-panel-body">
+              <div class="layer-tab-pane is-active" data-layer-pane="objects">
+                <div class="panel-section">
+                  <div class="section-title">领域对象</div>
+                  <div class="object-list" id="objectList"></div>
+                </div>
+                <div class="panel-section">
+                  <div class="section-title">设施筛选</div>
+                  <div class="segmented">
+                    <button data-facility="school">学校</button>
+                    <button data-facility="hospital">医院</button>
+                    <button data-facility="government">政府</button>
+                  </div>
+                </div>
+                <div class="panel-section selected-panel">
+                  <div class="section-title">选中对象</div>
+                  <div id="selectedObject" class="muted">未选中</div>
+                </div>
               </div>
-            </div>
-
-            <div class="panel-section selected-panel">
-              <div class="section-title">选中对象</div>
-              <div id="selectedObject" class="muted">未选中</div>
+              <div class="layer-tab-pane" data-layer-pane="basemap">
+                <div class="panel-section basemap-section">
+                  <div class="section-title">选择底图</div>
+                  <div class="basemap-options" role="radiogroup" aria-label="底图选择">
+                    <button type="button" class="basemap-option" data-basemap="standard" role="radio" aria-checked="true">
+                      <i data-lucide="map"></i>
+                      <span>标准</span>
+                      <small>道路与行政标注</small>
+                    </button>
+                    <button type="button" class="basemap-option" data-basemap="satellite" role="radio" aria-checked="false">
+                      <i data-lucide="satellite"></i>
+                      <span>卫星</span>
+                      <small>遥感影像</small>
+                    </button>
+                    <button type="button" class="basemap-option" data-basemap="hybrid" role="radio" aria-checked="false">
+                      <i data-lucide="layers"></i>
+                      <span>混合</span>
+                      <small>影像与道路标注</small>
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           </section>
         </div>
-        <div class="map-telemetry-control" id="telemetryControl">
-          <section class="telemetry-panel" id="telemetryPanel" aria-label="演进数据">
-            <header class="telemetry-header">
-              <div>
-                <div class="telemetry-title">演进数据 <span>MOCK</span></div>
-                <time id="telemetryTime">--</time>
+        <div id="map"></div>
+        <div class="conclusion-toast-region" id="conclusionToastRegion" aria-live="polite"></div>
+        <section class="situation-workbench is-collapsed" id="situationWorkbench" data-view="telemetry" aria-label="态势工作台">
+          <header class="situation-workbench-header">
+            <button class="icon-button" id="situationToggleBtn" type="button" title="展开态势工作台" aria-label="展开态势工作台" aria-expanded="false">
+              <i data-lucide="panel-bottom-open"></i>
+            </button>
+            <div class="situation-heading">
+              <strong>态势工作台</strong>
+              <span id="situationSummary">等待演进数据</span>
+            </div>
+            <div class="situation-view-tabs" role="tablist" aria-label="态势工作台视图">
+              <button class="is-active" type="button" data-situation-view="telemetry" role="tab" aria-selected="true">演进</button>
+              <button type="button" data-situation-view="impact" role="tab" aria-selected="false">影响</button>
+            </div>
+            <div class="hydro-timeline is-hidden" id="hydroTimeline" aria-label="预测淹没时间轴">
+              <button class="icon-button" id="hydroPlayBtn" type="button" title="播放预测过程" aria-label="播放预测过程">
+                <i data-lucide="play"></i>
+              </button>
+              <input id="hydroTimeSlider" type="range" min="0" max="0" value="0" step="1" aria-label="预测时刻" />
+              <div class="hydro-time-label" id="hydroTimeLabel">--</div>
+            </div>
+          </header>
+          <div class="situation-workbench-body">
+            <section class="telemetry-panel situation-pane map-draggable-panel" id="telemetryPanel" aria-label="演进数据">
+              <header class="telemetry-header panel-drag-handle" data-panel-drag-handle title="拖动演进数据">
+                <div>
+                  <div class="telemetry-title">演进数据 <span>MOCK</span></div>
+                  <time id="telemetryTime">--</time>
+                </div>
+                <div class="telemetry-header-actions">
+                  <span class="telemetry-state" id="telemetryState">待机</span>
+                  <span class="panel-drag-grip" aria-hidden="true"><i data-lucide="grip-horizontal"></i></span>
+                  <button class="icon-button" id="telemetryFloatBtn" type="button" title="浮动演进数据" aria-label="浮动演进数据">
+                    <i data-lucide="picture-in-picture-2"></i>
+                  </button>
+                </div>
+              </header>
+              <div class="telemetry-overview">
+                <div class="telemetry-weather" id="telemetryWeather" data-weather="waiting" aria-live="polite">
+                  <div class="telemetry-weather-icon" id="telemetryWeatherIcon" aria-hidden="true">
+                    <i data-lucide="cloud-sun"></i>
+                  </div>
+                  <div class="telemetry-weather-copy">
+                    <strong id="telemetryWeatherLabel">等待数据</strong>
+                    <span id="telemetryWeatherDetail">当前时段降雨 -- mm</span>
+                  </div>
+                </div>
+                <div class="telemetry-metrics">
+                  <div><span>降雨</span><strong data-mock-field="rainfall_mm">--</strong><small>mm/h</small></div>
+                  <div><span>水库水位</span><strong data-mock-field="reservoir_level_m">--</strong><small>m</small></div>
+                  <div><span>入库流量</span><strong data-mock-field="reservoir_inflow_m3s">--</strong><small>m³/s</small></div>
+                  <div><span>泄洪流量</span><strong data-mock-field="reservoir_release_m3s">--</strong><small>m³/s</small></div>
+                </div>
               </div>
-              <div class="telemetry-header-actions">
-                <span class="telemetry-state" id="telemetryState">待机</span>
-                <button class="icon-button" id="telemetryCloseBtn" type="button" title="关闭演进数据" aria-label="关闭演进数据">
-                  <i data-lucide="x"></i>
+              <div class="telemetry-flow-list">
+                <div><span>区间 1</span><strong data-mock-boundary="interval1">--</strong><small>m³/s</small></div>
+                <div><span>区间 2</span><strong data-mock-boundary="interval2">--</strong><small>m³/s</small></div>
+                <div><span>同古河</span><strong data-mock-boundary="tonggu">--</strong><small>m³/s</small></div>
+                <div><span>坝址</span><strong data-mock-boundary="upstream">--</strong><small>m³/s</small></div>
+              </div>
+              <footer class="telemetry-progress">
+                <div><span id="telemetryProgressBar"></span></div>
+                <output id="telemetryProgressText">0 / 0</output>
+              </footer>
+            </section>
+            <section class="impact-panel situation-pane map-draggable-panel" id="impactPanel" aria-label="受影响对象" aria-live="polite">
+            <header class="impact-panel-header panel-drag-handle" data-panel-drag-handle title="拖动受影响对象">
+              <div>
+                <strong>受影响对象</strong>
+                <span id="impactStatus">等待水动力结果</span>
+              </div>
+              <div class="impact-panel-meta">
+                <time id="impactTimeLabel">--</time>
+                <output id="impactCount">0</output>
+                <span class="panel-drag-grip" aria-hidden="true"><i data-lucide="grip-horizontal"></i></span>
+                <button class="icon-button" id="impactFloatBtn" type="button" title="浮动受影响对象" aria-label="浮动受影响对象">
+                  <i data-lucide="picture-in-picture-2"></i>
                 </button>
               </div>
             </header>
-            <div class="telemetry-weather" id="telemetryWeather" data-weather="waiting" aria-live="polite">
-              <div class="telemetry-weather-icon" id="telemetryWeatherIcon" aria-hidden="true">
-                <i data-lucide="cloud-sun"></i>
-              </div>
-              <div class="telemetry-weather-copy">
-                <strong id="telemetryWeatherLabel">等待数据</strong>
-                <span id="telemetryWeatherDetail">当前时段降雨 -- mm</span>
-              </div>
-            </div>
-            <div class="telemetry-metrics">
-              <div><span>降雨</span><strong data-mock-field="rainfall_mm">--</strong><small>mm/h</small></div>
-              <div><span>水库水位</span><strong data-mock-field="reservoir_level_m">--</strong><small>m</small></div>
-              <div><span>入库流量</span><strong data-mock-field="reservoir_inflow_m3s">--</strong><small>m³/s</small></div>
-              <div><span>泄洪流量</span><strong data-mock-field="reservoir_release_m3s">--</strong><small>m³/s</small></div>
-            </div>
-            <div class="telemetry-flow-list">
-              <div><span>区间 1</span><strong data-mock-boundary="interval1">--</strong><small>m³/s</small></div>
-              <div><span>区间 2</span><strong data-mock-boundary="interval2">--</strong><small>m³/s</small></div>
-              <div><span>同古河</span><strong data-mock-boundary="tonggu">--</strong><small>m³/s</small></div>
-              <div><span>坝址</span><strong data-mock-boundary="upstream">--</strong><small>m³/s</small></div>
-            </div>
-            <footer class="telemetry-progress">
-              <div><span id="telemetryProgressBar"></span></div>
-              <output id="telemetryProgressText">0 / 0</output>
-            </footer>
+            <div class="impact-list" id="impactList"></div>
           </section>
-        </div>
-        <section class="impact-panel is-hidden" id="impactPanel" aria-label="受影响对象" aria-live="polite">
-          <header class="impact-panel-header">
-            <div>
-              <strong>受影响对象</strong>
-              <span id="impactStatus">等待水动力结果</span>
-            </div>
-            <div class="impact-panel-meta">
-              <time id="impactTimeLabel">--</time>
-              <output id="impactCount">0</output>
-            </div>
-          </header>
-          <div class="impact-list" id="impactList"></div>
+          </div>
         </section>
-        <div id="map"></div>
-        <div class="hydro-timeline is-hidden" id="hydroTimeline" aria-label="预测淹没时间轴">
-          <button class="icon-button" id="hydroPlayBtn" type="button" title="播放预测过程" aria-label="播放预测过程">
-            <i data-lucide="play"></i>
-          </button>
-          <input id="hydroTimeSlider" type="range" min="0" max="0" value="0" step="1" aria-label="预测时刻" />
-          <div class="hydro-time-label" id="hydroTimeLabel">--</div>
-        </div>
       </main>
 
       <button class="agent-drawer-tab" id="agentDrawerBtn" type="button" title="打开 Agent" aria-label="打开 Agent" aria-expanded="false">
@@ -154,13 +200,20 @@
       </button>
 
       <aside class="agent-panel" aria-label="智能体交互">
+        <div class="agent-resize-handle" id="agentResizeHandle" role="separator" aria-label="调整 Agent 宽度" aria-orientation="vertical"></div>
         <header class="agent-header">
-          <div>
-            <div class="eyebrow">Agent</div>
-            <h2>应急研判</h2>
+          <div class="agent-heading">
+            <span class="agent-symbol" aria-hidden="true"><i data-lucide="brain-circuit"></i></span>
+            <div>
+              <div class="eyebrow">智能体</div>
+              <h2>应急研判</h2>
+            </div>
           </div>
           <div class="agent-header-actions">
-            <div class="status-dot" title="本地原型"></div>
+            <div class="agent-status" title="智能体已连接">
+              <span class="status-dot" aria-hidden="true"></span>
+              <span>在线</span>
+            </div>
             <button class="icon-button" id="agentCloseBtn" type="button" title="收起 Agent" aria-label="收起 Agent">
               <i data-lucide="x"></i>
             </button>
@@ -170,8 +223,13 @@
         <div class="agent-workspace" id="agentWorkspace">
           <section class="accordion-section trace-section is-active" data-agent-pane="trace">
             <button class="accordion-header" type="button" data-panel-toggle="trace" aria-expanded="true">
-              <span>Agent Trace</span>
-              <i data-lucide="chevron-down"></i>
+              <span class="accordion-title">
+                <i data-lucide="workflow"></i>
+                <span>执行轨迹</span>
+                <span class="agent-pane-mode">自动</span>
+                <output id="traceCount">0</output>
+              </span>
+              <i class="accordion-chevron" data-lucide="chevron-down"></i>
             </button>
             <div class="accordion-body">
               <section class="agent-trace" id="agentTrace"></section>
@@ -180,8 +238,12 @@
 
           <section class="accordion-section chat-section" data-agent-pane="chat">
             <button class="accordion-header" type="button" data-panel-toggle="chat" aria-expanded="false">
-              <span>用户对话</span>
-              <i data-lucide="chevron-down"></i>
+              <span class="accordion-title">
+                <i data-lucide="messages-square"></i>
+                <span>用户对话</span>
+                <span class="agent-pane-mode">交互</span>
+              </span>
+              <i class="accordion-chevron" data-lucide="chevron-down"></i>
             </button>
             <div class="accordion-body chat-body">
               <section class="chat-log" id="chatLog"></section>
@@ -200,7 +262,6 @@
         </div>
       </aside>
 
-      <div class="conclusion-toast-region" id="conclusionToastRegion" aria-live="polite"></div>
     </div>
 
     <script
