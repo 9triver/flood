@@ -1,5 +1,6 @@
 .env
 .env.*
+!.env.example
 .DS_Store
 __pycache__/
 *.py[cod]
@@ -7,6 +8,7 @@ __pycache__/
 *.so
 *.dylib
 *.dll
+.venv/
 agent/.venv/
 .oag_data/
 

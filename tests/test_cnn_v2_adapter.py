@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,6 +15,15 @@ from domains.flood.runtime.workspace import WorkspaceManager, workspace_scope
 
 
 class CnnV2AdapterTest(unittest.TestCase):
+    def test_cnn_uses_service_python_by_default(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("FLOOD_CNN_PYTHON", None)
+            self.assertEqual(sys.executable, cnn_v2.cnn_python())
+
+    def test_cnn_python_can_be_overridden(self):
+        with patch.dict(os.environ, {"FLOOD_CNN_PYTHON": "/opt/flood/python"}):
+            self.assertEqual("/opt/flood/python", cnn_v2.cnn_python())
+
     def test_boundary_csvs_use_explicit_feature_order(self):
         boundaries = {
             key: {

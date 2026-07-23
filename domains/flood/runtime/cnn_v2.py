@@ -146,9 +146,6 @@ def cnn_python() -> str:
     configured = os.environ.get("FLOOD_CNN_PYTHON")
     if configured:
         return configured
-    local_python = PROJECT_DIR / "local" / "hydrodynamic" / ".venv" / "bin" / "python"
-    if local_python.exists():
-        return str(local_python)
     return sys.executable
 
 
