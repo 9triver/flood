@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import copy
+import json
 import sys
 import tempfile
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_DIR / "agent"))
@@ -16,7 +18,9 @@ from domains.flood.runtime.boundary_flow import (
     BoundaryFlowPlaybackSource,
     FloodForecastPolicy,
 )
+from domains.flood.runtime.workspace import WorkspaceManager
 from server.event_runtime import (
+    adaptive_playback_speed,
     BoundaryFlowPlaybackRunner,
     EventRuntime,
     INUNDATION_EVENT_TOOLS,
@@ -163,13 +167,50 @@ class BoundaryFlowPlaybackRunnerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             source = BoundaryFlowPlaybackSource(CSV_PATH, Path(temporary) / "observations.jsonl")
             runner = BoundaryFlowPlaybackRunner(BoundaryFlowPlayback(source), interval_seconds=5)
-            self.assertEqual(runner.interval_seconds, 5)
+            self.assertEqual(runner.interval_seconds, 0.25)
             self.assertEqual(runner.set_speed(2), 2)
             self.assertEqual(runner.interval_seconds, 2.5)
             self.assertEqual(runner.set_speed(10), 10)
             self.assertEqual(runner.interval_seconds, 0.5)
+            self.assertEqual(runner.set_speed(20), 20)
+            self.assertEqual(runner.interval_seconds, 0.25)
             with self.assertRaises(ValueError):
                 runner.set_speed(3)
+
+    def test_adaptive_speed_follows_baseline_rainfall_and_forecast_phases(self):
+        dry = {"rainfall_mm": 0}
+        raining = {"rainfall_mm": 1.6}
+
+        self.assertEqual(adaptive_playback_speed(dry, "NORMAL")[:2], (20.0, "baseline"))
+        self.assertEqual(adaptive_playback_speed(raining, "RISING")[:2], (10.0, "rainfall"))
+        self.assertEqual(adaptive_playback_speed(raining, "PENDING")[:2], (5.0, "forecast"))
+
+    def test_adaptive_speed_transitions_match_the_mock_flood_process(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            temp_dir = Path(temporary)
+            source = BoundaryFlowPlaybackSource(CSV_PATH, temp_dir / "observations.jsonl")
+            policy = FloodForecastPolicy(
+                source.rows,
+                forecast_input_dir=temp_dir / "forecast_inputs",
+                latest_forecast_input_path=temp_dir / "latest.json",
+            )
+            playback = BoundaryFlowPlayback(source, policy)
+            speed = 20.0
+            transitions = []
+
+            while speed > 5:
+                event, _ = playback.next_events()
+                self.assertIsNotNone(event)
+                observation = event["payload"]["observation"]
+                target, phase, _ = adaptive_playback_speed(observation, policy.state)
+                if speed > target:
+                    speed = target
+                    transitions.append((observation["sequence"], speed, phase))
+
+            self.assertEqual(
+                transitions,
+                [(73, 10.0, "rainfall"), (79, 5.0, "forecast")],
+            )
 
     def test_runner_continues_after_forecast_request_until_csv_eof(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -206,6 +247,28 @@ class BoundaryFlowPlaybackRunnerTest(unittest.TestCase):
 
 
 class EventRuntimePlaybackControlTest(unittest.TestCase):
+    def test_adaptive_speed_only_slows_the_running_playback(self):
+        runtime = EventRuntime(object())
+        runtime._started = True
+        runtime._playback_running = True
+        runtime._boundary_flow_runner.set_speed(20)
+        runtime._boundary_flow_runner.playback.policy.state = "RISING"
+
+        runtime._apply_adaptive_playback_speed({"rainfall_mm": 1.6})
+        self.assertEqual(runtime._boundary_flow_runner.speed_multiplier, 10)
+        self.assertEqual(runtime.outputs[-1]["data"]["speed_phase"], "rainfall")
+
+        runtime._boundary_flow_runner.playback.policy.state = "PENDING"
+        runtime._apply_adaptive_playback_speed({"rainfall_mm": 24})
+        self.assertEqual(runtime._boundary_flow_runner.speed_multiplier, 5)
+        self.assertEqual(runtime.outputs[-1]["data"]["speed_phase"], "forecast")
+
+        output_count = len(runtime.outputs)
+        runtime._boundary_flow_runner.set_speed(2)
+        runtime._apply_adaptive_playback_speed({"rainfall_mm": 24})
+        self.assertEqual(runtime._boundary_flow_runner.speed_multiplier, 2)
+        self.assertEqual(len(runtime.outputs), output_count)
+
     def test_pause_preserves_generation_and_pending_agent_events(self):
         runtime = EventRuntime(object())
         runtime._started = True
@@ -230,6 +293,30 @@ class EventRuntimePlaybackControlTest(unittest.TestCase):
         self.assertEqual(runtime._generation, 7)
         self.assertEqual(runtime._boundary_flow_runner.playback.source.index, source_index)
         self.assertEqual(list(runtime._event_queue), [(queued_event, 7)])
+
+    def test_restart_creates_new_workspace_and_rewinds_playback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = WorkspaceManager(Path(directory), retention_count=3)
+            first = manager.create()["workspace_id"]
+            runtime = EventRuntime(object())
+            runtime._started = True
+            runtime._playback_running = True
+            runtime._generation = 4
+            runtime._boundary_flow_runner.playback.source.index = 5
+
+            with patch("server.event_runtime.WORKSPACES", manager):
+                with patch("domains.flood.runtime.workspace.WORKSPACES", manager):
+                    status = runtime.restart_playback(10)
+
+            self.assertTrue(status["running"])
+            self.assertEqual(status["speed_multiplier"], 10)
+            self.assertEqual(runtime._boundary_flow_runner.playback.source.index, 0)
+            self.assertEqual(status["workspace_id"], manager.active_id)
+            self.assertNotEqual(status["workspace_id"], first)
+            first_manifest = json.loads(
+                (manager.path(first) / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(first_manifest["status"], "stopped")
 
 
 class InundationMapEventTest(unittest.TestCase):

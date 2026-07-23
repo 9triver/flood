@@ -27,10 +27,21 @@ INUNDATION_EVENT_TOOLS = frozenset({
     "ui_show_objects",
 })
 
+FORECAST_ATTENTION_STATES = frozenset({"PENDING", "ACTIVE", "RECEDING"})
+
 
 def format_sse(event: str, data: dict) -> bytes:
     payload = json.dumps(data, ensure_ascii=False)
     return f"event: {event}\ndata: {payload}\n\n".encode("utf-8")
+
+
+def adaptive_playback_speed(observation: dict[str, Any],
+                            policy_state: str) -> tuple[float, str, str]:
+    if policy_state in FORECAST_ATTENTION_STATES:
+        return 5.0, "forecast", "洪水预测规则已触发，演进速率自动降为 5×，便于观察模型计算与事件研判。"
+    if float(observation.get("rainfall_mm") or 0) > 0:
+        return 10.0, "rainfall", "监测到降雨过程开始，演进速率自动降为 10×，便于观察边界流量上涨。"
+    return 20.0, "baseline", "无雨基础过程按 20× 速率快速演进。"
 
 
 class BoundaryFlowPlaybackRunner:
@@ -38,7 +49,7 @@ class BoundaryFlowPlaybackRunner:
                  interval_seconds: float = 5.0):
         self.playback = playback or BoundaryFlowPlayback()
         self.base_interval_seconds = interval_seconds
-        self._speed_multiplier = 1.0
+        self._speed_multiplier = 20.0
         self._speed_lock = threading.Lock()
 
     @property
@@ -53,8 +64,8 @@ class BoundaryFlowPlaybackRunner:
 
     def set_speed(self, multiplier: float) -> float:
         value = float(multiplier)
-        if value not in {1.0, 2.0, 5.0, 10.0}:
-            raise ValueError("playback speed must be one of 1, 2, 5, 10")
+        if value not in {1.0, 2.0, 5.0, 10.0, 20.0}:
+            raise ValueError("playback speed must be one of 1, 2, 5, 10, 20")
         with self._speed_lock:
             self._speed_multiplier = value
         return value
@@ -175,7 +186,7 @@ class EventRuntime:
         ).start()
         threading.Thread(target=self._event_worker_loop, daemon=True).start()
 
-    def start_playback(self, speed_multiplier: float = 1.0) -> dict[str, Any]:
+    def start_playback(self, speed_multiplier: float = 20.0) -> dict[str, Any]:
         self.ensure_started()
         self._boundary_flow_runner.set_speed(speed_multiplier)
         with self.condition:
@@ -186,6 +197,10 @@ class EventRuntime:
             self._playback_running = True
         self.reset()
         return self.status()
+
+    def restart_playback(self, speed_multiplier: float = 20.0) -> dict[str, Any]:
+        self.stop_playback()
+        return self.start_playback(speed_multiplier)
 
     def set_playback_speed(self, speed_multiplier: float) -> dict[str, Any]:
         self.ensure_started()
@@ -340,6 +355,27 @@ class EventRuntime:
                 "label": "四边界流量观测",
                 "event": data,
                 "detail": boundary_flow_observation_detail(observation),
+                "workspace_id": active_workspace_id(),
+            }})
+            self.condition.notify_all()
+        self._apply_adaptive_playback_speed(observation)
+
+    def _apply_adaptive_playback_speed(self, observation: dict[str, Any]) -> None:
+        policy_state = self._boundary_flow_runner.playback.policy.state
+        target_speed, phase, reason = adaptive_playback_speed(observation, policy_state)
+        current_speed = self._boundary_flow_runner.speed_multiplier
+        if current_speed <= target_speed:
+            return
+        speed = self._boundary_flow_runner.set_speed(target_speed)
+        with self.condition:
+            self.outputs.append({"event": "runtime_status", "data": {
+                "type": "runtime_status",
+                "status": "speed_changed",
+                "label": "演进已自动降速",
+                "detail": reason,
+                "speed_multiplier": speed,
+                "speed_phase": phase,
+                "automatic": True,
                 "workspace_id": active_workspace_id(),
             }})
             self.condition.notify_all()

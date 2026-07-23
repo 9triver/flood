@@ -43,7 +43,7 @@ class FloodObjectBuilder:
             "geometry_source": "local_river_centerline",
             **_geometry_fields(feature),
             "data_path": rel(path) if features else "",
-            "data_note": "河流主体使用本地珊瑚河河道中心线；OSM waterway 候选对象保留为 Waterway 补充水系。",
+            "data_note": "河流主体使用本地珊瑚河河道中心线。",
         }]
 
     def _build_watershed(self) -> list[dict]:
@@ -125,51 +125,6 @@ class FloodObjectBuilder:
                     "data_path": rel(path),
                     **_geometry_fields(feature),
                 })
-        return rows
-
-    def _build_waterway(self) -> list[dict]:
-        watershed = self.build("Watershed")[0]
-        basin_geometry = json.loads(watershed["geometry"])
-        bbox = _geometry_bbox(basin_geometry)
-        source_path = _ensure_osm_waterways(bbox)
-        source = json.loads(source_path.read_text(encoding="utf-8"))
-        basin_polygon = _outer_ring(basin_geometry)
-        rows = []
-        for element in source.get("elements", []):
-            geometry = element.get("geometry") or []
-            if element.get("type") != "way" or len(geometry) < 2:
-                continue
-            coords = [(float(item["lon"]), float(item["lat"])) for item in geometry]
-            length_m = _line_length_m(coords)
-            inside_length_m = _inside_line_length_m(coords, basin_polygon)
-            if inside_length_m <= 0:
-                continue
-            tags = element.get("tags") or {}
-            osm_id = str(element["id"])
-            rows.append({
-                "waterway_id": f"osm_way_{osm_id}",
-                "river_id": watershed["river_id"],
-                "watershed_id": watershed["watershed_id"],
-                "name": tags.get("name") or tags.get("name:zh") or "",
-                "waterway_type": tags.get("waterway", ""),
-                "osm_type": element["type"],
-                "osm_id": osm_id,
-                "source": "OpenStreetMap Overpass",
-                "osm_source": tags.get("source", ""),
-                "length_m": round(length_m, 2),
-                "inside_basin_length_m": round(inside_length_m, 2),
-                "inside_basin_ratio": round(inside_length_m / length_m, 4) if length_m else 0,
-                "candidate_status": "osm_unnamed_candidate" if not (tags.get("name") or tags.get("name:zh")) else "osm_named_neighbor",
-                "geometry_type": "LineString",
-                "source_crs": "EPSG:4326",
-                "geometry_crs": "EPSG:4326",
-                "geometry": json.dumps({
-                    "type": "LineString",
-                    "coordinates": [[lon, lat] for lon, lat in coords],
-                }, ensure_ascii=False),
-                "data_path": rel(source_path),
-            })
-        rows.sort(key=lambda row: (row["inside_basin_length_m"], row["length_m"]), reverse=True)
         return rows
 
     def _build_county(self) -> list[dict]:
@@ -263,15 +218,17 @@ class FloodObjectBuilder:
     def _build_bridge(self) -> list[dict]:
         path = DATA_DIR / "3.水利工程/桥梁.shp"
         osm_bridges = _load_osm_candidates("osm_bridges_shanhu.json", _osm_bridge_kind)
-        rows = []
+        source_rows = [
+            _bridge_record(i, feature, path)
+            for i, feature in enumerate(_features(path), 1)
+        ]
+        rows = _deduplicate_bridges(source_rows)
         used_osm_ids: set[str] = set()
-        for i, feature in enumerate(_features(path), 1):
-            row = _bridge_record(i, feature, path)
-            match = _match_nearest_osm(row, osm_bridges, used_osm_ids, max_distance_m=160)
+        for row in rows:
+            match = _match_bridge_osm(row, osm_bridges, used_osm_ids, max_distance_m=20)
             if match:
                 _apply_osm_match(row, match, "local_inventory_with_osm_bridge_match")
                 used_osm_ids.add(match["osm_ref"])
-            rows.append(row)
         return rows
 
     def _build_facility(self) -> list[dict]:
@@ -324,6 +281,51 @@ class FloodObjectBuilder:
                 _apply_osm_match(row, match, "local_inventory_with_osm_road_match")
                 row["osm_match_status"] = "matched_by_osm_id"
             rows.append(row)
+
+        road_ids = {str(row.get("road_id") or "") for row in rows}
+        bridge_candidates = {
+            item["osm_ref"]: item
+            for item in _load_osm_candidates("osm_bridges_shanhu.json", _osm_bridge_kind)
+        }
+        for bridge in self.build("Bridge"):
+            candidate = bridge_candidates.get(str(bridge.get("osm_ref") or ""))
+            if not candidate or candidate["osm_id"] in road_ids:
+                continue
+            rows.append(_osm_bridge_road_record(candidate))
+            road_ids.add(candidate["osm_id"])
+        return rows
+
+    def _build_bridgeroadlink(self) -> list[dict]:
+        roads_by_id = {
+            str(row.get("road_id") or ""): row
+            for row in self.build("Road")
+        }
+        rows = []
+        for bridge in self.build("Bridge"):
+            osm_ref = str(bridge.get("osm_ref") or "")
+            if not osm_ref.startswith("way/"):
+                continue
+            road_id = osm_ref.split("/", 1)[1]
+            road = roads_by_id.get(road_id)
+            if not road or not road.get("bridge_flag"):
+                continue
+            distance_m = float(bridge.get("osm_distance_m") or 0)
+            confidence = max(0.8, 1.0 - distance_m / 100.0)
+            rows.append({
+                "bridge_road_link_id": f"{bridge['bridge_id']}__{road_id}__deck",
+                "bridge_id": bridge["bridge_id"],
+                "road_id": road_id,
+                "link_role": "deck",
+                "match_method": "local_bridge_point_to_osm_bridge_way",
+                "validation_status": "accepted",
+                "confidence": round(confidence, 3),
+                "distance_m": round(distance_m, 2),
+                "bridge_osm_ref": osm_ref,
+                "road_osm_ref": str(road.get("osm_ref") or ""),
+                "topology_evidence": "bridge and road resolve to the same OSM way",
+                "amap_validation_status": "not_checked",
+                "data_path": str(bridge.get("data_path") or ""),
+            })
         return rows
 
     def _build_place(self) -> list[dict]:
@@ -575,56 +577,6 @@ def _source_crs(path: Path) -> str:
     if "WGS_1984" in prj or "WGS 84" in prj:
         return "EPSG:4326"
     return ""
-
-
-def _ensure_osm_waterways(bbox: tuple[float, float, float, float]) -> Path:
-    SOURCES_DIR.mkdir(parents=True, exist_ok=True)
-    path = SOURCES_DIR / "osm_waterways_shanhu.json"
-    if path.exists():
-        return path
-    min_lon, min_lat, max_lon, max_lat = bbox
-    query = (
-        "[out:json][timeout:45];\n"
-        f"way[\"waterway\"~\"^(river|stream)$\"]({min_lat:.6f},{min_lon:.6f},{max_lat:.6f},{max_lon:.6f});\n"
-        "out geom tags;\n"
-    )
-    result = subprocess.run(
-        [
-            "curl",
-            "-4",
-            "--noproxy",
-            "*",
-            "--connect-timeout",
-            "10",
-            "--max-time",
-            "90",
-            "-sS",
-            "-X",
-            "POST",
-            "https://overpass-api.de/api/interpreter",
-            "-H",
-            "User-Agent: flood-domain-builder/0.1 (local research)",
-            "-H",
-            "Accept: application/json",
-            "--data-urlencode",
-            f"data={query}",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        env={
-            key: value for key, value in os.environ.items()
-            if key not in {"http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"}
-        },
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"Overpass download failed: {result.stderr.strip()}")
-    try:
-        data = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"Overpass returned non-JSON response: {result.stdout[:500]}") from exc
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-    return path
 
 
 def _ensure_osm_reservoirs() -> Path:
@@ -1077,6 +1029,26 @@ def _match_nearest_osm(row: dict, candidates: list[dict],
     return None
 
 
+def _match_bridge_osm(row: dict, candidates: list[dict],
+                      used_osm_ids: set[str], max_distance_m: float) -> dict | None:
+    point = _row_point(row)
+    if not point:
+        return None
+    matches = []
+    for item in candidates:
+        if item["osm_ref"] in used_osm_ids:
+            continue
+        geometry = item.get("geometry") or {}
+        distance, _ = _distance_to_geometry(point, geometry)
+        if not math.isfinite(distance):
+            distance = _distance_m(point, item["center"])
+        if distance <= max_distance_m:
+            matches.append({**item, "distance_m": distance})
+    if not matches:
+        return None
+    return min(matches, key=lambda item: item["distance_m"])
+
+
 def _match_facility_osm(row: dict, candidates: list[dict],
                         used_osm_ids: set[str]) -> dict | None:
     wanted = row.get("facility_type", "")
@@ -1105,7 +1077,12 @@ def _match_facility_osm(row: dict, candidates: list[dict],
 
 def _apply_osm_match(row: dict, match: dict, geometry_source: str):
     point = _row_point(row)
-    distance = _distance_m(point, match["center"]) if point else 0.0
+    if "distance_m" in match:
+        distance = float(match["distance_m"])
+    elif point:
+        distance = _distance_m(point, match["center"])
+    else:
+        distance = 0.0
     row.update({
         "geometry_source": geometry_source,
         "osm_match_status": "matched_by_name" if match["name"] and match["name"] == row.get("name") else "matched_by_distance",
@@ -1172,7 +1149,6 @@ def _bridge_record(index: int, feature: dict, path: Path) -> dict:
         "bridge_id": str(bridge_id) if str(bridge_id) != "0" else f"bridge_{index}",
         "name": name or f"桥梁{index}",
         "river_id": "shanhu" if _first_non_empty(props, "RV_NAME") == "珊瑚河" else "",
-        "road_id": "",
         "length_m": _float(_first_non_empty(props, "LEN")),
         "width_m": _float(_first_non_empty(props, "WIDE")),
         "deck_elevation_m": _float(_first_non_empty(props, "EL", "B_EL")),
@@ -1183,6 +1159,25 @@ def _bridge_record(index: int, feature: dict, path: Path) -> dict:
         **_geometry_fields(feature),
         "data_path": rel(path),
     }
+
+
+def _deduplicate_bridges(rows: list[dict]) -> list[dict]:
+    canonical: dict[tuple[float, float], dict] = {}
+    source_ids: dict[tuple[float, float], list[str]] = {}
+    for row in rows:
+        key = (
+            round(float(row.get("longitude") or 0), 7),
+            round(float(row.get("latitude") or 0), 7),
+        )
+        source_ids.setdefault(key, []).append(str(row.get("bridge_id") or ""))
+        canonical.setdefault(key, row)
+    result = []
+    for key, row in canonical.items():
+        ids = source_ids[key]
+        row["source_record_ids"] = ",".join(ids)
+        row["source_record_count"] = len(ids)
+        result.append(row)
+    return result
 
 
 def _facility_record(facility_type: str, index: int, feature: dict, path: Path) -> dict:
@@ -1246,6 +1241,35 @@ def _road_record(index: int, feature: dict, path: Path) -> dict:
         **_osm_defaults(),
         **_geometry_fields(feature),
         "data_path": rel(path),
+    }
+
+
+def _osm_bridge_road_record(candidate: dict) -> dict:
+    tags = candidate.get("tags") or {}
+    geometry = candidate.get("geometry") or {}
+    coords = list(_iter_coords(geometry.get("coordinates") or []))
+    return {
+        "road_id": candidate["osm_id"],
+        "name": candidate.get("name") or tags.get("ref") or f"OSM桥上路段 {candidate['osm_id']}",
+        "ref": tags.get("ref") or "",
+        "road_class": tags.get("highway") or "",
+        "one_way": tags.get("oneway") or "",
+        "bridge_flag": True,
+        "tunnel_flag": False,
+        "length_m": round(_line_length_m(coords), 2) if len(coords) >= 2 else 0.0,
+        "geometry_source": "osm_bridge_way",
+        "osm_match_status": "source_osm_bridge_way",
+        "osm_ref": candidate["osm_ref"],
+        "osm_name": candidate.get("name") or "",
+        "osm_feature": "bridge",
+        "osm_distance_m": 0.0,
+        "osm_tags": json.dumps(_selected_osm_tags(tags), ensure_ascii=False, sort_keys=True),
+        "osm_data_path": rel(candidate["source_path"]),
+        "geometry_type": geometry.get("type", ""),
+        "source_crs": "EPSG:4326",
+        "geometry_crs": "EPSG:4326",
+        "geometry": json.dumps(geometry, ensure_ascii=False) if geometry else "",
+        "data_path": rel(candidate["source_path"]),
     }
 
 
@@ -1355,15 +1379,6 @@ def _iter_coords(value):
         yield from _iter_coords(item)
 
 
-def _outer_ring(geometry: dict) -> list[tuple[float, float]]:
-    coords = geometry.get("coordinates") or []
-    if geometry.get("type") == "Polygon" and coords:
-        return [(float(lon), float(lat)) for lon, lat in coords[0]]
-    if geometry.get("type") == "MultiPolygon" and coords and coords[0]:
-        return [(float(lon), float(lat)) for lon, lat in coords[0][0]]
-    return []
-
-
 def _point_in_polygon(point: tuple[float, float], polygon: list[tuple[float, float]]) -> bool:
     x, y = point
     inside = False
@@ -1380,6 +1395,21 @@ def _point_in_polygon(point: tuple[float, float], polygon: list[tuple[float, flo
 
 
 def _distance_to_geometry(point: tuple[float, float], geometry: dict) -> tuple[float, bool]:
+    geometry_type = geometry.get("type")
+    coords = geometry.get("coordinates") or []
+    if geometry_type == "Point" and len(coords) >= 2:
+        return _distance_m(point, (float(coords[0]), float(coords[1]))), False
+    if geometry_type in {"LineString", "MultiLineString"}:
+        lines = [coords] if geometry_type == "LineString" else coords
+        distance = math.inf
+        for line in lines:
+            points = [(float(lon), float(lat)) for lon, lat in line]
+            for index in range(1, len(points)):
+                distance = min(
+                    distance,
+                    _distance_point_to_segment_m(point, points[index - 1], points[index]),
+                )
+        return distance, False
     rings = _geometry_rings(geometry)
     if not rings:
         return math.inf, False
@@ -1432,16 +1462,6 @@ def _distance_point_to_segment_m(point: tuple[float, float],
 
 def _line_length_m(coords: list[tuple[float, float]]) -> float:
     return sum(_distance_m(coords[index - 1], coords[index]) for index in range(1, len(coords)))
-
-
-def _inside_line_length_m(coords: list[tuple[float, float]], polygon: list[tuple[float, float]]) -> float:
-    total = 0.0
-    for index in range(1, len(coords)):
-        start = coords[index - 1]
-        end = coords[index]
-        if _point_in_polygon(start, polygon) or _point_in_polygon(end, polygon):
-            total += _distance_m(start, end)
-    return total
 
 
 def _distance_m(start: tuple[float, float], end: tuple[float, float]) -> float:

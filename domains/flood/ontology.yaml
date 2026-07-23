@@ -203,13 +203,38 @@ objects:
       bridge_id: {type: str, required: true, description: "桥梁稳定ID"}
       name: {type: str, description: "桥梁名称"}
       river_id: {type: str, description: "所在河流编号"}
-      road_id: {type: str, description: "关联道路ID，若可识别"}
       length_m: {type: float, description: "桥长"}
       width_m: {type: float, description: "桥宽"}
       deck_elevation_m: {type: float, description: "桥面或梁底高程，若可得"}
       data_quality: {type: str, description: "台账完整性: complete/partial/missing"}
+      source_record_ids: {type: str, description: "合并前的源记录ID，以逗号分隔"}
+      source_record_count: {type: int, description: "合并到该桥梁实体的源记录数"}
       longitude: {type: float, description: "经度"}
       latitude: {type: float, description: "纬度"}
+
+  BridgeRoadLink:
+    kind: relation
+    data_source: external_api
+    mutability: read_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: bridge_road_link_id
+    summary: "桥梁与道路的显式关联"
+    description: "BridgeRoadLink 表达桥梁和桥上道路分段的多对多关系，并保存空间匹配与拓扑校核证据。"
+    properties:
+      bridge_road_link_id: {type: str, required: true, description: "关系稳定ID"}
+      bridge_id: {type: str, required: true, description: "桥梁ID"}
+      road_id: {type: str, required: true, description: "道路分段ID"}
+      link_role: {type: str, description: "关系角色: deck/approach"}
+      match_method: {type: str, description: "匹配方法"}
+      validation_status: {type: str, description: "校核状态: accepted/review/rejected"}
+      confidence: {type: float, description: "匹配置信度，0到1"}
+      distance_m: {type: float, description: "本地桥梁点到桥上道路几何的距离，米"}
+      bridge_osm_ref: {type: str, description: "桥梁匹配的 OSM 对象引用"}
+      road_osm_ref: {type: str, description: "道路对应的 OSM 对象引用"}
+      topology_evidence: {type: str, description: "拓扑关系证据"}
+      amap_validation_status: {type: str, description: "高德辅助校核状态"}
 
   Facility:
     kind: entity
@@ -322,7 +347,7 @@ objects:
       resolver: flood_repository
       id_field: forecast_id
     summary: "洪水预测运行"
-    description: "ForecastRun 表示一次水文-水动力联动预测运行，记录水文边界、模型名称、生成时间和预测淹没统计。"
+    description: "ForecastRun 表示一次水文-水动力联动预测运行，记录水文边界、模型名称、生成时间和预测淹没统计；模型原始输出保存在所属演进工作空间。"
     properties:
       forecast_id: {type: str, required: true, description: "预测运行ID，latest 表示当前最新预测"}
       name: {type: str, description: "预测运行名称"}
@@ -348,7 +373,7 @@ objects:
       resolver: flood_repository
       id_field: forecast_cell_id
     summary: "预测淹没单元"
-    description: "ForecastCell 是水动力预测直接输出的淹没单元，承载预测水深、流速、到达时间和退水时间。"
+    description: "ForecastCell 由静态水动力网格和所属工作空间内指定时刻的模型水深结果按需派生，承载预测水深、流速、到达时间和退水时间，不单独持久化网格几何副本。"
     properties:
       forecast_cell_id: {type: str, required: true, description: "预测计算单元ID"}
       forecast_id: {type: str, description: "所属预测运行ID"}
@@ -517,6 +542,38 @@ links:
     link_type: observes
     cardinality: 1..n
 
+  bridge_road_links:
+    source: Bridge
+    target: BridgeRoadLink
+    join: {source_key: bridge_id, target_key: bridge_id}
+    description: "桥梁关联的道路关系记录"
+    link_type: relates
+    cardinality: 1..n
+
+  bridge_link_roads:
+    source: BridgeRoadLink
+    target: Road
+    join: {source_key: road_id, target_key: road_id}
+    description: "桥梁道路关系记录指向的道路分段"
+    link_type: relates
+    cardinality: n..1
+
+  road_bridge_links:
+    source: Road
+    target: BridgeRoadLink
+    join: {source_key: road_id, target_key: road_id}
+    description: "道路分段关联的桥梁关系记录"
+    link_type: relates
+    cardinality: 1..n
+
+  road_link_bridges:
+    source: BridgeRoadLink
+    target: Bridge
+    join: {source_key: bridge_id, target_key: bridge_id}
+    description: "桥梁道路关系记录指向的桥梁"
+    link_type: relates
+    cardinality: n..1
+
   transfer_route:
     source: Transfer
     target: Route
@@ -587,9 +644,9 @@ functions:
   analyze_inundation_impacts:
     summary: "根据预测淹没范围分析受影响对象"
     description: "读取最新或指定 ForecastCell 预测淹没网格，可按指定 time_h 分析某个预测时刻，也可默认使用最大水深包络；对道路、桥梁、重要设施、转移单元、安置地点和转移路线执行确定性空间邻近分析，返回受影响对象清单、风险等级和按类型汇总。"
-    usage_prompt: "收到 InundationGenerated 事件后应优先调用本函数，forecast_id 默认 latest，target_type 默认 all。该函数是本体层确定性空间分析入口：LLM 只能根据返回结果说明哪些对象受影响，不要自行猜测学校、医院、道路、桥梁、转移路线或安置点是否受淹。当前端上下文包含 current_hydrodynamic_time_h，或用户明确询问某个时间点/当前时间轴位置的影响时，必须把该值作为 time_h 传入；用户询问总体/最大影响时不要传 time_h，默认使用最大水深包络。需要在地图展示影响分析结果时，LLM 应在本函数返回后再调用 ui_show_objects：先显示 HydrodynamicCell 且 filters={\"forecast_id\":\"latest\"}、label=预测淹没结果、fit=false、refresh=true；再优先使用 affected_object_ids 中按对象类型汇总的 ID，分别传给对应对象类型并设置 highlight=true、show_only_object_ids=true，只显示并高亮这些受影响对象，不要额外加载同类型全量对象。需要缩窄范围时 target_type 可传 Road、Bridge、Facility、Route、Transfer、Place 或 all；min_depth_m 默认 0.15，max_distance_m 默认 10。"
+    usage_prompt: "收到 InundationGenerated 事件后应优先调用本函数，forecast_id 默认 latest，target_type 默认 all。该函数是本体层确定性空间分析入口：LLM 只能根据返回结果说明哪些对象受影响，不要自行猜测学校、医院、道路、桥梁、转移路线或安置点是否受淹。当前端上下文包含 current_hydrodynamic_time_h，或用户明确询问某个时间点/当前时间轴位置的影响时，必须把该值作为 time_h 传入；用户询问总体/最大影响时不要传 time_h，默认使用最大水深包络。已有水动力时间轴时直接分析已有预测，除非用户明确要求重算，否则不要先调用 run_flood_forecast。需要在地图展示影响分析结果时，只调用一次 ui_show_objects：在同一个 objects 数组中先放 HydrodynamicCell（filters={\"forecast_id\":\"latest\"}、label=预测淹没结果、fit=false、refresh=true），再放 affected_object_ids 中各对象类型对应的对象项，并设置 highlight=true、show_only_object_ids=true；不要按类型连续调用 ui_show_objects，也不要额外加载同类型全量对象。需要缩窄范围时 target_type 可传 Road、Bridge、Facility、Route、Transfer、Place 或 all；min_depth_m 默认 0.15，max_distance_m 默认 10。"
     function_type: lookup
-    involves_objects: [ForecastRun, ForecastCell, Road, Bridge, Facility, Route, Transfer, Place, Risk]
+    involves_objects: [ForecastRun, ForecastCell, Road, Bridge, BridgeRoadLink, Facility, Route, Transfer, Place, Risk]
     params:
       forecast_id: {type: str, description: "预测运行ID；latest 表示最新预测", default: "latest"}
       target_type: {type: str, description: "分析目标类型: Road/Bridge/Facility/Route/Transfer/Place/all", default: "all"}
@@ -600,7 +657,7 @@ functions:
   plan_evacuation_route:
     summary: "按洪水预测约束规划避洪路线"
     description: "使用高德 Web 服务规划起点至安置点的路线，并将 GCJ-02 路线转为 WGS84 Route 对象。步行规划请求最多三条候选路线，逐条排除穿过 blocked_depth_m 禁行 ForecastCell 的路线，再选择距离最短的安全路线。"
-    usage_prompt: "当用户要求路线规划、导航、绕开淹没区域前往安置点或为某个 Transfer 生成避洪路线时调用。优先使用 start_object_type + start_object_id 和 destination_place_id；只有没有领域对象时才传经纬度。如果前端处于水动力时间轴某一时刻，必须把 current_hydrodynamic_time_h 作为 time_h。驾车使用 profile=car 且默认禁行水深0.3米；步行使用 profile=foot 且默认禁行水深0.15米。avoid_flood 默认 true；函数会自行筛选高德候选路线，不要为了换路而关闭 avoid_flood 或重复调用。若全部候选路线均不安全，向用户明确说明当前没有满足约束的安全路线。成功后调用 ui_show_objects，object_type=Route，filters 使用结果 route.route_id，只显示本次动态路线。"
+    usage_prompt: "当用户要求路线规划、导航、绕开淹没区域前往安置点或为某个 Transfer 生成避洪路线时调用。优先使用 start_object_type + start_object_id 和 destination_place_id；只有没有领域对象时才传经纬度。如果前端处于水动力时间轴某一时刻，必须把 current_hydrodynamic_time_h 作为 time_h。驾车使用 profile=car 且默认禁行水深0.3米；步行使用 profile=foot 且默认禁行水深0.15米。avoid_flood 默认 true；函数会自行筛选高德候选路线。同一起终点在一个用户请求中最多调用一次本函数。若返回 no_safe_route 或 retryable=false，这是终止结果：立即向用户说明当前没有满足约束的安全路线，不得自行切换 profile、time_h、avoid_flood 或其他约束重试。成功后调用 ui_show_objects，object_type=Route，filters 使用结果 route.route_id，只显示本次动态路线。"
     function_type: lookup
     involves_objects: [Route, Transfer, Place, ForecastRun, ForecastCell]
     params:

@@ -1504,6 +1504,14 @@ h2 {
   color: #17633f;
 }
 
+.playback-restart[hidden] {
+  display: none;
+}
+
+.playback-restart:hover {
+  color: #9a3412;
+}
+
 .playback-speed {
   display: inline-flex;
   align-items: center;

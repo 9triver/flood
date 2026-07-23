@@ -75,6 +75,21 @@ def analyze_inundation_impacts(resolver, forecast_id: str = "latest",
                 max_distance_m=float(max_distance_m or 0),
             ))
 
+    if "Road" in target_types:
+        bridge_impacts = [
+            row for row in impacts
+            if row.get("object_type") == "Bridge"
+        ]
+        if "Bridge" not in target_types:
+            bridge_impacts = analyze_point_objects(
+                resolver,
+                "Bridge",
+                cell_index,
+                min_depth_m=float(min_depth_m or 0),
+                max_distance_m=float(max_distance_m or 0),
+            )
+        impacts.extend(propagate_bridge_impacts(resolver, bridge_impacts, impacts))
+
     impacts = sorted(
         impacts,
         key=lambda row: (
@@ -131,7 +146,8 @@ def analysis_basis(time_h: float | None, empty: bool = False) -> str:
         return f"{prefix}执行叠加分析；未找到满足水深阈值的预测淹没单元。"
     return (
         f"{prefix}执行确定性空间邻近分析；"
-        "点对象按对象坐标匹配最近淹没网格，线对象按几何采样点匹配最深命中网格。"
+        "点对象按对象坐标匹配最近淹没网格，线对象按几何采样点匹配最深命中网格；"
+        "已校核的 BridgeRoadLink 用于把桥梁影响传播到关联道路，并标记为需检查通行。"
     )
 
 
@@ -231,7 +247,78 @@ def make_impact(object_type: str, row: dict[str, Any], object_id_field: str,
         "longitude": round(float(impact_point[0]), 7),
         "latitude": round(float(impact_point[1]), 7),
         "basis": basis,
+        "directly_inundated": True,
     }
+
+
+def propagate_bridge_impacts(resolver, bridge_impacts: list[dict[str, Any]],
+                             existing_impacts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    bridge_by_id = {
+        str(row.get("object_id") or ""): row
+        for row in bridge_impacts
+        if row.get("object_id")
+    }
+    if not bridge_by_id:
+        return []
+
+    existing_roads = {
+        str(row.get("object_id") or ""): row
+        for row in existing_impacts
+        if row.get("object_type") == "Road" and row.get("object_id")
+    }
+    roads_by_id = {
+        str(row.get("road_id") or ""): row
+        for row in resolver.query("Road")
+        if row.get("road_id")
+    }
+    propagated = []
+    for link in resolver.query("BridgeRoadLink"):
+        if link.get("validation_status") != "accepted":
+            continue
+        bridge_id = str(link.get("bridge_id") or "")
+        road_id = str(link.get("road_id") or "")
+        bridge_impact = bridge_by_id.get(bridge_id)
+        road = roads_by_id.get(road_id)
+        if not bridge_impact or not road:
+            continue
+
+        existing = existing_roads.get(road_id)
+        if existing:
+            append_unique(existing, "related_bridge_ids", bridge_id)
+            append_unique(existing, "related_bridge_names", str(bridge_impact.get("name") or bridge_id))
+            existing["bridge_dependency"] = True
+            continue
+
+        impact = {
+            "object_type": "Road",
+            "object_id": road_id,
+            "name": road.get("name") or road_id,
+            "risk_level": bridge_impact.get("risk_level") or "unknown",
+            "depth_m": float(bridge_impact.get("depth_m") or 0),
+            "velocity_mps": float(bridge_impact.get("velocity_mps") or 0),
+            "distance_m": float(bridge_impact.get("distance_m") or 0),
+            "forecast_cell_id": bridge_impact.get("forecast_cell_id") or "",
+            "mesh_cell_id": bridge_impact.get("mesh_cell_id") or "",
+            "longitude": bridge_impact.get("longitude"),
+            "latitude": bridge_impact.get("latitude"),
+            "basis": "bridge_dependency",
+            "directly_inundated": False,
+            "bridge_dependency": True,
+            "related_bridge_ids": [bridge_id],
+            "related_bridge_names": [str(bridge_impact.get("name") or bridge_id)],
+            "bridge_road_link_id": link.get("bridge_road_link_id") or "",
+            "passability_status": "inspection_required",
+            "data_quality": "insufficient_bridge_elevation",
+        }
+        propagated.append(impact)
+        existing_roads[road_id] = impact
+    return propagated
+
+
+def append_unique(row: dict[str, Any], field: str, value: str) -> None:
+    values = row.setdefault(field, [])
+    if value and value not in values:
+        values.append(value)
 
 
 def summarize_impacts(target_types: list[str], impacts: list[dict[str, Any]]) -> dict[str, Any]:

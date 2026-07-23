@@ -21,6 +21,9 @@
               <i data-lucide="play"></i>
               <span>开始演进</span>
             </button>
+            <button class="icon-button playback-restart" id="playbackRestartBtn" title="重新开始演进" aria-label="重新开始演进" hidden>
+              <i data-lucide="rotate-ccw"></i>
+            </button>
             <label class="playback-speed" title="演进速率">
               <i data-lucide="gauge"></i>
               <select id="playbackSpeedSelect" aria-label="演进速率">
@@ -28,6 +31,7 @@
                 <option value="2">2×</option>
                 <option value="5">5×</option>
                 <option value="10">10×</option>
+                <option value="20" selected>20×</option>
               </select>
             </label>
             <button class="icon-button" id="layerPanelBtn" title="图层" aria-label="图层" aria-expanded="false">

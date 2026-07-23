@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import threading
 import uuid
 from contextlib import contextmanager
@@ -21,9 +23,22 @@ _scoped_workspace_id: ContextVar[str | None] = ContextVar(
 )
 
 
+def workspace_retention_count() -> int:
+    try:
+        return max(1, int(os.environ.get("FLOOD_WORKSPACE_RETENTION_COUNT", "3")))
+    except ValueError:
+        return 3
+
+
 class WorkspaceManager:
-    def __init__(self, root: Path = WORKSPACES_DIR):
+    def __init__(self, root: Path = WORKSPACES_DIR,
+                 retention_count: int | None = None):
         self.root = root
+        self.retention_count = (
+            max(1, retention_count)
+            if retention_count is not None
+            else workspace_retention_count()
+        )
         self._active_id: str | None = None
         self._lock = threading.RLock()
 
@@ -39,17 +54,7 @@ class WorkspaceManager:
         now = datetime.now(timezone.utc)
         workspace_id = f"run_{now.strftime('%Y%m%dT%H%M%SZ')}_{uuid.uuid4().hex[:8]}"
         path = self.root / workspace_id
-        for relative in (
-            "agent",
-            "boundary_flows/observations",
-            "boundary_flows/forecast_inputs",
-            "cache/geojson",
-            "cnn_v2/latest",
-            "forecasts/latest",
-            "impacts",
-            "routes",
-        ):
-            (path / relative).mkdir(parents=True, exist_ok=True)
+        path.mkdir(parents=True, exist_ok=True)
         manifest = {
             "workspace_id": workspace_id,
             "domain": "flood",
@@ -59,7 +64,41 @@ class WorkspaceManager:
         self._write_json(path / "manifest.json", manifest)
         with self._lock:
             self._active_id = workspace_id
+        self.prune()
         return manifest
+
+    def prune(self) -> list[str]:
+        if not self.root.exists():
+            return []
+        with self._lock:
+            active_id = self._active_id
+            workspace_paths = sorted(
+                (
+                    path for path in self.root.iterdir()
+                    if path.is_dir() and path.name.startswith("run_")
+                ),
+                key=self._created_key,
+                reverse=True,
+            )
+            keep = {path.name for path in workspace_paths[:self.retention_count]}
+            if active_id:
+                keep.add(active_id)
+            removed = []
+            for path in workspace_paths:
+                if path.name in keep:
+                    continue
+                shutil.rmtree(path)
+                removed.append(path.name)
+            return removed
+
+    @staticmethod
+    def _created_key(path: Path) -> tuple[str, str]:
+        try:
+            manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
+            created_at = str(manifest.get("created_at") or "")
+        except (OSError, json.JSONDecodeError):
+            created_at = ""
+        return created_at, path.name
 
     def path(self, workspace_id: str | None = None, *, create: bool = False) -> Path:
         selected = workspace_id or self.active_id

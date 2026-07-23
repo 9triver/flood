@@ -11,15 +11,14 @@ from typing import Any
 
 import numpy as np
 
-from .common import DOMAIN_DATA_DIR, DOMAIN_DIR, PROJECT_DIR, apply_filters, apply_order, apply_window
+from .common import DOMAIN_DIR, PROJECT_DIR, apply_filters, apply_order, apply_window
 from .coordinates import gcj02_to_wgs84
-from .workspace import workspace_dir
+from .workspace import SHARED_CACHE_DIR, workspace_dir
 
 
 MODEL_DIR = DOMAIN_DIR / "model" / "cnn_v2"
 GT_PATH = MODEL_DIR / "GT.txt"
-HYDRODYNAMIC_DATA_DIR = DOMAIN_DATA_DIR / "hydrodynamic"
-MESH_DB_PATH = HYDRODYNAMIC_DATA_DIR / "mesh.sqlite"
+MESH_DB_PATH = SHARED_CACHE_DIR / "hydrodynamic" / "mesh.sqlite"
 MIN_TILE_ZOOM = 13
 SUPPORTED_TILE_ZOOMS = (13, 14, 15)
 LATEST_FORECAST_ID = "latest"
@@ -423,9 +422,11 @@ def forecast_stats(forecast_id: str = LATEST_FORECAST_ID) -> dict[str, Any]:
     path = forecast_depth_path(forecast_id)
     entry = forecast_depth_entry(forecast_id)
     series_path = forecast_series_path(forecast_id)
+    time_steps_path = forecast_time_steps_path(forecast_id)
     time_steps = forecast_time_steps(forecast_id)
     return {
         "forecast_id": normalize_forecast_id(forecast_id),
+        "result_version": forecast_result_version(path, series_path, time_steps_path),
         "depth_path": str(path.relative_to(PROJECT_DIR)) if path.exists() else "",
         "series_path": str(series_path.relative_to(PROJECT_DIR)) if series_path.exists() else "",
         "depth_count": entry["depth_count"],
@@ -434,6 +435,14 @@ def forecast_stats(forecast_id: str = LATEST_FORECAST_ID) -> dict[str, Any]:
         "time_steps_h": time_steps,
         "time_step_count": len(time_steps),
     }
+
+
+def forecast_result_version(*paths: Path) -> str:
+    parts = []
+    for path in paths:
+        stat_key = file_stat_key(path)
+        parts.append("-".join(str(value) for value in stat_key) if stat_key else "missing")
+    return ".".join(parts)
 
 
 def read_forecast_depths(forecast_id: str = LATEST_FORECAST_ID,
@@ -576,27 +585,21 @@ def forecast_depth_path(forecast_id: str = LATEST_FORECAST_ID) -> Path:
     forecast_id = normalize_forecast_id(forecast_id)
     if forecast_id == MESH_ONLY_ID:
         return Path("")
-    if forecast_id == LATEST_FORECAST_ID:
-        return workspace_dir() / "forecasts" / "latest" / "max_depth.csv"
-    return HYDRODYNAMIC_DATA_DIR / "forecasts" / forecast_id / "max_depth.csv"
+    return workspace_dir() / "forecasts" / forecast_id / "max_depth.csv"
 
 
 def forecast_series_path(forecast_id: str = LATEST_FORECAST_ID) -> Path:
     forecast_id = normalize_forecast_id(forecast_id)
     if forecast_id == MESH_ONLY_ID:
         return Path("")
-    if forecast_id == LATEST_FORECAST_ID:
-        return workspace_dir() / "forecasts" / "latest" / "depth_series.npy"
-    return HYDRODYNAMIC_DATA_DIR / "forecasts" / forecast_id / "depth_series.npy"
+    return workspace_dir() / "forecasts" / forecast_id / "depth_series.npy"
 
 
 def forecast_time_steps_path(forecast_id: str = LATEST_FORECAST_ID) -> Path:
     forecast_id = normalize_forecast_id(forecast_id)
     if forecast_id == MESH_ONLY_ID:
         return Path("")
-    if forecast_id == LATEST_FORECAST_ID:
-        return workspace_dir() / "forecasts" / "latest" / "time_steps.json"
-    return HYDRODYNAMIC_DATA_DIR / "forecasts" / forecast_id / "time_steps.json"
+    return workspace_dir() / "forecasts" / forecast_id / "time_steps.json"
 
 
 def forecast_time_steps(forecast_id: str = LATEST_FORECAST_ID) -> list[float]:

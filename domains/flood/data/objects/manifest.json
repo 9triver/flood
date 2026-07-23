@@ -1,10 +1,14 @@
 {
-  "generated_at": "2026-07-02T12:05:43.203223+00:00",
+  "generated_at": "2026-07-23T10:36:49.719170+00:00",
   "notes": [],
   "object_types": {
     "Bridge": {
-      "count": 44,
+      "count": 22,
       "path": "domains/flood/data/objects/bridge.jsonl"
+    },
+    "BridgeRoadLink": {
+      "count": 3,
+      "path": "domains/flood/data/objects/bridge_road_link.jsonl"
     },
     "County": {
       "count": 3,
@@ -47,7 +51,7 @@
       "path": "domains/flood/data/objects/river.jsonl"
     },
     "Road": {
-      "count": 423,
+      "count": 426,
       "path": "domains/flood/data/objects/road.jsonl"
     },
     "Route": {
@@ -69,10 +73,6 @@
     "Watershed": {
       "count": 1,
       "path": "domains/flood/data/objects/watershed.jsonl"
-    },
-    "Waterway": {
-      "count": 15,
-      "path": "domains/flood/data/objects/waterway.jsonl"
     }
   },
   "source_data": "local/source_data/珊瑚河数据"

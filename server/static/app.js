@@ -26,7 +26,7 @@ const state = {
   lastTrace: null,
   playbackRunning: false,
   playbackPaused: false,
-  playbackSpeed: 1,
+  playbackSpeed: 20,
   playbackAutoPauseArmed: false,
   playbackAutoPausePending: false,
   playbackTotalRows: 0,
@@ -39,6 +39,7 @@ const state = {
     layer: null,
     key: null,
     baseFilters: null,
+    resultVersion: null,
     timer: null,
     playing: false,
   },
@@ -400,6 +401,7 @@ function bindEvents() {
   document.getElementById("agentDrawerBtn").addEventListener("click", () => setAgentDrawerOpen(true));
   document.getElementById("agentCloseBtn").addEventListener("click", () => setAgentDrawerOpen(false));
   document.getElementById("playbackToggleBtn").addEventListener("click", toggleBoundaryFlowPlayback);
+  document.getElementById("playbackRestartBtn").addEventListener("click", restartBoundaryFlowPlayback);
   document.getElementById("playbackSpeedSelect").addEventListener("change", updatePlaybackSpeed);
   document.getElementById("hydroPlayBtn").addEventListener("click", toggleHydrodynamicTimelinePlayback);
   document.getElementById("hydroTimeSlider").addEventListener("input", (event) => {
@@ -819,11 +821,12 @@ async function applyHydrodynamicResult(options = {}) {
   const filters = options.filters || {};
   if (!Object.keys(filters).length) throw new Error("apply_hydrodynamic_result requires filters.");
   const key = layerKey("HydrodynamicResult", filters);
+  const timelineSelection = captureHydrodynamicTimelineSelection(key);
   if (options.refresh && state.layerGroups.has(key)) removeLayer(key);
   if (state.layerGroups.has(key)) {
     const existing = state.layerGroups.get(key);
     if (!state.map.hasLayer(existing)) existing.addTo(state.map);
-    showHydrodynamicTimeline(state.hydrodynamicResultMeta, existing, key, filters);
+    showHydrodynamicTimeline(state.hydrodynamicResultMeta, existing, key, filters, timelineSelection);
     setObjectButtonActive(options.buttonType || "ForecastResult", true);
     return existing;
   }
@@ -832,11 +835,12 @@ async function applyHydrodynamicResult(options = {}) {
   const metaRes = await fetch(`/api/hydrodynamic-grid/meta?${metaParams.toString()}`);
   if (!metaRes.ok) throw new Error(await metaRes.text());
   state.hydrodynamicResultMeta = await metaRes.json();
+  const resultVersion = String(state.hydrodynamicResultMeta?.forecast?.result_version || "");
   const layer = L.gridLayer.hydrodynamicGrid({
     tileSize: 256,
     opacity: 1,
     pane: "overlayPane",
-    resultFilters: filters,
+    resultFilters: hydrodynamicTileFilters(filters, resultVersion),
     renderMode: "result",
     wetOnly: true,
     interactiveCells: true,
@@ -849,12 +853,12 @@ async function applyHydrodynamicResult(options = {}) {
     filters,
     label: options.label || "水动力结果",
   });
-  showHydrodynamicTimeline(state.hydrodynamicResultMeta, layer, key, filters);
+  showHydrodynamicTimeline(state.hydrodynamicResultMeta, layer, key, filters, timelineSelection);
   setObjectButtonActive(options.buttonType || "ForecastResult", true);
   return layer;
 }
 
-function showHydrodynamicTimeline(meta, layer, key, filters) {
+function showHydrodynamicTimeline(meta, layer, key, filters, previousSelection = null) {
   const hours = (((meta || {}).forecast || {}).time_steps_h || [])
     .map((value) => Number(value))
     .filter((value) => Number.isFinite(value));
@@ -863,22 +867,56 @@ function showHydrodynamicTimeline(meta, layer, key, filters) {
     return;
   }
   stopHydrodynamicTimelinePlayback();
+  const resultVersion = String(((meta || {}).forecast || {}).result_version || "");
+  const preserveHour = Boolean(
+    previousSelection
+    && previousSelection.key === key
+    && previousSelection.resultVersion
+    && previousSelection.resultVersion === resultVersion
+    && Number.isFinite(previousSelection.hour)
+  );
+  const index = preserveHour
+    ? nearestHydrodynamicHourIndex(hours, previousSelection.hour)
+    : 0;
   state.hydrodynamicTimeline = {
     ...state.hydrodynamicTimeline,
     hours,
-    index: 0,
+    index,
     layer,
     key,
     baseFilters: { ...(filters || {}) },
+    resultVersion,
   };
   const control = document.getElementById("hydroTimeline");
   const slider = document.getElementById("hydroTimeSlider");
   slider.min = "0";
   slider.max = String(hours.length - 1);
-  slider.value = "0";
+  slider.value = String(index);
   control.classList.remove("is-hidden");
   setTelemetryPanelOpen(true);
-  setHydrodynamicTimelineIndex(0);
+  setHydrodynamicTimelineIndex(index);
+}
+
+function captureHydrodynamicTimelineSelection(key) {
+  const timeline = state.hydrodynamicTimeline;
+  const hour = Number(timeline.hours?.[timeline.index]);
+  if (!timeline.layer || timeline.key !== key || !Number.isFinite(hour)) return null;
+  return {
+    key,
+    hour,
+    resultVersion: String(timeline.resultVersion || ""),
+  };
+}
+
+function nearestHydrodynamicHourIndex(hours, targetHour) {
+  if (!hours.length || !Number.isFinite(targetHour)) return 0;
+  return hours.reduce((bestIndex, hour, index) => (
+    Math.abs(hour - targetHour) < Math.abs(hours[bestIndex] - targetHour) ? index : bestIndex
+  ), 0);
+}
+
+function hydrodynamicTileFilters(filters, resultVersion) {
+  return resultVersion ? { ...(filters || {}), result_version: resultVersion } : { ...(filters || {}) };
 }
 
 function hideHydrodynamicTimeline() {
@@ -888,6 +926,7 @@ function hideHydrodynamicTimeline() {
   state.hydrodynamicTimeline.layer = null;
   state.hydrodynamicTimeline.key = null;
   state.hydrodynamicTimeline.baseFilters = null;
+  state.hydrodynamicTimeline.resultVersion = null;
   document.getElementById("hydroTimeline")?.classList.add("is-hidden");
   clearImpactAnalysisState();
 }
@@ -901,6 +940,7 @@ function setHydrodynamicTimelineIndex(index) {
   const label = document.getElementById("hydroTimeLabel");
   if (slider) slider.value = String(nextIndex);
   const filters = { ...(timeline.baseFilters || {}) };
+  if (timeline.resultVersion) filters.result_version = timeline.resultVersion;
   const hour = timeline.hours[nextIndex];
   filters.time_h = formatHydrodynamicHour(hour);
   label.textContent = `${formatHydrodynamicHour(hour)} h`;
@@ -1121,12 +1161,45 @@ async function refreshPlaybackStatus() {
     const res = await fetch("/api/autonomy/status");
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
+    acceptWorkspace(data.workspace_id);
     setPlaybackButtonState(Boolean(data.running), Boolean(data.paused));
     setPlaybackSpeedControl(data.speed_multiplier || 1);
     updateTelemetryRuntimeStatus(data);
   } catch (error) {
     console.warn("boundary flow playback status failed", error);
     setPlaybackButtonState(false);
+  }
+}
+
+async function restartBoundaryFlowPlayback() {
+  const toggleBtn = document.getElementById("playbackToggleBtn");
+  const restartBtn = document.getElementById("playbackRestartBtn");
+  toggleBtn.disabled = true;
+  restartBtn.disabled = true;
+  setPlaybackSpeedControl(20);
+  state.playbackAutoPauseArmed = true;
+  state.playbackAutoPausePending = false;
+  try {
+    const res = await fetch("/api/autonomy/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ speed_multiplier: state.playbackSpeed }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    acceptWorkspace(data.workspace_id);
+    setPlaybackButtonState(Boolean(data.running), Boolean(data.paused));
+    updateTelemetryRuntimeStatus(data);
+    setLayerPanelOpen(false);
+    setSituationView("telemetry");
+    setTelemetryPanelOpen(true);
+    addTrace("AUTO", "演进已重新开始", "已创建新的演进工作空间，并从第一条边界流量观测开始回放。");
+  } catch (error) {
+    state.playbackAutoPauseArmed = state.playbackRunning;
+    addTrace("ERR", "重新开始演进失败", error.message || String(error));
+  } finally {
+    toggleBtn.disabled = false;
+    restartBtn.disabled = false;
   }
 }
 
@@ -1138,7 +1211,7 @@ async function toggleBoundaryFlowPlayback() {
   btn.disabled = true;
   try {
     if (action === "start") {
-      setPlaybackSpeedControl(10);
+      setPlaybackSpeedControl(20);
       state.playbackAutoPauseArmed = true;
       state.playbackAutoPausePending = false;
       resetMap();
@@ -1187,6 +1260,7 @@ function acceptWorkspace(workspaceId) {
   if (!next || next === state.workspaceId) return;
   state.workspaceId = next;
   clearRuntimeWorkspaceView();
+  updatePlaybackRestartButton();
 }
 
 function clearRuntimeWorkspaceView() {
@@ -1228,7 +1302,7 @@ async function updatePlaybackSpeed(event) {
 }
 
 function setPlaybackSpeedControl(speed) {
-  const value = [1, 2, 5, 10].includes(Number(speed)) ? Number(speed) : 1;
+  const value = [1, 2, 5, 10, 20].includes(Number(speed)) ? Number(speed) : 20;
   state.playbackSpeed = value;
   const select = document.getElementById("playbackSpeedSelect");
   if (select) select.value = String(value);
@@ -1248,7 +1322,13 @@ function setPlaybackButtonState(running, paused = false) {
   btn.innerHTML = running
     ? '<i data-lucide="pause"></i><span>停止演进</span>'
     : `<i data-lucide="play"></i><span>${state.playbackPaused ? "继续演进" : "开始演进"}</span>`;
+  updatePlaybackRestartButton();
   renderIcons();
+}
+
+function updatePlaybackRestartButton() {
+  const btn = document.getElementById("playbackRestartBtn");
+  if (btn) btn.hidden = !state.workspaceId;
 }
 
 function updateTelemetryRuntimeStatus(data) {

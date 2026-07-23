@@ -97,10 +97,12 @@ def register_map_tools(tools: ToolRegistry, resolver, registry) -> None:
             "水文站/测站/雨量站/水位站/气象站 => HydroStation；"
             "水利设施/水利工程 => Reservoir、Sluice、HydraulicStructure；道路交通 => Road、Bridge；"
             "转移安置 => Transfer、Place、Route；"
-            "预测淹没/未来淹没/实时预测 => 先调用 run_flood_forecast，再用 HydrodynamicCell 并传 forecast_id=latest；"
+            "明确要求运行、重算或更新预测 => 先调用 run_flood_forecast，再用 HydrodynamicCell 并传 forecast_id=latest；"
+            "只查看已有预测或分析当前时间轴影响 => 不要调用 run_flood_forecast；"
             "水动力网格/模型网格/GT.txt 网格 => HydrodynamicCell。"
             "当根据影响分析结果展示受影响对象时，从分析结果 impacts 中按 object_type 汇总 object_id；"
             "对象项包含 object_ids、highlight=true 和 show_only_object_ids=true 时，本工具会只加载这些对象并高亮。"
+            "需要展示多个类型时，把所有对象项放在同一次调用的 objects 数组中，不要逐个类型连续调用本工具。"
         ),
         category="ui",
         policy=policy,

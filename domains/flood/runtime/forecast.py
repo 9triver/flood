@@ -4,6 +4,8 @@ import json
 import math
 import csv
 import sqlite3
+import threading
+from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -16,7 +18,10 @@ from .workspace import WORKSPACES, active_workspace_id, workspace_dir
 
 
 LATEST_FORECAST_ID = "forecast_latest"
-FORECAST_SCHEMA_VERSION = 4
+FORECAST_SCHEMA_VERSION = 5
+_FORECAST_CELL_CACHE_MAX = 2
+_FORECAST_CELL_CACHE_LOCK = threading.RLock()
+_FORECAST_CELL_CACHE: OrderedDict[tuple[Any, ...], list[dict[str, Any]]] = OrderedDict()
 
 
 def forecast_dir(*, create: bool = False) -> Path:
@@ -25,10 +30,6 @@ def forecast_dir(*, create: bool = False) -> Path:
 
 def forecast_runs_path() -> Path:
     return forecast_dir() / "forecast_runs.jsonl"
-
-
-def forecast_cells_path() -> Path:
-    return forecast_dir() / "forecast_cells.jsonl"
 
 
 def forecast_cycle_path() -> Path:
@@ -109,19 +110,7 @@ def query_forecast_cells(resolver, filters: dict[str, Any] | None = None,
         return []
     ensure_latest_forecast(resolver)
     normalized_filters = normalize_forecast_filters(filters)
-    time_h = coerce_optional_float(normalized_filters.get("time_h"))
-    if time_h is None:
-        rows = read_jsonl(forecast_cells_path())
-    else:
-        depth_entry = forecast_depth_entry(
-            str(normalized_filters.get("forecast_id") or LATEST_FORECAST_ID),
-            time_h=time_h,
-        )
-        rows = forecast_cells_from_hydrodynamic_mesh(
-            depth_entry["depths"],
-            generated_at=latest_forecast_generated_at(),
-            time_h=depth_entry.get("time_h"),
-        )
+    rows = cached_forecast_cells(normalized_filters)
     object_filters = {
         key: value for key, value in normalized_filters.items()
         if key != "time_h"
@@ -142,20 +131,21 @@ def count_forecast_cells(resolver, filters: dict[str, Any] | None = None) -> int
 def ensure_latest_forecast(resolver, force: bool = False) -> dict[str, Any]:
     if not active_workspace_id():
         WORKSPACES.create()
-    if not force and forecast_runs_path().exists() and forecast_cells_path().exists():
+    if not force and forecast_runs_path().exists():
         rows = read_jsonl(forecast_runs_path())
         latest_boundary_flow = read_latest_forecast_input()
         if (
             rows
             and rows[-1].get("schema_version") == FORECAST_SCHEMA_VERSION
             and cached_forecast_matches_input(rows[-1], latest_boundary_flow)
+            and cached_forecast_outputs_available(rows[-1])
         ):
             return rows[-1]
 
     forecast_dir(create=True).mkdir(parents=True, exist_ok=True)
-    run, cells = generate_forecast(resolver)
+    run = generate_forecast(resolver)
     write_jsonl(forecast_runs_path(), [run])
-    write_jsonl(forecast_cells_path(), cells)
+    clear_forecast_cell_cache()
     clear_cached_cycle()
     clear_cached_geojson()
     return run
@@ -175,7 +165,20 @@ def cached_forecast_matches_input(forecast: dict[str, Any],
     return str(cached_boundary_flow.get("boundary_flow_id") or "") == expected_id
 
 
-def generate_forecast(resolver) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def cached_forecast_outputs_available(forecast: dict[str, Any]) -> bool:
+    if forecast.get("status") != "completed":
+        return True
+    if not hydrodynamic_forecast_depth_path().exists():
+        return False
+    if forecast.get("hydrodynamic_series_path"):
+        return (
+            hydrodynamic_forecast_series_path().exists()
+            and hydrodynamic_forecast_time_steps_path().exists()
+        )
+    return True
+
+
+def generate_forecast(resolver) -> dict[str, Any]:
     boundary_flow = read_latest_forecast_input()
     trigger = boundary_flow.get("forecast_trigger") if boundary_flow else None
     if not boundary_flow:
@@ -201,12 +204,13 @@ def generate_forecast(resolver) -> tuple[dict[str, Any], list[dict[str, Any]]]:
             "boundary_flow": "{}",
             "forecast_trigger": "{}",
             "forecast_input_id": "",
-            "data_path": rel(forecast_cells_path()),
+            "data_path": rel(hydrodynamic_forecast_depth_path()),
+            "cell_materialization": "on_demand",
             "hydrodynamic_depth_path": rel(hydrodynamic_forecast_depth_path()),
             "hydrodynamic_series_path": "",
             "hydrodynamic_time_steps_path": "",
         }
-        return run, []
+        return run
     hydrology_inputs = hydrology_inputs_from_boundary_flow(boundary_flow)
     forcing = forcing_index(hydrology_inputs)
     generated_at = datetime.now(timezone.utc).isoformat()
@@ -233,18 +237,17 @@ def generate_forecast(resolver) -> tuple[dict[str, Any], list[dict[str, Any]]]:
             "inundated_area_km2": 0.0,
             "max_depth_m": 0.0,
             "mean_depth_m": 0.0,
-            "data_path": rel(forecast_cells_path()),
+            "data_path": rel(hydrodynamic_forecast_depth_path()),
+            "cell_materialization": "on_demand",
             "hydrodynamic_depth_path": rel(hydrodynamic_forecast_depth_path()),
             "hydrodynamic_series_path": "",
             "hydrodynamic_time_steps_path": "",
             "error_detail": json.dumps(cnn_result, ensure_ascii=False),
         }
-        return run, []
+        return run
 
     depths = read_hydrodynamic_depth_csv(hydrodynamic_forecast_depth_path())
-    cells = forecast_cells_from_hydrodynamic_mesh(depths, generated_at)
-
-    total_area_km2 = sum(float(row.get("area_m2") or 0) for row in cells) / 1_000_000
+    cell_summary = forecast_cell_summary_from_hydrodynamic_mesh(depths)
     run = {
         "schema_version": FORECAST_SCHEMA_VERSION,
         "forecast_id": LATEST_FORECAST_ID,
@@ -261,11 +264,12 @@ def generate_forecast(resolver) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         "forecast_trigger": json.dumps(trigger or {}, ensure_ascii=False),
         "forecast_input_id": str((boundary_flow.get("summary") or {}).get("boundary_flow_id") or ""),
         "forcing_index": round(forcing, 3),
-        "forecast_cell_count": int(cnn_result.get("flooded_count") or len(cells)),
-        "inundated_area_km2": round(total_area_km2, 4),
+        "forecast_cell_count": cell_summary["forecast_cell_count"],
+        "inundated_area_km2": cell_summary["inundated_area_km2"],
         "max_depth_m": round(float(cnn_result.get("max_depth_m") or 0), 3),
         "mean_depth_m": round(float(cnn_result.get("mean_depth_m") or 0), 3),
-        "data_path": rel(forecast_cells_path()),
+        "data_path": rel(hydrodynamic_forecast_depth_path()),
+        "cell_materialization": "on_demand",
         "hydrodynamic_depth_path": rel(hydrodynamic_forecast_depth_path()),
         "hydrodynamic_series_path": str(cnn_result.get("hydrodynamic_series_path") or ""),
         "hydrodynamic_time_steps_path": str(cnn_result.get("hydrodynamic_time_steps_path") or ""),
@@ -273,7 +277,7 @@ def generate_forecast(resolver) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         "time_steps_h": json.dumps(cnn_result.get("time_steps_h") or [], ensure_ascii=False),
         "cnn_v2": json.dumps(cnn_result, ensure_ascii=False),
     }
-    return run, cells
+    return run
 
 
 def hydrology_inputs_from_boundary_flow(boundary_flow: dict[str, Any] | None) -> dict[str, float]:
@@ -376,6 +380,65 @@ def forecast_cells_from_hydrodynamic_mesh(depths: dict[int, float],
                 "generated_at": generated_at,
             })
     return cells
+
+
+def forecast_cell_summary_from_hydrodynamic_mesh(
+    depths: dict[int, float],
+) -> dict[str, Any]:
+    if not MESH_DB_PATH.exists() or not depths:
+        return {"forecast_cell_count": 0, "inundated_area_km2": 0.0}
+    count = 0
+    total_area_m2 = 0.0
+    with sqlite3.connect(MESH_DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "select cell_id, lon1, lat1, lon2, lat2, lon3, lat3 from cells order by cell_id"
+        )
+        for row in rows:
+            if float(depths.get(int(row["cell_id"])) or 0) < 0.04:
+                continue
+            count += 1
+            total_area_m2 += triangle_area_m2([
+                [float(row["lon1"]), float(row["lat1"])],
+                [float(row["lon2"]), float(row["lat2"])],
+                [float(row["lon3"]), float(row["lat3"])],
+            ])
+    return {
+        "forecast_cell_count": count,
+        "inundated_area_km2": round(total_area_m2 / 1_000_000, 4),
+    }
+
+
+def cached_forecast_cells(filters: dict[str, Any]) -> list[dict[str, Any]]:
+    forecast_id = str(filters.get("forecast_id") or LATEST_FORECAST_ID)
+    requested_time_h = coerce_optional_float(filters.get("time_h"))
+    depth_entry = forecast_depth_entry(forecast_id, time_h=requested_time_h)
+    cache_key = (
+        active_workspace_id(),
+        forecast_id,
+        depth_entry.get("time_h"),
+        depth_entry.get("stat_key"),
+    )
+    with _FORECAST_CELL_CACHE_LOCK:
+        cached = _FORECAST_CELL_CACHE.get(cache_key)
+        if cached is not None:
+            _FORECAST_CELL_CACHE.move_to_end(cache_key)
+            return cached
+        rows = forecast_cells_from_hydrodynamic_mesh(
+            depth_entry["depths"],
+            generated_at=latest_forecast_generated_at(),
+            time_h=depth_entry.get("time_h"),
+        )
+        _FORECAST_CELL_CACHE[cache_key] = rows
+        _FORECAST_CELL_CACHE.move_to_end(cache_key)
+        while len(_FORECAST_CELL_CACHE) > _FORECAST_CELL_CACHE_MAX:
+            _FORECAST_CELL_CACHE.popitem(last=False)
+        return rows
+
+
+def clear_forecast_cell_cache() -> None:
+    with _FORECAST_CELL_CACHE_LOCK:
+        _FORECAST_CELL_CACHE.clear()
 
 
 def latest_forecast_generated_at() -> str:

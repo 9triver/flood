@@ -75,7 +75,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             payload = self._read_json()
             if parsed.path == "/api/autonomy/start":
-                return self._json(EVENT_RUNTIME.start_playback(payload.get("speed_multiplier", 1)))
+                return self._json(EVENT_RUNTIME.start_playback(payload.get("speed_multiplier", 20)))
             if parsed.path == "/api/autonomy/stop":
                 return self._json(EVENT_RUNTIME.stop_playback())
             if parsed.path == "/api/autonomy/pause":
@@ -87,7 +87,7 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/agent/confirm":
                 return self._confirm(payload)
             if parsed.path == "/api/autonomy/reset":
-                return self._json(EVENT_RUNTIME.start_playback(payload.get("speed_multiplier", 1)))
+                return self._json(EVENT_RUNTIME.restart_playback(payload.get("speed_multiplier", 20)))
             if parsed.path.startswith("/api/agent/runs/") and parsed.path.endswith("/cancel"):
                 run_id = parsed.path.split("/")[-2]
                 return self._json({"ok": RUNS.cancel(run_id), "run_id": run_id})

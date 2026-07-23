@@ -495,16 +495,10 @@ class Scenario:
     @staticmethod
     def _boundary_sort_key(path: Path) -> tuple[int, str]:
         name = path.name
-        order_keys = [
-            "\u533a\u95f41",  # 区间1
-            "\u533a\u95f42",  # 区间2
-            "\u540c\u53e4\u6cb3",  # 同古河
-            "\u575d\u5740",  # 坝址
-        ]
-        for i, key in enumerate(order_keys):
-            if key in name:
-                return i, name
-        return len(order_keys), name
+        match = re.match(r"^(\d+)[_-]", name)
+        if match:
+            return int(match.group(1)), name
+        return 10_000, name
 
     @property
     def num_boundaries(self) -> int:
@@ -1198,6 +1192,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--test-dir", default=None)
     parser.add_argument("--grid-file", default=None)
     parser.add_argument("--model-path", default=None)
+    parser.add_argument("--output-dir", default=None)
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--random-seed", type=int, default=None)
@@ -1221,6 +1216,7 @@ def apply_args(args: argparse.Namespace) -> None:
         ("test_dir", "test_dir"),
         ("grid_file", "grid_file"),
         ("model_path", "model_path"),
+        ("output_dir", "output_dir"),
         ("epochs", "epochs"),
         ("batch_size", "batch_size"),
         ("random_seed", "random_seed"),
@@ -1242,7 +1238,8 @@ def apply_args(args: argparse.Namespace) -> None:
         CONFIG["export_time_series_csv"] = False
     if args.force_retrain:
         CONFIG["force_retrain"] = True
-    CONFIG["output_dir"] = str(Path(CONFIG["model_path"]).parent)
+    if args.output_dir is None:
+        CONFIG["output_dir"] = str(Path(CONFIG["model_path"]).parent)
     CONFIG["test_output_dir"] = str(Path(CONFIG["output_dir"]) / "TEST_RESULTS")
     if args.cache_dir is None:
         CONFIG["cache_dir"] = str(Path(CONFIG["output_dir"]) / "CACHE")

@@ -18,7 +18,6 @@ from domains.flood.runtime.common import DATA_DIR, OBJECTS_DIR  # noqa: E402
 OBJECT_TYPES = [
     "River",
     "Watershed",
-    "Waterway",
     "HydrodynamicBoundary",
     "County",
     "Town",
@@ -28,6 +27,7 @@ OBJECT_TYPES = [
     "Facility",
     "HydraulicStructure",
     "Road",
+    "BridgeRoadLink",
     "Place",
     "Transfer",
     "Route",

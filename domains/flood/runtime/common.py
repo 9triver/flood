@@ -18,7 +18,6 @@ SOURCES_DIR = DOMAIN_DATA_DIR / "sources"
 OBJECT_LIBRARY_FILES = {
     "River": "river.jsonl",
     "Watershed": "watershed.jsonl",
-    # Waterway data is retained in waterway.jsonl but is temporarily disabled.
     "HydrodynamicBoundary": "hydrodynamic_boundary.jsonl",
     "County": "county.jsonl",
     "Town": "town.jsonl",
@@ -28,6 +27,7 @@ OBJECT_LIBRARY_FILES = {
     "Facility": "facility.jsonl",
     "HydraulicStructure": "hydraulic_structure.jsonl",
     "Road": "road.jsonl",
+    "BridgeRoadLink": "bridge_road_link.jsonl",
     "Place": "place.jsonl",
     "Transfer": "transfer.jsonl",
     "Route": "route.jsonl",
@@ -181,6 +181,7 @@ def id_field(object_type: str) -> str:
         "HydraulicStructure": "structure_id",
         "Road": "road_id",
         "Bridge": "bridge_id",
+        "BridgeRoadLink": "bridge_road_link_id",
         "Facility": "facility_id",
         "Place": "place_id",
         "Transfer": "transfer_id",
