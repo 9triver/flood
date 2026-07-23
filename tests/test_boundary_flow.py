@@ -294,7 +294,7 @@ class EventRuntimePlaybackControlTest(unittest.TestCase):
         self.assertEqual(runtime._boundary_flow_runner.playback.source.index, source_index)
         self.assertEqual(list(runtime._event_queue), [(queued_event, 7)])
 
-    def test_restart_creates_new_workspace_and_rewinds_playback(self):
+    def test_restart_creates_new_workspace_and_waits_at_start(self):
         with tempfile.TemporaryDirectory() as directory:
             manager = WorkspaceManager(Path(directory), retention_count=3)
             first = manager.create()["workspace_id"]
@@ -308,11 +308,14 @@ class EventRuntimePlaybackControlTest(unittest.TestCase):
                 with patch("domains.flood.runtime.workspace.WORKSPACES", manager):
                     status = runtime.restart_playback(10)
 
-            self.assertTrue(status["running"])
+            self.assertFalse(status["running"])
+            self.assertFalse(status["paused"])
+            self.assertEqual(status["status"], "reset")
             self.assertEqual(status["speed_multiplier"], 10)
             self.assertEqual(runtime._boundary_flow_runner.playback.source.index, 0)
             self.assertEqual(status["workspace_id"], manager.active_id)
             self.assertNotEqual(status["workspace_id"], first)
+            self.assertEqual(runtime.outputs[-1]["data"]["status"], "reset")
             first_manifest = json.loads(
                 (manager.path(first) / "manifest.json").read_text(encoding="utf-8")
             )
@@ -320,8 +323,8 @@ class EventRuntimePlaybackControlTest(unittest.TestCase):
 
 
 class InundationMapEventTest(unittest.TestCase):
-    def test_inundation_event_agent_cannot_call_impact_analysis(self):
-        self.assertNotIn("analyze_inundation_impacts", INUNDATION_EVENT_TOOLS)
+    def test_inundation_event_agent_can_call_impact_analysis(self):
+        self.assertIn("analyze_inundation_impacts", INUNDATION_EVENT_TOOLS)
 
     def test_only_hydrodynamic_actions_reach_automatic_frontend_stream(self):
         event = {
@@ -344,6 +347,33 @@ class InundationMapEventTest(unittest.TestCase):
             ["show_hydrodynamic_mesh", "apply_hydrodynamic_result"],
         )
         self.assertEqual(filtered["result_cards"], [])
+
+    def test_targeted_impact_map_actions_are_allowed(self):
+        event = {
+            "type": "map_actions",
+            "context": "预测淹没影响",
+            "map_actions": [
+                {
+                    "type": "load_object",
+                    "object_type": "Facility",
+                    "object_ids": ["facility_1"],
+                    "replace_object_type": True,
+                },
+                {"type": "clear_highlights"},
+                {
+                    "type": "highlight_objects",
+                    "object_type": "Facility",
+                    "object_ids": ["facility_1"],
+                },
+            ],
+        }
+
+        filtered = filter_inundation_map_event(event)
+
+        self.assertEqual(
+            [action["type"] for action in filtered["map_actions"]],
+            ["load_object", "clear_highlights", "highlight_objects"],
+        )
 
     def test_impact_only_map_event_is_suppressed(self):
         event = {

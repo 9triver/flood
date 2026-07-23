@@ -130,6 +130,7 @@
               <button class="icon-button" id="hydroPlayBtn" type="button" title="播放预测过程" aria-label="播放预测过程">
                 <i data-lucide="play"></i>
               </button>
+              <span class="hydro-timeline-caption">预测时刻</span>
               <input id="hydroTimeSlider" type="range" min="0" max="0" value="0" step="1" aria-label="预测时刻" />
               <div class="hydro-time-label" id="hydroTimeLabel">--</div>
             </div>
@@ -167,10 +168,33 @@
                 </div>
               </div>
               <div class="telemetry-flow-list">
-                <div><span>区间 1</span><strong data-mock-boundary="interval1">--</strong><small>m³/s</small></div>
-                <div><span>区间 2</span><strong data-mock-boundary="interval2">--</strong><small>m³/s</small></div>
-                <div><span>同古河</span><strong data-mock-boundary="tonggu">--</strong><small>m³/s</small></div>
-                <div><span>坝址</span><strong data-mock-boundary="upstream">--</strong><small>m³/s</small></div>
+                <div class="flow-history-card">
+                  <div class="flow-history-head">
+                    <span>四边界历史流量</span>
+                    <small id="flowHistoryRange">--</small>
+                  </div>
+                  <svg id="boundaryFlowHistoryChart" class="flow-history-chart" viewBox="0 0 320 78" preserveAspectRatio="none" aria-hidden="true"></svg>
+                </div>
+                <div class="flow-value-row" style="--flow-color:#1f7a5c">
+                  <span>区间 1</span>
+                  <strong data-mock-boundary="interval1">--</strong>
+                  <small>m³/s</small>
+                </div>
+                <div class="flow-value-row" style="--flow-color:#2878b9">
+                  <span>区间 2</span>
+                  <strong data-mock-boundary="interval2">--</strong>
+                  <small>m³/s</small>
+                </div>
+                <div class="flow-value-row" style="--flow-color:#a15f13">
+                  <span>同古河</span>
+                  <strong data-mock-boundary="tonggu">--</strong>
+                  <small>m³/s</small>
+                </div>
+                <div class="flow-value-row" style="--flow-color:#b43e52">
+                  <span>坝址</span>
+                  <strong data-mock-boundary="upstream">--</strong>
+                  <small>m³/s</small>
+                </div>
               </div>
               <footer class="telemetry-progress">
                 <div><span id="telemetryProgressBar"></span></div>

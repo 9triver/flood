@@ -1,3 +1,18 @@
+const BOUNDARY_FLOW_KEYS = ["interval1", "interval2", "tonggu", "upstream"];
+const BOUNDARY_FLOW_HISTORY_LIMIT = 48;
+const BOUNDARY_FLOW_COLORS = {
+  interval1: "#1f7a5c",
+  interval2: "#2878b9",
+  tonggu: "#a15f13",
+  upstream: "#b43e52",
+};
+const BOUNDARY_FLOW_LABELS = {
+  interval1: "区间 1",
+  interval2: "区间 2",
+  tonggu: "同古河",
+  upstream: "坝址",
+};
+
 const state = {
   map: null,
   baseLayer: null,
@@ -31,6 +46,13 @@ const state = {
   playbackAutoPausePending: false,
   playbackTotalRows: 0,
   lastMockObservation: null,
+  boundaryFlowHistory: {
+    interval1: [],
+    interval2: [],
+    tonggu: [],
+    upstream: [],
+  },
+  boundaryFlowHistoryTimes: [],
   conclusionToasts: [],
   nextConclusionToastId: 1,
   hydrodynamicTimeline: {
@@ -121,7 +143,7 @@ const BASEMAPS = {
 };
 
 const OBJECT_CONFIG = {
-  River: { label: "珊瑚河", color: "#0e7490", swatch: "line" },
+  River: { label: "珊瑚河", color: "#0284c7", swatch: "line" },
   Watershed: { label: "珊瑚河流域", color: "#1f2937", swatch: "fill" },
   County: { label: "县级边界", color: "#7b8794", swatch: "line" },
   Town: { label: "乡镇边界", color: "#7a6a22", swatch: "fill" },
@@ -178,6 +200,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   bindEvents();
   initDraggableMapPanels();
   initAgentResize();
+  renderBoundaryFlowHistoryChart();
   await bootstrap();
   await loadObject("Watershed", {}, { fit: true });
   await loadObject("River", {}, { fit: false });
@@ -196,6 +219,10 @@ function initMap() {
 
   state.map.createPane("impactPane");
   state.map.getPane("impactPane").style.zIndex = "475";
+  state.map.createPane("riverPane");
+  state.map.getPane("riverPane").style.zIndex = "410";
+  state.map.createPane("riverMarkerPane");
+  state.map.getPane("riverMarkerPane").style.zIndex = "430";
   state.impactMarkerLayer = L.layerGroup().addTo(state.map);
   L.control.zoom({ position: "bottomleft" }).addTo(state.map);
   setBasemap(readStoredBasemap(), { persist: false });
@@ -758,17 +785,20 @@ async function loadObject(objectType, filters = {}, options = {}) {
   if (!res.ok) throw new Error(await res.text());
   const geojson = await res.json();
   const mapSelectable = !MAP_NON_SELECTABLE_OBJECTS.has(objectType);
-  const layer = L.geoJSON(geojson, {
-    interactive: mapSelectable,
-    style: (feature) => featureStyle(objectType, feature),
-    pointToLayer: (feature, latlng) => pointLayer(objectType, feature, latlng),
-    onEachFeature: (feature, layerItem) => {
-      if (!mapSelectable) return;
-      indexFeature(objectType, feature, layerItem);
-      layerItem.bindPopup(popupHtml(objectType, feature));
-      layerItem.on("click", () => selectFeature(objectType, feature, layerItem));
-    },
-  }).addTo(state.map);
+  const layer = objectType === "River"
+    ? createRiverLayer(geojson, mapSelectable)
+    : L.geoJSON(geojson, {
+      interactive: mapSelectable,
+      style: (feature) => featureStyle(objectType, feature),
+      pointToLayer: (feature, latlng) => pointLayer(objectType, feature, latlng),
+      onEachFeature: (feature, layerItem) => {
+        if (!mapSelectable) return;
+        indexFeature(objectType, feature, layerItem);
+        layerItem.bindPopup(popupHtml(objectType, feature));
+        layerItem.on("click", () => selectFeature(objectType, feature, layerItem));
+      },
+    });
+  layer.addTo(state.map);
   renderIcons();
 
   state.layerGroups.set(key, layer);
@@ -1177,7 +1207,7 @@ async function restartBoundaryFlowPlayback() {
   toggleBtn.disabled = true;
   restartBtn.disabled = true;
   setPlaybackSpeedControl(20);
-  state.playbackAutoPauseArmed = true;
+  state.playbackAutoPauseArmed = false;
   state.playbackAutoPausePending = false;
   try {
     const res = await fetch("/api/autonomy/reset", {
@@ -1193,7 +1223,7 @@ async function restartBoundaryFlowPlayback() {
     setLayerPanelOpen(false);
     setSituationView("telemetry");
     setTelemetryPanelOpen(true);
-    addTrace("AUTO", "演进已重新开始", "已创建新的演进工作空间，并从第一条边界流量观测开始回放。");
+    addTrace("AUTO", "演进已重置", "已创建新的演进工作空间，并回到第一条边界流量观测；点击开始演进后继续回放。");
   } catch (error) {
     state.playbackAutoPauseArmed = state.playbackRunning;
     addTrace("ERR", "重新开始演进失败", error.message || String(error));
@@ -1319,6 +1349,7 @@ function setPlaybackButtonState(running, paused = false) {
   btn.title = running
     ? "停止边界流量过程回放"
     : (state.playbackPaused ? "从暂停位置继续边界流量过程回放" : "启动边界流量过程回放");
+  btn.setAttribute("aria-label", btn.title);
   btn.innerHTML = running
     ? '<i data-lucide="pause"></i><span>停止演进</span>'
     : `<i data-lucide="play"></i><span>${state.playbackPaused ? "继续演进" : "开始演进"}</span>`;
@@ -1356,11 +1387,13 @@ function renderMockObservation(event) {
   setMockField("reservoir_level_m", observation.reservoir_level_m, 3);
   setMockField("reservoir_inflow_m3s", observation.reservoir_inflow_m3s, 2);
   setMockField("reservoir_release_m3s", observation.reservoir_release_m3s, 2);
-  ["interval1", "interval2", "tonggu", "upstream"].forEach((key) => {
+  BOUNDARY_FLOW_KEYS.forEach((key) => {
     const target = document.querySelector(`[data-mock-boundary="${key}"]`);
     const flow = observation.boundaries?.[key]?.flow_m3s;
     if (target) target.textContent = formatMockNumber(flow, 2);
   });
+  recordBoundaryFlowObservation(observation);
+  renderBoundaryFlowHistoryChart();
 
   const rainfall = Number(observation.rainfall_mm || 0);
   const totalFlow = Number(observation.total_flow_m3s || 0);
@@ -1379,6 +1412,7 @@ function renderMockObservation(event) {
 
 function clearMockTelemetry() {
   state.lastMockObservation = null;
+  clearBoundaryFlowHistory();
   document.getElementById("telemetryTime").textContent = "--";
   renderTelemetryWeather(null);
   document.querySelectorAll("[data-mock-field], [data-mock-boundary]").forEach((element) => {
@@ -1388,6 +1422,111 @@ function clearMockTelemetry() {
   document.getElementById("telemetryProgressText").textContent = `0 / ${state.playbackTotalRows}`;
   setTelemetryState("等待", "normal");
   setSituationSummary("等待演进数据");
+}
+
+function clearBoundaryFlowHistory() {
+  state.boundaryFlowHistoryTimes = [];
+  BOUNDARY_FLOW_KEYS.forEach((key) => {
+    state.boundaryFlowHistory[key] = [];
+  });
+  renderBoundaryFlowHistoryChart();
+}
+
+function recordBoundaryFlowObservation(observation) {
+  state.boundaryFlowHistoryTimes.push(observation.observed_at || "");
+  BOUNDARY_FLOW_KEYS.forEach((key) => {
+    const flow = Number(observation.boundaries?.[key]?.flow_m3s);
+    state.boundaryFlowHistory[key].push(Number.isFinite(flow) ? flow : null);
+  });
+  if (state.boundaryFlowHistoryTimes.length > BOUNDARY_FLOW_HISTORY_LIMIT) {
+    state.boundaryFlowHistoryTimes.splice(0, state.boundaryFlowHistoryTimes.length - BOUNDARY_FLOW_HISTORY_LIMIT);
+    BOUNDARY_FLOW_KEYS.forEach((key) => {
+      const history = state.boundaryFlowHistory[key];
+      history.splice(0, history.length - BOUNDARY_FLOW_HISTORY_LIMIT);
+    });
+  }
+}
+
+function renderBoundaryFlowHistoryChart() {
+  const svg = document.getElementById("boundaryFlowHistoryChart");
+  if (!svg) return;
+  const values = BOUNDARY_FLOW_KEYS.flatMap((key) => state.boundaryFlowHistory[key].filter((value) => Number.isFinite(value)));
+  const rangeLabel = document.getElementById("flowHistoryRange");
+  if (!values.length) {
+    svg.innerHTML = `<text class="flow-history-empty" x="160" y="42" text-anchor="middle">等待边界流量</text>`;
+    if (rangeLabel) rangeLabel.textContent = "--";
+    return;
+  }
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const paddedRange = expandFlowRange(min, max);
+  const width = 320;
+  const height = 78;
+  const plot = { left: 32, top: 7, right: 8, bottom: 15 };
+  const pointFor = (value, index) => {
+    const count = Math.max(1, state.boundaryFlowHistoryTimes.length - 1);
+    const ratioX = state.boundaryFlowHistoryTimes.length === 1 ? 1 : index / count;
+    const ratioY = (value - paddedRange.min) / (paddedRange.max - paddedRange.min || 1);
+    return {
+      x: plot.left + ratioX * (width - plot.left - plot.right),
+      y: plot.top + (1 - ratioY) * (height - plot.top - plot.bottom),
+    };
+  };
+  const grid = [0, 0.5, 1].map((ratio) => {
+    const y = plot.top + ratio * (height - plot.top - plot.bottom);
+    return `<line class="flow-history-grid" x1="${plot.left}" y1="${y.toFixed(2)}" x2="${width - plot.right}" y2="${y.toFixed(2)}"></line>`;
+  }).join("");
+  const verticalGrid = [0, 0.5, 1].map((ratio) => {
+    const x = plot.left + ratio * (width - plot.left - plot.right);
+    return `<line class="flow-history-grid is-vertical" x1="${x.toFixed(2)}" y1="${plot.top}" x2="${x.toFixed(2)}" y2="${height - plot.bottom}"></line>`;
+  }).join("");
+  const lines = BOUNDARY_FLOW_KEYS.map((key) => {
+    const points = state.boundaryFlowHistory[key]
+      .map((value, index) => Number.isFinite(value) ? pointFor(value, index) : null)
+      .filter(Boolean);
+    if (!points.length) return "";
+    const path = points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(" ");
+    const last = points[points.length - 1];
+    const color = BOUNDARY_FLOW_COLORS[key];
+    const dash = key === "tonggu" ? "4 3" : "none";
+    return `
+      <path class="flow-history-line" style="--flow-color:${color};--flow-dash:${dash}" d="${path}">
+        <title>${BOUNDARY_FLOW_LABELS[key]}</title>
+      </path>
+      <circle class="flow-history-dot" style="--flow-color:${color}" cx="${last.x.toFixed(2)}" cy="${last.y.toFixed(2)}" r="3"></circle>
+    `;
+  }).join("");
+  const firstTime = state.boundaryFlowHistoryTimes[0];
+  const lastTime = state.boundaryFlowHistoryTimes[state.boundaryFlowHistoryTimes.length - 1];
+  if (rangeLabel) rangeLabel.textContent = `${formatMockClock(firstTime)} - ${formatMockClock(lastTime)}`;
+  svg.innerHTML = `
+    <rect class="flow-history-plot" x="${plot.left}" y="${plot.top}" width="${width - plot.left - plot.right}" height="${height - plot.top - plot.bottom}"></rect>
+    ${grid}
+    ${verticalGrid}
+    <text class="flow-history-axis" x="4" y="${plot.top + 4}">${formatCompactFlow(paddedRange.max)}</text>
+    <text class="flow-history-axis" x="4" y="${height - plot.bottom}">${formatCompactFlow(paddedRange.min)}</text>
+    ${lines}
+    <text class="flow-history-time" x="${plot.left}" y="${height - 5}">${formatMockClock(firstTime)}</text>
+    <text class="flow-history-time" x="${width - plot.right}" y="${height - 5}" text-anchor="end">${formatMockClock(lastTime)}</text>
+  `;
+}
+
+function expandFlowRange(min, max) {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return { min: 0, max: 1 };
+  if (min === max) {
+    const padding = Math.max(1, max * 0.08);
+    return { min: Math.max(0, min - padding), max: max + padding };
+  }
+  const padding = (max - min) * 0.12;
+  return { min: Math.max(0, min - padding), max: max + padding };
+}
+
+function formatCompactFlow(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "--";
+  if (Math.abs(number) >= 100) return number.toFixed(0);
+  if (Math.abs(number) >= 10) return number.toFixed(1);
+  return number.toFixed(2);
 }
 
 function setSituationSummary(value) {
@@ -1432,6 +1571,12 @@ function formatMockNumber(value, digits) {
 function formatMockTime(value) {
   if (!value) return "--";
   return String(value).replace("T", " ").replace(/:00\+08:00$/, "");
+}
+
+function formatMockClock(value) {
+  if (!value) return "--";
+  const match = String(value).match(/T(\d{2}:\d{2})|(\d{2}:\d{2})/);
+  return match ? (match[1] || match[2]) : formatMockTime(value);
 }
 
 function setTelemetryState(label, stateName) {
@@ -1612,13 +1757,167 @@ function featureStyle(objectType, feature) {
     return hydrodynamicCellStyle(depth);
   }
   if (objectType === "Watershed") return { color: "#1f2937", weight: 1.3, fillColor: "#9bc4df", fillOpacity: 0.1 };
-  if (objectType === "River") return { color: "#0e7490", weight: 4, opacity: 0.95 };
+  if (objectType === "River") return riverMainStyle();
   if (objectType === "County") return { color: "#7b8794", weight: 1.2, fillOpacity: 0 };
   if (objectType === "Town") return { color: "#7a6a22", weight: 1, fillColor: "#facc15", fillOpacity: 0.08 };
   if (objectType === "Road") return { color: "#5f6772", weight: 2, opacity: 0.82 };
   if (objectType === "Route") return { color: "#d44a3a", weight: 3, opacity: 0.92 };
   if (objectType === "HydraulicStructure") return { color: "#0f766e", weight: 2, opacity: 0.9 };
   return { color: OBJECT_CONFIG[objectType]?.color || "#334155", weight: 2 };
+}
+
+function createRiverLayer(geojson, mapSelectable) {
+  const group = L.featureGroup();
+  L.geoJSON(geojson, {
+    interactive: false,
+    pane: "riverPane",
+    style: riverHaloStyle,
+  }).addTo(group);
+  L.geoJSON(geojson, {
+    interactive: mapSelectable,
+    pane: "riverPane",
+    style: riverMainStyle,
+    onEachFeature: (feature, layerItem) => {
+      if (!mapSelectable) return;
+      indexFeature("River", feature, layerItem);
+      layerItem.bindPopup(popupHtml("River", feature));
+      layerItem.on("click", () => selectFeature("River", feature, layerItem));
+    },
+  }).addTo(group);
+  L.geoJSON(geojson, {
+    interactive: false,
+    pane: "riverPane",
+    style: riverHighlightStyle,
+  }).addTo(group);
+  addRiverDirectionMarkers(geojson, group);
+  addRiverLabel(geojson, group);
+  return group;
+}
+
+function riverHaloStyle() {
+  return {
+    color: "#7dd3fc",
+    weight: 15,
+    opacity: 0.28,
+    lineCap: "round",
+    lineJoin: "round",
+  };
+}
+
+function riverMainStyle() {
+  return {
+    color: "#0284c7",
+    weight: 6,
+    opacity: 0.95,
+    lineCap: "round",
+    lineJoin: "round",
+  };
+}
+
+function riverHighlightStyle() {
+  return {
+    color: "#e0f2fe",
+    weight: 2,
+    opacity: 0.72,
+    lineCap: "round",
+    lineJoin: "round",
+  };
+}
+
+function addRiverDirectionMarkers(geojson, group) {
+  const coords = longestLineCoordinates(geojson);
+  if (coords.length < 2) return;
+  const total = lineLengthMeters(coords);
+  if (!Number.isFinite(total) || total <= 0) return;
+  const count = Math.max(4, Math.min(12, Math.round(total / 4500)));
+  for (let index = 0; index < count; index += 1) {
+    const distance = total * ((index + 1) / (count + 1));
+    const sample = pointAlongLine(coords, distance);
+    if (!sample) continue;
+    L.marker([sample.lat, sample.lng], {
+      pane: "riverMarkerPane",
+      interactive: false,
+      keyboard: false,
+      icon: L.divIcon({
+        className: "river-direction-marker",
+        html: `<span style="--river-angle:${sample.angleDeg.toFixed(1)}deg"></span>`,
+        iconSize: [18, 18],
+        iconAnchor: [9, 9],
+      }),
+    }).addTo(group);
+  }
+}
+
+function addRiverLabel(geojson, group) {
+  const coords = longestLineCoordinates(geojson);
+  if (coords.length < 2) return;
+  const total = lineLengthMeters(coords);
+  const sample = pointAlongLine(coords, total * 0.52);
+  if (!sample) return;
+  L.marker([sample.lat, sample.lng], {
+    pane: "riverMarkerPane",
+    interactive: false,
+    keyboard: false,
+    icon: L.divIcon({
+      className: "river-name-label",
+      html: "<span>珊瑚河</span>",
+      iconSize: [72, 24],
+      iconAnchor: [36, 12],
+    }),
+  }).addTo(group);
+}
+
+function longestLineCoordinates(geojson) {
+  const lines = [];
+  const features = geojson?.type === "FeatureCollection" ? geojson.features : [geojson];
+  features.forEach((feature) => {
+    const geometry = feature?.type === "Feature" ? feature.geometry : feature;
+    if (geometry?.type === "LineString") lines.push(geometry.coordinates || []);
+    if (geometry?.type === "MultiLineString") lines.push(...(geometry.coordinates || []));
+  });
+  return lines
+    .map((line) => line.filter((coord) => Array.isArray(coord) && coord.length >= 2))
+    .sort((a, b) => lineLengthMeters(b) - lineLengthMeters(a))[0] || [];
+}
+
+function lineLengthMeters(coords) {
+  let total = 0;
+  for (let index = 1; index < coords.length; index += 1) {
+    total += distanceMeters(coords[index - 1], coords[index]);
+  }
+  return total;
+}
+
+function pointAlongLine(coords, targetMeters) {
+  let travelled = 0;
+  for (let index = 1; index < coords.length; index += 1) {
+    const start = coords[index - 1];
+    const end = coords[index];
+    const segment = distanceMeters(start, end);
+    if (segment <= 0) continue;
+    if (travelled + segment >= targetMeters) {
+      const ratio = Math.max(0, Math.min(1, (targetMeters - travelled) / segment));
+      const lng = start[0] + (end[0] - start[0]) * ratio;
+      const lat = start[1] + (end[1] - start[1]) * ratio;
+      const angleDeg = Math.atan2(-(end[1] - start[1]), end[0] - start[0]) * 180 / Math.PI;
+      return { lng, lat, angleDeg };
+    }
+    travelled += segment;
+  }
+  const last = coords.at(-1);
+  if (!last) return null;
+  return { lng: last[0], lat: last[1], angleDeg: 0 };
+}
+
+function distanceMeters(start, end) {
+  const toRad = Math.PI / 180;
+  const lat1 = Number(start[1]) * toRad;
+  const lat2 = Number(end[1]) * toRad;
+  const deltaLat = (Number(end[1]) - Number(start[1])) * toRad;
+  const deltaLng = (Number(end[0]) - Number(start[0])) * toRad;
+  const a = Math.sin(deltaLat / 2) ** 2
+    + Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLng / 2) ** 2;
+  return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 function pointStyle(objectType, feature) {
@@ -1705,6 +2004,14 @@ function popupHtml(objectType, feature) {
   const props = feature.properties || {};
   const name = props.name || props[ID_FIELDS[objectType]] || OBJECT_CONFIG[objectType]?.label || objectType;
   const id = props[ID_FIELDS[objectType]] || "";
+  if (objectType === "Route") {
+    const steps = parseRouteInstructions(props.instructions);
+    return `
+      <div class="popup-title">${escapeHtml(name)}</div>
+      <div class="popup-meta">路线 ${escapeHtml(id)} · ${formatRouteDistance(props.length_m)} · ${formatRouteDuration(props.duration_s)}</div>
+      ${steps.length ? `<div class="popup-meta">导航步骤 ${steps.length} 步，点击路线查看详情</div>` : ""}
+    `;
+  }
   return `
     <div class="popup-title">${escapeHtml(name)}</div>
     <div class="popup-meta">${escapeHtml(OBJECT_CONFIG[objectType]?.label || objectType)} ${escapeHtml(id)}</div>
@@ -1734,6 +2041,10 @@ function indexFeature(objectType, feature, layerItem) {
 function unindexLayer(objectType, group) {
   if (!group) return;
   group.eachLayer?.((layerItem) => {
+    if (!layerItem.feature && layerItem.eachLayer) {
+      unindexLayer(objectType, layerItem);
+      return;
+    }
     const idField = ID_FIELDS[objectType];
     const objectId = layerItem.feature?.properties?.[idField];
     if (objectId) state.featureIndex.delete(featureIndexKey(objectType, objectId));
@@ -1892,9 +2203,100 @@ function fitHighlighted() {
 }
 
 function detailHtml(objectType, props) {
+  if (objectType === "Route") return routeDetailHtml(props);
   const keys = Object.keys(props).filter((key) => props[key] !== "" && props[key] !== null && key !== "geometry");
   const rows = keys.slice(0, 8).map((key) => `<div><strong>${escapeHtml(key)}</strong>: ${escapeHtml(String(props[key]))}</div>`);
   return `<div class="muted"><strong>${escapeHtml(OBJECT_CONFIG[objectType]?.label || objectType)}</strong>${rows.join("")}</div>`;
+}
+
+function routeDetailHtml(props) {
+  const steps = parseRouteInstructions(props.instructions);
+  const summaryRows = [
+    ["路线ID", props.route_id],
+    ["名称", props.name],
+    ["方式", routeProfileLabel(props.profile)],
+    ["距离", formatRouteDistance(props.length_m)],
+    ["预计用时", formatRouteDuration(props.duration_s)],
+    ["道路", props.road_detail],
+  ].filter(([, value]) => value !== "" && value !== null && value !== undefined && value !== "--");
+  const summary = summaryRows
+    .map(([label, value]) => `<div><strong>${escapeHtml(label)}</strong>: ${escapeHtml(String(value))}</div>`)
+    .join("");
+  return `
+    <div class="muted route-detail">
+      <strong>${escapeHtml(OBJECT_CONFIG.Route?.label || "路线")}</strong>
+      ${summary}
+      ${routeNavigationHtml(steps)}
+    </div>
+  `;
+}
+
+function routeNavigationHtml(steps) {
+  if (!steps.length) {
+    return '<div class="route-navigation-empty">暂无逐步导航信息</div>';
+  }
+  const items = steps.map((step, index) => {
+    const instruction = step.text || step.instruction || "继续沿路线行进";
+    const street = step.street_name && step.street_name !== instruction ? step.street_name : "";
+    const meta = [
+      formatRouteDistance(step.distance),
+      formatRouteStepDuration(step.time),
+    ].filter((value) => value && value !== "--").join(" · ");
+    return `
+      <li>
+        <span class="route-step-index">${index + 1}</span>
+        <div>
+          <strong>${escapeHtml(instruction)}</strong>
+          ${street ? `<small>${escapeHtml(street)}</small>` : ""}
+          ${meta ? `<small>${escapeHtml(meta)}</small>` : ""}
+        </div>
+      </li>
+    `;
+  }).join("");
+  return `
+    <section class="route-navigation" aria-label="导航步骤">
+      <div class="route-navigation-title">导航步骤</div>
+      <ol>${items}</ol>
+    </section>
+  `;
+}
+
+function parseRouteInstructions(value) {
+  if (Array.isArray(value)) return value.filter((item) => item && typeof item === "object");
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(String(value));
+    return Array.isArray(parsed) ? parsed.filter((item) => item && typeof item === "object") : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function routeProfileLabel(value) {
+  return { car: "驾车", foot: "步行" }[String(value || "").toLowerCase()] || value || "--";
+}
+
+function formatRouteDistance(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return "--";
+  return number >= 1000 ? `${(number / 1000).toFixed(1)} km` : `${number.toFixed(0)} m`;
+}
+
+function formatRouteDuration(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return "--";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${Math.max(1, minutes)} 分钟`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours} 小时 ${rest} 分钟` : `${hours} 小时`;
+}
+
+function formatRouteStepDuration(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return "";
+  const seconds = number > 10000 ? number / 1000 : number;
+  return formatRouteDuration(seconds);
 }
 
 async function onChatSubmit(event) {

@@ -24,6 +24,7 @@ INUNDATION_EVENT_TOOLS = frozenset({
     "inspect",
     "query",
     "count",
+    "analyze_inundation_impacts",
     "ui_show_objects",
 })
 
@@ -199,8 +200,32 @@ class EventRuntime:
         return self.status()
 
     def restart_playback(self, speed_multiplier: float = 20.0) -> dict[str, Any]:
-        self.stop_playback()
-        return self.start_playback(speed_multiplier)
+        self.ensure_started()
+        self._boundary_flow_runner.set_speed(speed_multiplier)
+        with self.condition:
+            if active_workspace_id():
+                WORKSPACES.update_manifest(status="stopped")
+            WORKSPACES.create()
+            self._generation += 1
+            self._playback_running = False
+            self._playback_paused = False
+            self.events.clear()
+            self.outputs.clear()
+            self._boundary_flow_runner.reset()
+            self._published_inundation_sources.clear()
+            self._published_impact_sources.clear()
+            self._clear_event_queue()
+            WORKSPACES.update_manifest(status="ready")
+            self.outputs.append({"event": "runtime_status", "data": {
+                "type": "runtime_status",
+                "status": "reset",
+                "label": "演进已重置",
+                "detail": "已创建新的演进工作空间，并回到第一条边界流量观测；点击开始演进后继续回放。",
+                "speed_multiplier": self._boundary_flow_runner.speed_multiplier,
+                "workspace_id": active_workspace_id(),
+            }})
+            self.condition.notify_all()
+        return {**self.status(), "status": "reset"}
 
     def set_playback_speed(self, speed_multiplier: float) -> dict[str, Any]:
         self.ensure_started()
@@ -563,13 +588,15 @@ class EventRuntime:
         prompt = (
             "/no_think\n"
             "你正在作为珊瑚河洪水应急智能体接收水动力模型输出事件。"
-            "本轮链路只放开到预测淹没结果研判和地图展示。"
+            "本轮链路放开预测淹没结果研判、受影响对象确定性分析和地图展示。"
+            "收到 InundationGenerated 事件后，必须调用 analyze_inundation_impacts 分析受影响对象；"
+            "对象级受淹判定只能来自该工具返回结果，不要自行猜测学校、医院、道路、桥梁、转移路线或安置点是否受淹。"
             "如果你认为该淹没事件需要在 GIS 上展示，必须调用 ui_show_objects 显示预测淹没结果，"
             "对象使用 HydrodynamicCell，filters 使用 {\"forecast_id\":\"latest\"}，fit=false，refresh=true；地图工具会拆成显示网格和应用水深结果。"
-            "受影响对象由前端根据水动力时间轴自动计算，并以独立轻量 Marker 展示；"
-            "不要分析、猜测或通过 ui_show_objects 加载和高亮 Facility、Bridge、Transfer、Place、Road、Route。"
+            "需要在地图展示影响分析结果时，按 analyze_inundation_impacts 的返回结果调用 ui_show_objects，"
+            "只显示受影响对象并设置 highlight=true、show_only_object_ids=true。"
             "禁止调用 run_emergency_cycle；防洪响应预案仍然切断。"
-            "请用简短结论说明：预测运行、淹没面积、最大水深，以及是否已请求地图展示。"
+            "请用简短结论说明：预测运行、淹没面积、最大水深、受影响对象概况，以及是否已请求地图展示。"
             "原始事件如下：\n"
             f"{json.dumps(event, ensure_ascii=False, indent=2)}"
         )
@@ -831,9 +858,34 @@ class EventRuntime:
 
 def filter_inundation_map_event(event: dict[str, Any]) -> dict[str, Any] | None:
     allowed_types = {"show_hydrodynamic_mesh", "apply_hydrodynamic_result"}
+    impact_object_types = {"Road", "Bridge", "Facility", "Route", "Transfer", "Place", "Risk"}
     actions = [
         action for action in event.get("map_actions") or []
-        if isinstance(action, dict) and action.get("type") in allowed_types
+        if isinstance(action, dict)
+        and (
+            action.get("type") in allowed_types
+            or (
+                action.get("type") == "clear_highlights"
+                and any(
+                    isinstance(item, dict)
+                    and item.get("type") == "highlight_objects"
+                    and item.get("object_type") in impact_object_types
+                    and item.get("object_ids")
+                    for item in event.get("map_actions") or []
+                )
+            )
+            or (
+                action.get("type") == "load_object"
+                and action.get("object_type") in impact_object_types
+                and action.get("object_ids")
+                and action.get("replace_object_type")
+            )
+            or (
+                action.get("type") == "highlight_objects"
+                and action.get("object_type") in impact_object_types
+                and action.get("object_ids")
+            )
+        )
     ]
     if not actions:
         return None

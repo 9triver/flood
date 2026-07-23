@@ -337,6 +337,7 @@ objects:
       detour_ratio: {type: float, description: "路线长度与起终点直线距离之比"}
       start_object_type: {type: str, description: "起点对象类型"}
       start_object_id: {type: str, description: "起点对象ID"}
+      instructions: {type: json, description: "路线逐步导航信息 JSON 数组，每步包含 text、street_name、distance、time"}
 
   ForecastRun:
     kind: entity
