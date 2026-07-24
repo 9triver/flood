@@ -148,7 +148,7 @@ const OBJECT_CONFIG = {
   County: { label: "县级边界", color: "#7b8794", swatch: "line" },
   Town: { label: "乡镇边界", color: "#7a6a22", swatch: "fill" },
   Road: { label: "道路", color: "#5f6772", swatch: "line" },
-  Reservoir: { label: "水库", color: "#2f80c9", swatch: "point" },
+  Reservoir: { label: "水库", color: "#0284c7", swatch: "fill" },
   Sluice: { label: "水闸", color: "#158a8a", swatch: "point" },
   Bridge: { label: "桥梁", color: "#202833", swatch: "point" },
   HydraulicStructure: { label: "水利工程", color: "#0f766e", swatch: "line" },
@@ -204,6 +204,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   await bootstrap();
   await loadObject("Watershed", {}, { fit: true });
   await loadObject("River", {}, { fit: false });
+  await loadObject("Reservoir", {}, { fit: false });
   startAutonomyStream();
   await refreshPlaybackStatus();
   renderIcons();
@@ -787,17 +788,19 @@ async function loadObject(objectType, filters = {}, options = {}) {
   const mapSelectable = !MAP_NON_SELECTABLE_OBJECTS.has(objectType);
   const layer = objectType === "River"
     ? createRiverLayer(geojson, mapSelectable)
-    : L.geoJSON(geojson, {
-      interactive: mapSelectable,
-      style: (feature) => featureStyle(objectType, feature),
-      pointToLayer: (feature, latlng) => pointLayer(objectType, feature, latlng),
-      onEachFeature: (feature, layerItem) => {
-        if (!mapSelectable) return;
-        indexFeature(objectType, feature, layerItem);
-        layerItem.bindPopup(popupHtml(objectType, feature));
-        layerItem.on("click", () => selectFeature(objectType, feature, layerItem));
-      },
-    });
+    : objectType === "Reservoir"
+      ? createReservoirLayer(geojson, mapSelectable)
+      : L.geoJSON(geojson, {
+        interactive: mapSelectable,
+        style: (feature) => featureStyle(objectType, feature),
+        pointToLayer: (feature, latlng) => pointLayer(objectType, feature, latlng),
+        onEachFeature: (feature, layerItem) => {
+          if (!mapSelectable) return;
+          indexFeature(objectType, feature, layerItem);
+          layerItem.bindPopup(popupHtml(objectType, feature));
+          layerItem.on("click", () => selectFeature(objectType, feature, layerItem));
+        },
+      });
   layer.addTo(state.map);
   renderIcons();
 
@@ -1758,12 +1761,84 @@ function featureStyle(objectType, feature) {
   }
   if (objectType === "Watershed") return { color: "#1f2937", weight: 1.3, fillColor: "#9bc4df", fillOpacity: 0.1 };
   if (objectType === "River") return riverMainStyle();
+  if (objectType === "Reservoir") return reservoirWaterStyle();
   if (objectType === "County") return { color: "#7b8794", weight: 1.2, fillOpacity: 0 };
   if (objectType === "Town") return { color: "#7a6a22", weight: 1, fillColor: "#facc15", fillOpacity: 0.08 };
   if (objectType === "Road") return { color: "#5f6772", weight: 2, opacity: 0.82 };
   if (objectType === "Route") return { color: "#d44a3a", weight: 3, opacity: 0.92 };
   if (objectType === "HydraulicStructure") return { color: "#0f766e", weight: 2, opacity: 0.9 };
   return { color: OBJECT_CONFIG[objectType]?.color || "#334155", weight: 2 };
+}
+
+function reservoirWaterStyle() {
+  return {
+    color: "#0284c7",
+    weight: 6,
+    opacity: 0.95,
+    fillColor: "#0ea5e9",
+    fillOpacity: 0.16,
+    lineCap: "round",
+    lineJoin: "round",
+  };
+}
+
+function reservoirHaloStyle() {
+  return {
+    color: "#7dd3fc",
+    weight: 15,
+    opacity: 0.28,
+    fillOpacity: 0,
+    lineCap: "round",
+    lineJoin: "round",
+  };
+}
+
+function reservoirHighlightStyle() {
+  return {
+    color: "#e0f2fe",
+    weight: 2,
+    opacity: 0.72,
+    fillOpacity: 0,
+    lineCap: "round",
+    lineJoin: "round",
+  };
+}
+
+function createReservoirLayer(geojson, mapSelectable) {
+  const group = L.featureGroup();
+  const polygonFilter = (feature) => feature.geometry?.type !== "Point";
+  L.geoJSON(geojson, {
+    interactive: false,
+    pane: "riverPane",
+    filter: polygonFilter,
+    style: reservoirHaloStyle,
+  }).addTo(group);
+  L.geoJSON(geojson, {
+    interactive: mapSelectable,
+    pane: "riverPane",
+    style: reservoirWaterStyle,
+    pointToLayer: (feature, latlng) => pointLayer("Reservoir", feature, latlng),
+    onEachFeature: (feature, layerItem) => {
+      if (!mapSelectable) return;
+      indexFeature("Reservoir", feature, layerItem);
+      layerItem.bindPopup(popupHtml("Reservoir", feature));
+      if (feature.properties?.name === "龙潭水库") {
+        layerItem.bindTooltip("龙潭水库", {
+          permanent: true,
+          direction: "center",
+          className: "reservoir-name-label",
+        });
+      }
+      layerItem.on("click", () => selectFeature("Reservoir", feature, layerItem));
+    },
+  }).addTo(group);
+  L.geoJSON(geojson, {
+    interactive: false,
+    pane: "riverPane",
+    filter: polygonFilter,
+    style: reservoirHighlightStyle,
+  }).addTo(group);
+  return group;
 }
 
 function createRiverLayer(geojson, mapSelectable) {

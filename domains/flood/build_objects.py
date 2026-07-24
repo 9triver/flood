@@ -14,6 +14,10 @@ from .runtime.common import DATA_DIR, OBJECTS_DIR, PROJECT_DIR, SOURCES_DIR, rel
 from .runtime.repository import object_library_path
 
 
+LONGTAN_RESERVOIR_ID = "longtan"
+LONGTAN_HYDROLAKES_ID = 177294
+
+
 class FloodObjectBuilder:
     def __init__(self):
         self._cache: dict[str, list[dict]] = {}
@@ -32,7 +36,7 @@ class FloodObjectBuilder:
         watershed = self.build("Watershed")[0]
         path = DATA_DIR / "珊瑚河河道中心线/珊瑚河河道中心线.shp"
         features = _features(path)
-        feature = features[0] if features else {}
+        feature = _connect_river_to_longtan(features[0]) if features else {}
         props = feature.get("properties") or {}
         return [{
             "river_id": "shanhu",
@@ -43,7 +47,10 @@ class FloodObjectBuilder:
             "geometry_source": "local_river_centerline",
             **_geometry_fields(feature),
             "data_path": rel(path) if features else "",
-            "data_note": "河流主体使用本地珊瑚河河道中心线。",
+            "data_note": (
+                "河流主体使用本地珊瑚河河道中心线；上游端点按最短路径延伸至"
+                "龙潭水库高德卫星影像判读岸线，保证水系拓扑连续。"
+            ),
         }]
 
     def _build_watershed(self) -> list[dict]:
@@ -199,6 +206,18 @@ class FloodObjectBuilder:
                     _apply_hydrolakes_reservoir(row, hydro_match)
                     used_hylak_ids.add(hydro_match["hylak_id"])
             rows.append(row)
+        if not any(row.get("name") == "龙潭水库" for row in rows):
+            longtan = next(
+                (
+                    item for item in hydrolakes
+                    if item["hylak_id"] == LONGTAN_HYDROLAKES_ID
+                    and item["hylak_id"] not in used_hylak_ids
+                ),
+                None,
+            )
+            if longtan:
+                imagery_water = _load_longtan_imagery_water_candidate()
+                rows.insert(0, _longtan_reservoir_record(longtan, imagery_water))
         return rows
 
     def _build_sluice(self) -> list[dict]:
@@ -719,10 +738,117 @@ def _load_hydrolakes_candidates() -> list[dict]:
             "name": props.get("Lake_name") or "",
             "lake_type": int(_float(props.get("Lake_type"))),
             "lake_area_km2": _float(props.get("Lake_area")),
+            "pour_longitude": _float(props.get("Pour_long")),
+            "pour_latitude": _float(props.get("Pour_lat")),
             "geometry": geometry,
             "source_path": source_path,
         })
     return candidates
+
+
+def _load_longtan_imagery_water_candidate() -> dict | None:
+    source_path = SOURCES_DIR / "amap_longtan_water_extent.geojson"
+    if not source_path.exists():
+        return None
+    try:
+        source = json.loads(source_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    features = source.get("features") or []
+    if not features:
+        return None
+    feature = features[0]
+    geometry = feature.get("geometry") or {}
+    if geometry.get("type") != "Polygon" or not geometry.get("coordinates"):
+        return None
+    properties = feature.get("properties") or {}
+    return {
+        "geometry": geometry,
+        "source_ref": properties.get("source_ref") or "amap/style6/z18/2026-07-24",
+        "source_path": source_path,
+        "properties": properties,
+    }
+
+
+def _connect_river_to_longtan(feature: dict, max_gap_m: float = 1000) -> dict:
+    geometry = feature.get("geometry") or {}
+    coordinates = geometry.get("coordinates") or []
+    if geometry.get("type") != "LineString" or len(coordinates) < 2:
+        return feature
+
+    longtan = next(
+        (
+            item for item in _load_hydrolakes_candidates()
+            if item["hylak_id"] == LONGTAN_HYDROLAKES_ID
+        ),
+        None,
+    )
+    if not longtan:
+        return feature
+
+    imagery_water = _load_longtan_imagery_water_candidate()
+    reservoir_geometry = imagery_water["geometry"] if imagery_water else longtan["geometry"]
+
+    start_match = _nearest_point_on_polygon_boundary(coordinates[0], reservoir_geometry)
+    end_match = _nearest_point_on_polygon_boundary(coordinates[-1], reservoir_geometry)
+    candidates = [
+        ("start", start_match),
+        ("end", end_match),
+    ]
+    endpoint, match = min(candidates, key=lambda item: item[1][1])
+    shoreline_point, gap_m = match
+    if not shoreline_point or gap_m <= 0 or gap_m > max_gap_m:
+        return feature
+
+    connected_coordinates = [list(item) for item in coordinates]
+    if endpoint == "start":
+        connected_coordinates.insert(0, list(shoreline_point))
+    else:
+        connected_coordinates.append(list(shoreline_point))
+    return {
+        **feature,
+        "geometry": {
+            **geometry,
+            "coordinates": connected_coordinates,
+        },
+    }
+
+
+def _nearest_point_on_polygon_boundary(point: list[float] | tuple[float, float],
+                                       geometry: dict) -> tuple[tuple[float, float] | None, float]:
+    nearest = None
+    nearest_distance = math.inf
+    for ring in _geometry_rings(geometry):
+        for index in range(1, len(ring)):
+            candidate, distance = _nearest_point_on_segment(point, ring[index - 1], ring[index])
+            if distance < nearest_distance:
+                nearest = candidate
+                nearest_distance = distance
+    return nearest, nearest_distance
+
+
+def _nearest_point_on_segment(point: list[float] | tuple[float, float],
+                              start: tuple[float, float],
+                              end: tuple[float, float]) -> tuple[tuple[float, float], float]:
+    lon, lat = float(point[0]), float(point[1])
+    lat_radians = math.radians(lat)
+    scale_x = 6371000 * math.cos(lat_radians) * math.pi / 180
+    scale_y = 6371000 * math.pi / 180
+    ax = (float(start[0]) - lon) * scale_x
+    ay = (float(start[1]) - lat) * scale_y
+    bx = (float(end[0]) - lon) * scale_x
+    by = (float(end[1]) - lat) * scale_y
+    dx = bx - ax
+    dy = by - ay
+    denominator = dx * dx + dy * dy
+    ratio = 0.0 if denominator == 0 else max(0.0, min(1.0, -(ax * dx + ay * dy) / denominator))
+    nearest_x = ax + ratio * dx
+    nearest_y = ay + ratio * dy
+    nearest = (
+        float(start[0]) + ratio * (float(end[0]) - float(start[0])),
+        float(start[1]) + ratio * (float(end[1]) - float(start[1])),
+    )
+    return nearest, math.hypot(nearest_x, nearest_y)
 
 
 def _load_esa_water_candidates() -> list[dict]:
@@ -787,6 +913,65 @@ def _reservoir_record(index: int, feature: dict, path: Path) -> dict:
         "external_geometry_area_km2": 0.0,
         **_geometry_fields(feature),
         "data_path": rel(path),
+    }
+
+
+def _longtan_reservoir_record(match: dict, imagery_water: dict | None = None) -> dict:
+    geometry = imagery_water["geometry"] if imagery_water else match["geometry"]
+    geometry_source = (
+        "amap_satellite_water_extent_interpretation"
+        if imagery_water else "hydrolakes_reservoir_area"
+    )
+    external_source = "Amap satellite imagery" if imagery_water else "HydroLAKES"
+    external_ref = (
+        imagery_water["source_ref"]
+        if imagery_water else f"Hylak_id/{match['hylak_id']}"
+    )
+    external_area_km2 = (
+        round(_geometry_area_m2(geometry) / 1_000_000, 6)
+        if imagery_water else match["lake_area_km2"]
+    )
+    return {
+        "reservoir_id": LONGTAN_RESERVOIR_ID,
+        "name": "龙潭水库",
+        "river_id": "shanhu",
+        "county_id": "451122",
+        "town_name": "珊瑚镇",
+        "capacity_10k_m3": 0.0,
+        "dam_top_elevation_m": 0.0,
+        "design_flood_standard_year": 0.0,
+        "check_flood_standard_year": 0.0,
+        "max_discharge_m3s": 0.0,
+        "safety_status": "",
+        "longitude": match["pour_longitude"],
+        "latitude": match["pour_latitude"],
+        "geometry_source": geometry_source,
+        "geometry_type": geometry["type"],
+        "source_crs": "EPSG:4326",
+        "geometry_crs": "EPSG:4326",
+        "geometry": json.dumps(geometry, ensure_ascii=False),
+        "external_geometry_source": external_source,
+        "external_geometry_ref": external_ref,
+        "external_geometry_distance_m": 0.0,
+        "external_geometry_confidence": "high",
+        "external_geometry_area_km2": external_area_km2,
+        "hydrolakes_ref": f"Hylak_id/{match['hylak_id']}",
+        "osm_ref": "",
+        "osm_name": "",
+        "osm_water_feature": "",
+        "osm_distance_m": 0.0,
+        "osm_tags": "",
+        "osm_data_path": "",
+        "water_extent_type": "satellite_interpreted_water_extent" if imagery_water else "lake_extent",
+        "imagery_tile_zoom": int(_float((imagery_water or {}).get("properties", {}).get("tile_zoom"))),
+        "imagery_retrieved_on": (imagery_water or {}).get("properties", {}).get("retrieved_on", ""),
+        "geometry_review_status": (imagery_water or {}).get("properties", {}).get("visual_review_status", ""),
+        "data_path": rel(imagery_water["source_path"] if imagery_water else match["source_path"]),
+        "data_note": (
+            "龙潭水库名称及珊瑚河关联来自龙潭水库站和灌区水闸台账；"
+            "水面范围按高德地图 z18 卫星影像的连续水体边界判读，"
+            "HydroLAKES Hylak_id/177294 仅用于水库身份与范围校核。"
+        ),
     }
 
 
@@ -1346,6 +1531,38 @@ def _geometry_bbox(geometry: dict) -> tuple[float, float, float, float]:
     lons = [item[0] for item in coords]
     lats = [item[1] for item in coords]
     return min(lons), min(lats), max(lons), max(lats)
+
+
+def _geometry_area_m2(geometry: dict) -> float:
+    geometry_type = geometry.get("type")
+    coordinates = geometry.get("coordinates") or []
+    if geometry_type == "Polygon":
+        if not coordinates:
+            return 0.0
+        outer = _ring_area_m2(coordinates[0])
+        holes = sum(_ring_area_m2(ring) for ring in coordinates[1:])
+        return max(0.0, outer - holes)
+    if geometry_type == "MultiPolygon":
+        return sum(
+            _geometry_area_m2({"type": "Polygon", "coordinates": polygon})
+            for polygon in coordinates
+        )
+    return 0.0
+
+
+def _ring_area_m2(ring: list[list[float]]) -> float:
+    if len(ring) < 4:
+        return 0.0
+    latitude = sum(float(item[1]) for item in ring) / len(ring)
+    scale_x = 6371000 * math.cos(math.radians(latitude)) * math.pi / 180
+    scale_y = 6371000 * math.pi / 180
+    projected = [(float(lon) * scale_x, float(lat) * scale_y) for lon, lat in ring]
+    twice_area = sum(
+        projected[index - 1][0] * projected[index][1]
+        - projected[index][0] * projected[index - 1][1]
+        for index in range(1, len(projected))
+    )
+    return abs(twice_area) / 2
 
 
 def _bbox_area_m2(bbox: tuple[float, float, float, float]) -> float:

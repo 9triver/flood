@@ -1716,6 +1716,21 @@ h2 {
   white-space: nowrap;
 }
 
+.leaflet-tooltip.reservoir-name-label {
+  padding: 3px 9px;
+  border: 1px solid rgba(14, 116, 144, 0.24);
+  border-radius: 999px;
+  background: rgba(240, 249, 255, 0.9);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.14);
+  color: #075985;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.leaflet-tooltip.reservoir-name-label::before {
+  display: none;
+}
+
 .tool-button {
   display: inline-flex;
   align-items: center;
