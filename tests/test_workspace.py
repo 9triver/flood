@@ -11,6 +11,30 @@ from domains.flood.runtime.workspace import WorkspaceManager, workspace_scope
 
 
 class WorkspaceTest(unittest.TestCase):
+    def test_active_workspace_is_restored_from_pointer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace_id = WorkspaceManager(root).create()["workspace_id"]
+
+            restored = WorkspaceManager(root)
+
+            self.assertEqual(workspace_id, restored.active_id)
+
+    def test_default_retention_keeps_previous_workspaces(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = WorkspaceManager(Path(directory))
+            workspace_ids = [
+                manager.create()["workspace_id"] for _ in range(4)
+            ]
+
+            self.assertEqual(
+                set(workspace_ids),
+                {
+                    path.name for path in Path(directory).iterdir()
+                    if path.is_dir()
+                },
+            )
+
     def test_new_run_changes_workspace_but_scope_can_resume_previous(self):
         with tempfile.TemporaryDirectory() as directory:
             manager = WorkspaceManager(Path(directory))

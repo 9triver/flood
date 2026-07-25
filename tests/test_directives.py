@@ -4,7 +4,9 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from domains.flood.runtime.repository import FloodRepository
 from domains.flood.runtime.workspace import WorkspaceManager
 from server.directives import DirectiveStore
 
@@ -43,7 +45,7 @@ class DirectiveStoreTest(unittest.TestCase):
         self.assertEqual(record, stored)
         self.assertEqual(workspace_id, record["workspace_id"])
         self.assertEqual("issued", record["status"])
-        self.assertEqual(2, record["forecast_version"])
+        self.assertEqual("v002", record["forecast_version"])
         self.assertRegex(record["directive_id"], r"^DIR-\d{8}-001$")
 
     def test_history_is_newest_first_and_ids_increment(self):
@@ -74,6 +76,26 @@ class DirectiveStoreTest(unittest.TestCase):
                 "content": "正文",
                 "recipients": "接收对象",
             }, {})
+
+    def test_issued_directives_are_queryable_domain_objects(self):
+        self.workspaces.create()
+        record = self.store.issue({
+            "title": "组织新民村转移",
+            "content": "立即组织群众转移。",
+            "recipients": "凤翔镇人民政府",
+            "priority": "urgent",
+        }, {})
+
+        with patch(
+            "domains.flood.runtime.directives.WORKSPACES",
+            self.workspaces,
+        ):
+            rows = FloodRepository().query(
+                "EmergencyDirective",
+                {"directive_id": record["directive_id"]},
+            )
+
+        self.assertEqual([record], rows)
 
 
 if __name__ == "__main__":

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import collections
+import json
 import threading
 import time
 from typing import Any, TYPE_CHECKING
 
 from domains.flood.runtime.workspace import WORKSPACES, active_workspace_id
 from server.events.agent_processor import EventAgentProcessor
+from server.events.factory import make_directive_issued_event
 from server.events.messages import (
     boundary_flow_observation_detail,
     domain_event_detail,
@@ -59,7 +61,7 @@ class EventRuntime:
             self._published_inundation_sources.clear()
             self._published_impact_sources.clear()
             self._clear_event_queue()
-            self.outputs.append({"event": "runtime_status", "data": {
+            self._append_output_locked("runtime_status", {
                 "type": "runtime_status",
                 "status": "running",
                 "label": "边界流量过程回放已启动",
@@ -69,7 +71,7 @@ class EventRuntime:
                 ),
                 "speed_multiplier": self._boundary_flow_runner.speed_multiplier,
                 "workspace_id": active_workspace_id(),
-            }})
+            })
             self.condition.notify_all()
 
     def ensure_started(self) -> None:
@@ -96,7 +98,9 @@ class EventRuntime:
         with self.condition:
             if self._playback_running:
                 return self.status()
-        WORKSPACES.create()
+        manifest = WORKSPACES.active_manifest()
+        if not manifest or manifest.get("status") != "ready":
+            WORKSPACES.create()
         with self.condition:
             self._playback_running = True
         self.reset()
@@ -122,7 +126,7 @@ class EventRuntime:
             self._published_impact_sources.clear()
             self._clear_event_queue()
             WORKSPACES.update_manifest(status="ready")
-            self.outputs.append({"event": "runtime_status", "data": {
+            self._append_output_locked("runtime_status", {
                 "type": "runtime_status",
                 "status": "reset",
                 "label": "演进已重置",
@@ -132,7 +136,7 @@ class EventRuntime:
                 ),
                 "speed_multiplier": self._boundary_flow_runner.speed_multiplier,
                 "workspace_id": active_workspace_id(),
-            }})
+            })
             self.condition.notify_all()
         return {**self.status(), "status": "reset"}
 
@@ -140,14 +144,14 @@ class EventRuntime:
         self.ensure_started()
         speed = self._boundary_flow_runner.set_speed(speed_multiplier)
         with self.condition:
-            self.outputs.append({"event": "runtime_status", "data": {
+            self._append_output_locked("runtime_status", {
                 "type": "runtime_status",
                 "status": "speed_changed",
                 "label": "演进速率已调整",
                 "detail": f"边界流量过程回放速率调整为 {speed:g}×。",
                 "speed_multiplier": speed,
                 "workspace_id": active_workspace_id(),
-            }})
+            })
             self.condition.notify_all()
         return self.status()
 
@@ -161,7 +165,7 @@ class EventRuntime:
             self._generation += 1
             self._clear_event_queue()
             WORKSPACES.update_manifest(status="stopped")
-            self.outputs.append({"event": "runtime_status", "data": {
+            self._append_output_locked("runtime_status", {
                 "type": "runtime_status",
                 "status": "stopped",
                 "label": "边界流量过程回放已停止",
@@ -169,7 +173,7 @@ class EventRuntime:
                     "后台不再回放新的边界流量观测；已清空待处理事件队列。"
                 ),
                 "workspace_id": active_workspace_id(),
-            }})
+            })
             self.condition.notify_all()
         return self.status()
 
@@ -181,7 +185,7 @@ class EventRuntime:
             self._playback_running = False
             self._playback_paused = True
             WORKSPACES.update_manifest(status="paused")
-            self.outputs.append({"event": "runtime_status", "data": {
+            self._append_output_locked("runtime_status", {
                 "type": "runtime_status",
                 "status": "paused",
                 "label": "边界流量过程回放已暂停",
@@ -191,7 +195,7 @@ class EventRuntime:
                 ),
                 "speed_multiplier": self._boundary_flow_runner.speed_multiplier,
                 "workspace_id": active_workspace_id(),
-            }})
+            })
             self.condition.notify_all()
         return {**self.status(), "status": "paused"}
 
@@ -209,14 +213,14 @@ class EventRuntime:
             self._playback_running = True
             self._playback_paused = False
             WORKSPACES.update_manifest(status="active")
-            self.outputs.append({"event": "runtime_status", "data": {
+            self._append_output_locked("runtime_status", {
                 "type": "runtime_status",
                 "status": "running",
                 "label": "边界流量过程回放已继续",
                 "detail": "后台从暂停位置继续回放边界流量观测。",
                 "speed_multiplier": self._boundary_flow_runner.speed_multiplier,
                 "workspace_id": active_workspace_id(),
-            }})
+            })
             self.condition.notify_all()
         return {**self.status(), "status": "running"}
 
@@ -233,17 +237,10 @@ class EventRuntime:
             }
 
     def publish_directive_issued(self, directive: dict[str, Any]) -> None:
-        self._append_output("agent_trace", {
-            "type": "agent_trace",
-            "tag": "COMMAND",
-            "label": "应急指令已发出",
-            "detail": (
-                f"{directive.get('directive_id', '')} · "
-                f"{directive.get('title', '')}\n\n"
-                f"接收对象：{directive.get('recipients', '')}"
-            ),
-            "workspace_id": directive.get("workspace_id"),
-        })
+        self._publish_child_event(
+            make_directive_issued_event(directive),
+            self._generation,
+        )
 
     def stream(self, interval: int):
         self.ensure_started()
@@ -321,13 +318,13 @@ class EventRuntime:
         data = {**data, "workspace_id": active_workspace_id()}
         observation = (data.get("payload") or {}).get("observation") or {}
         with self.condition:
-            self.outputs.append({"event": "boundary_flow_data", "data": {
+            self._append_output_locked("boundary_flow_data", {
                 "type": "boundary_flow_data",
                 "label": "四边界流量观测",
                 "event": data,
                 "detail": boundary_flow_observation_detail(observation),
                 "workspace_id": active_workspace_id(),
-            }})
+            })
             self.condition.notify_all()
         self._apply_adaptive_playback_speed(observation)
 
@@ -344,7 +341,7 @@ class EventRuntime:
             return
         speed = self._boundary_flow_runner.set_speed(target_speed)
         with self.condition:
-            self.outputs.append({"event": "runtime_status", "data": {
+            self._append_output_locked("runtime_status", {
                 "type": "runtime_status",
                 "status": "speed_changed",
                 "label": "演进已自动降速",
@@ -353,7 +350,7 @@ class EventRuntime:
                 "speed_phase": phase,
                 "automatic": True,
                 "workspace_id": active_workspace_id(),
-            }})
+            })
             self.condition.notify_all()
 
     def _publish_policy_event(self, event: dict[str, Any]) -> None:
@@ -362,8 +359,7 @@ class EventRuntime:
             self._publish_event(event)
             return
         with self.condition:
-            self.events.append(event)
-            self.outputs.append({"event": "domain_event", "data": event})
+            self._append_event_locked(event)
             self.condition.notify_all()
 
     def _finish_playback_sequence(
@@ -378,13 +374,13 @@ class EventRuntime:
             self._playback_running = False
             self._playback_paused = False
             WORKSPACES.update_manifest(status="finished")
-            self.outputs.append({"event": "runtime_status", "data": {
+            self._append_output_locked("runtime_status", {
                 "type": "runtime_status",
                 "status": "finished",
                 "label": "边界流量过程回放已结束",
                 "detail": boundary_flow_observation_detail(observation),
                 "workspace_id": active_workspace_id(),
-            }})
+            })
             self.condition.notify_all()
 
     def _publish_event(self, event: dict[str, Any]) -> None:
@@ -394,8 +390,7 @@ class EventRuntime:
         }
         generation = self._generation
         with self.condition:
-            self.events.append(event)
-            self.outputs.append({"event": "domain_event", "data": event})
+            self._append_event_locked(event)
             self.condition.notify_all()
         self._enqueue_event(event, generation)
 
@@ -477,15 +472,14 @@ class EventRuntime:
         with self.condition:
             if generation != self._generation:
                 return
-            self.events.append(event)
-            self.outputs.append({"event": "domain_event", "data": event})
-            self.outputs.append({"event": "agent_trace", "data": {
+            self._append_event_locked(event)
+            self._append_output_locked("agent_trace", {
                 "type": "agent_trace",
                 "tag": "EVENT",
                 "label": event["title"],
                 "detail": domain_event_detail(event),
                 "event_id": event["event_id"],
-            }})
+            })
             self.condition.notify_all()
         self._enqueue_event(event, generation, priority=True)
 
@@ -498,13 +492,36 @@ class EventRuntime:
         with self.condition:
             if generation is not None and generation != self._generation:
                 return
-            self.outputs.append({
-                "event": event_name,
-                "data": {
-                    **data,
-                    "workspace_id": (
-                        data.get("workspace_id") or active_workspace_id()
-                    ),
-                },
-            })
+            self._append_output_locked(event_name, data)
             self.condition.notify_all()
+
+    def _append_event_locked(self, event: dict[str, Any]) -> None:
+        self.events.append(event)
+        self._append_output_locked("domain_event", event)
+
+    def _append_output_locked(
+        self,
+        event_name: str,
+        data: dict[str, Any],
+    ) -> None:
+        workspace_id = data.get("workspace_id") or active_workspace_id()
+        item = {
+            "event": event_name,
+            "data": {**data, "workspace_id": workspace_id},
+        }
+        self.outputs.append(item)
+        if not workspace_id:
+            return
+        path = (
+            WORKSPACES.path(str(workspace_id), create=True)
+            / "events"
+            / "timeline.jsonl"
+        )
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(item, ensure_ascii=False, default=str))
+                stream.write("\n")
+        except OSError:
+            # Persistence must not interrupt the live SSE stream.
+            return

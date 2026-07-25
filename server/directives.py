@@ -4,9 +4,12 @@ import json
 import re
 import threading
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
+from domains.flood.runtime.directives import (
+    issued_directives_path,
+    read_issued_directives,
+)
 from domains.flood.runtime.workspace import WORKSPACES, WorkspaceManager
 
 
@@ -26,7 +29,7 @@ class DirectiveStore:
         if not workspace_id:
             return {"workspace_id": None, "directives": []}
         with self._lock:
-            directives = self._read_records(self._issued_path(workspace_id))
+            directives = read_issued_directives(self.workspaces, workspace_id)
         return {
             "workspace_id": workspace_id,
             "directives": list(reversed(directives)),
@@ -52,9 +55,9 @@ class DirectiveStore:
             raise ValueError("priority 必须是 normal、urgent 或 critical")
 
         now = datetime.now().astimezone()
-        issued_path = self._issued_path(workspace_id)
+        issued_path = issued_directives_path(self.workspaces, workspace_id)
         with self._lock:
-            records = self._read_records(issued_path)
+            records = read_issued_directives(self.workspaces, workspace_id)
             record = {
                 "directive_id": self._next_id(records, now),
                 "workspace_id": workspace_id,
@@ -64,32 +67,15 @@ class DirectiveStore:
                 "priority": priority,
                 "status": "issued",
                 "simulation_time": runtime_status.get("observed_at"),
-                "forecast_version": runtime_status.get("forecast_version"),
+                "forecast_version": _forecast_version(
+                    runtime_status.get("forecast_version")
+                ),
                 "issued_at": now.isoformat(timespec="seconds"),
             }
             issued_path.parent.mkdir(parents=True, exist_ok=True)
             with issued_path.open("a", encoding="utf-8") as stream:
                 stream.write(json.dumps(record, ensure_ascii=False) + "\n")
         return record
-
-    def _issued_path(self, workspace_id: str) -> Path:
-        return self.workspaces.path(workspace_id) / "directives" / "issued.jsonl"
-
-    @staticmethod
-    def _read_records(path: Path) -> list[dict[str, Any]]:
-        if not path.exists():
-            return []
-        records: list[dict[str, Any]] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(record, dict):
-                records.append(record)
-        return records
 
     @staticmethod
     def _next_id(records: list[dict[str, Any]], now: datetime) -> str:
@@ -111,3 +97,15 @@ def _required_text(values: dict[str, Any], key: str, limit: int) -> str:
     if len(value) > limit:
         raise ValueError(f"{key} 不能超过 {limit} 个字符")
     return value
+
+
+def _forecast_version(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    text = str(value)
+    if text.startswith("v"):
+        return text
+    try:
+        return f"v{int(value):03d}"
+    except (TypeError, ValueError):
+        return text

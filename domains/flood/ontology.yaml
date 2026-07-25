@@ -48,7 +48,7 @@ interaction_policies:
         keywords: ["闭环", "应急循环", "自主观测", "持续预测", "自动告警", "自动调度"]
         tools: [run_emergency_cycle, ui_show_objects, ui_show_event_marker, ui_clear_map, ui_focus_object]
       directive:
-        keywords: ["应急指令", "指令初稿", "新建指令", "发出指令", "作为初稿"]
+        keywords: ["生成应急指令", "形成应急指令", "指令初稿", "新建指令", "发出指令", "作为初稿"]
         context_keywords: ["建议", "应急指令", "指令初稿"]
         tools: [ui_open_emergency_directive_editor]
 
@@ -103,7 +103,7 @@ presentation_tools:
 
   ui_open_emergency_directive_editor:
     summary: "打开应急指令草稿编辑器"
-    description: "根据智能体当前建议生成应急指令初稿，并在前端打开编辑器供用户修改、确认和发出；本工具本身不发出指令。"
+    description: "根据智能体当前建议生成应急指令初稿，并在态势工作台打开编辑器供用户修改、确认和发出；本工具本身不发出指令。"
     usage_prompt: >-
       用户明确要求把当前或刚才的建议作为初稿、新建应急指令或准备发出指令时调用。
       title、content 和 recipients 必须根据本轮对话及已核实事实生成；priority 默认 urgent。
@@ -122,8 +122,8 @@ event_policies:
     allowed_tools: [inspect, query, count, run_flood_forecast]
     forbidden_functions: [run_emergency_cycle]
     instructions:
-      - "结合事件中的当前观测、触发原因和模型输入摘要，判断是否需要调用水动力模型。"
-      - "事件 payload 包含 observation、forecast_input 和 forecast_trigger；确需推演时调用 run_flood_forecast，forecast_id 使用 latest，该函数读取事件对应的稳定输入快照。"
+      - "领域策略已经完成阈值判断；当事件 forecast_trigger.should_run_forecast=true 时，必须由你调用一次 run_flood_forecast，forecast_id 使用 latest。不要只用文字说明将要预测。"
+      - "事件 payload 包含 observation、forecast_input 和 forecast_trigger；run_flood_forecast 会读取事件对应的稳定输入快照，CNN 计算与结果保存由该工具完成。"
       - "本 FloodForecastRequired 事件只负责判断并运行洪水预测，不在当前事件阶段执行对象影响分析或防洪响应预案；预测完成后系统会另行发布 InundationGenerated 事件，由下一事件阶段执行确定性影响分析。结论中必须写清‘当前预测请求事件未执行影响分析，后续淹没结果事件将执行’，不要笼统表述为‘未启动影响评估’。"
     conclusion_fields: ["当前四边界流量", "触发原因", "是否调用了预测模型"]
 
@@ -554,12 +554,20 @@ objects:
     summary: "洪水预测运行"
     description: "ForecastRun 表示一次水文-水动力联动预测运行，记录水文边界、模型名称、生成时间和预测淹没统计；模型原始输出保存在所属演进工作空间。"
     properties:
-      forecast_id: {type: str, required: true, description: "预测运行ID，latest 表示当前最新预测"}
+      forecast_id: {type: str, required: true, description: "预测运行ID，如 v001；latest 仅作为查询当前最新预测的别名"}
+      forecast_version: {type: str, description: "当前演进内的预测版本，如 v001"}
+      forecast_sequence: {type: int, description: "当前演进内的预测顺序号"}
+      workspace_id: {type: str, description: "保存本次预测的当前演进工作空间ID"}
       name: {type: str, description: "预测运行名称"}
       status: {type: str, description: "运行状态"}
       model_name: {type: str, description: "模型名称"}
       model_description: {type: str, description: "模型说明"}
       generated_at: {type: str, description: "生成时间"}
+      forecast_time: {type: str, description: "本次预测的起报或触发时间"}
+      valid_from: {type: str, description: "预测结果有效时段起点"}
+      valid_to: {type: str, description: "预测结果有效时段终点"}
+      trigger_reason: {type: str, description: "触发本次预测的领域策略原因"}
+      is_latest: {type: bool, description: "是否为当前演进的最新预测"}
       lead_time_h: {type: float, description: "预见期，小时"}
       mesh_source_id: {type: str, description: "作为计算网格来源的水动力网格集合"}
       hydrology_inputs: {type: str, description: "水文边界条件 JSON"}
@@ -568,6 +576,32 @@ objects:
       inundated_area_km2: {type: float, description: "预测淹没面积，平方千米"}
       max_depth_m: {type: float, description: "最大预测水深，米"}
       mean_depth_m: {type: float, description: "平均预测水深，米"}
+
+  EmergencyDirective:
+    kind: entity
+    countable: true
+    display_name: "应急指令"
+    aliases:
+      - {terms: ["应急指令", "已发指令", "指令记录"]}
+    data_source: external_api
+    mutability: append_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: directive_id
+    summary: "当前演进中经用户确认发出的应急指令"
+    description: "EmergencyDirective 只表示已经由用户在态势工作台确认发出的指令；智能体生成但尚未确认的前端初稿不作为领域对象保存。"
+    properties:
+      directive_id: {type: str, required: true, description: "指令编号"}
+      workspace_id: {type: str, description: "所属当前演进工作空间ID"}
+      title: {type: str, description: "指令标题"}
+      content: {type: str, description: "指令正文"}
+      recipients: {type: str, description: "接收对象"}
+      priority: {type: str, description: "优先级: normal/urgent/critical"}
+      status: {type: str, description: "指令状态，当前为 issued"}
+      simulation_time: {type: str, description: "发出时的演进模拟时间"}
+      forecast_version: {type: str, description: "发出指令时所依据的预测版本"}
+      issued_at: {type: str, description: "用户确认发出时间"}
 
   ForecastCell:
     kind: entity

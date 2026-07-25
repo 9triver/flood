@@ -34,6 +34,7 @@ const state = {
   runtimeStatus: {},
   directives: [],
   directiveDraft: null,
+  directiveToast: null,
   activeStream: null,
   activeRunId: null,
   autonomyStream: null,
@@ -423,6 +424,14 @@ function renderObjectList(items) {
 }
 
 function bindEvents() {
+  const directiveToast = document.getElementById("directiveDraftToast");
+  state.directiveToast = {
+    id: "directive-draft",
+    dragX: 0,
+    dragY: 0,
+    element: directiveToast,
+  };
+  bindConclusionToastDrag(state.directiveToast);
   document.getElementById("fitAllBtn").addEventListener("click", fitAll);
   document.getElementById("layerPanelBtn").addEventListener("click", toggleLayerPanel);
   document.getElementById("layerPanelCloseBtn").addEventListener("click", () => setLayerPanelOpen(false));
@@ -445,9 +454,6 @@ function bindEvents() {
   document.querySelectorAll("[data-layer-tab]").forEach((button) => {
     button.addEventListener("click", () => setLayerPanelTab(button.dataset.layerTab));
   });
-  document.querySelectorAll("[data-situation-view]").forEach((button) => {
-    button.addEventListener("click", () => setSituationView(button.dataset.situationView));
-  });
   document.querySelectorAll("[data-panel-toggle]").forEach((btn) => {
     btn.addEventListener("click", () => {
       activateAgentPane(btn.dataset.panelToggle);
@@ -466,12 +472,6 @@ function bindEvents() {
     });
   });
   document.getElementById("chatForm").addEventListener("submit", onChatSubmit);
-  document.querySelectorAll("[data-directive-view]").forEach((button) => {
-    button.addEventListener("click", () => setDirectiveView(button.dataset.directiveView));
-  });
-  document.querySelectorAll("[data-directive-content-view]").forEach((button) => {
-    button.addEventListener("click", () => setDirectiveContentView(button.dataset.directiveContentView));
-  });
   ["directiveTitle", "directiveRecipients", "directiveContent"].forEach((id) => {
     document.getElementById(id).addEventListener("input", (event) => {
       event.target.setCustomValidity("");
@@ -480,12 +480,15 @@ function bindEvents() {
   });
   document.getElementById("directivePriority").addEventListener("change", syncDirectiveDraft);
   document.getElementById("directiveCancelBtn").addEventListener("click", clearDirectiveDraft);
-  document.getElementById("directiveIssueBtn").addEventListener("click", prepareDirectiveIssue);
-  document.getElementById("directiveBackBtn").addEventListener("click", cancelDirectiveIssue);
-  document.getElementById("directiveConfirmBtn").addEventListener("click", issueDirective);
+  document.getElementById("directiveIssueBtn").addEventListener("click", issueDirective);
   document.getElementById("directiveHistoryList").addEventListener("click", (event) => {
     const button = event.target.closest("[data-copy-directive]");
     if (button) copyDirectiveToDraft(button.dataset.copyDirective);
+  });
+  document.getElementById("chatLog").addEventListener("click", (event) => {
+    if (event.target.closest("[data-open-directive-editor]")) {
+      showDirectiveDraftToast();
+    }
   });
 }
 
@@ -683,15 +686,16 @@ function setTelemetryPanelOpen(isOpen) {
   invalidateMapLayout();
 }
 
-function setSituationView(name) {
-  const active = name === "impact" ? "impact" : "telemetry";
-  const workbench = document.getElementById("situationWorkbench");
-  workbench.dataset.view = active;
-  document.querySelectorAll("[data-situation-view]").forEach((button) => {
-    const selected = button.dataset.situationView === active;
-    button.classList.toggle("is-active", selected);
-    button.setAttribute("aria-selected", String(selected));
-  });
+function revealSituationPanel(panelId, behavior = "smooth") {
+  const body = document.querySelector(".situation-workbench-body");
+  const panel = document.getElementById(panelId);
+  if (!body || !panel) return;
+  const panelStart = panel.offsetLeft;
+  const panelEnd = panelStart + panel.offsetWidth;
+  const viewportStart = body.scrollLeft;
+  const viewportEnd = viewportStart + body.clientWidth;
+  if (panelStart >= viewportStart && panelEnd <= viewportEnd) return;
+  body.scrollTo({ left: panelStart, behavior });
 }
 
 function toggleSituationPanelFloating(panelId) {
@@ -1255,7 +1259,7 @@ async function restartBoundaryFlowPlayback() {
     setPlaybackButtonState(Boolean(data.running), Boolean(data.paused));
     updateTelemetryRuntimeStatus(data);
     setLayerPanelOpen(false);
-    setSituationView("telemetry");
+    revealSituationPanel("telemetryPanel", "auto");
     setTelemetryPanelOpen(true);
     addTrace("AUTO", "演进已重置", "已创建新的演进工作空间，并回到第一条边界流量观测；点击开始演进后继续回放。");
   } catch (error) {
@@ -1270,7 +1274,8 @@ async function restartBoundaryFlowPlayback() {
 async function toggleBoundaryFlowPlayback() {
   const wasRunning = state.playbackRunning;
   const wasPaused = state.playbackPaused;
-  const action = wasRunning ? "stop" : (wasPaused ? "resume" : "start");
+  const wasAutoPauseArmed = state.playbackAutoPauseArmed;
+  const action = wasRunning ? "pause" : (wasPaused ? "resume" : "start");
   const btn = document.getElementById("playbackToggleBtn");
   btn.disabled = true;
   try {
@@ -1281,7 +1286,7 @@ async function toggleBoundaryFlowPlayback() {
       resetMap();
       clearMockTelemetry();
       setLayerPanelOpen(false);
-      setSituationView("telemetry");
+      revealSituationPanel("telemetryPanel", "auto");
       setTelemetryPanelOpen(true);
     } else if (action === "resume") {
       state.playbackAutoPauseArmed = true;
@@ -1303,7 +1308,7 @@ async function toggleBoundaryFlowPlayback() {
     const labels = {
       start: ["边界流量过程回放已启动", "后台开始按时间顺序回放四边界流量。"],
       resume: ["边界流量过程回放已继续", "后台从暂停位置继续回放四边界流量。"],
-      stop: ["边界流量过程回放已停止", "后台已停止回放新的边界流量观测。"],
+      pause: ["边界流量过程回放已暂停", "后台暂停回放新的边界流量观测；已产生的事件继续处理。"],
     };
     addTrace(
       "AUTO",
@@ -1311,7 +1316,7 @@ async function toggleBoundaryFlowPlayback() {
       labels[action][1],
     );
   } catch (error) {
-    if (action !== "stop") state.playbackAutoPauseArmed = false;
+    state.playbackAutoPauseArmed = wasRunning && wasAutoPauseArmed;
     addTrace("ERR", "边界流量回放切换失败", error.message || String(error));
     setPlaybackButtonState(wasRunning, wasPaused);
   } finally {
@@ -1341,7 +1346,8 @@ function clearRuntimeWorkspaceView() {
   resetDirectiveWorkspaceView();
   state.conclusionToasts.forEach((item) => item.element?.remove());
   state.conclusionToasts = [];
-  document.getElementById("conclusionToastRegion")?.replaceChildren();
+  document.querySelectorAll("#conclusionToastRegion .conclusion-toast:not(.directive-draft-toast)")
+    .forEach((element) => element.remove());
 }
 
 function resetDirectiveWorkspaceView() {
@@ -1392,7 +1398,7 @@ function renderDirectiveHistory() {
       <div class="directive-history-detail">
         <div class="markdown-body">${renderMarkdown(directive.content || "")}</div>
         <div class="directive-history-meta">
-          模拟时间：${escapeHtml(formatMockTime(directive.simulation_time))} · 预测版本：${escapeHtml(String(directive.forecast_version ?? "--"))}
+          演进时刻：${escapeHtml(formatMockTime(directive.simulation_time))} · 预测版本：${escapeHtml(formatForecastVersion(directive.forecast_version))}
         </div>
         <button class="directive-secondary-button directive-copy-button" type="button" data-copy-directive="${escapeHtml(directive.directive_id || "")}">
           <i data-lucide="copy"></i><span>复制为新初稿</span>
@@ -1401,31 +1407,6 @@ function renderDirectiveHistory() {
     </details>
   `).join("");
   renderIcons();
-}
-
-function setDirectiveView(name) {
-  const active = name === "history" ? "history" : "draft";
-  document.querySelectorAll("[data-directive-view]").forEach((button) => {
-    button.classList.toggle("is-active", button.dataset.directiveView === active);
-  });
-  document.querySelectorAll("[data-directive-pane]").forEach((pane) => {
-    const isActive = pane.dataset.directivePane === active;
-    pane.classList.toggle("is-active", isActive);
-    pane.hidden = !isActive;
-  });
-  if (active === "history") refreshDirectiveHistory();
-}
-
-function setDirectiveContentView(name) {
-  const active = name === "preview" ? "preview" : "edit";
-  document.querySelectorAll("[data-directive-content-view]").forEach((button) => {
-    button.classList.toggle("is-active", button.dataset.directiveContentView === active);
-  });
-  const content = document.getElementById("directiveContent");
-  const preview = document.getElementById("directivePreview");
-  content.hidden = active === "preview";
-  preview.hidden = active !== "preview";
-  if (active === "preview") preview.innerHTML = renderMarkdown(content.value);
 }
 
 function openDirectiveDraft(draft) {
@@ -1440,16 +1421,22 @@ function openDirectiveDraft(draft) {
   document.getElementById("directiveContent").value = state.directiveDraft.content;
   document.getElementById("directiveRecipients").value = state.directiveDraft.recipients;
   document.getElementById("directivePriority").value = state.directiveDraft.priority;
-  document.getElementById("directiveEmpty").hidden = true;
-  document.getElementById("directiveEditor").hidden = false;
-  cancelDirectiveIssue();
-  setDirectiveView("draft");
-  setDirectiveContentView("edit");
+  setDirectiveToastError("");
   renderDirectiveContext(state.runtimeStatus);
   refreshDirectiveContext();
-  setAgentDrawerOpen(true);
-  activateAgentPane("directive");
-  document.getElementById("directiveTitle").focus();
+  showDirectiveDraftToast();
+}
+
+function showDirectiveDraftToast() {
+  if (!state.directiveDraft) return;
+  const toast = document.getElementById("directiveDraftToast");
+  toast.hidden = false;
+  toast.classList.remove("is-visible");
+  window.requestAnimationFrame(() => {
+    toast.classList.add("is-visible");
+    document.getElementById("directiveTitle").focus({ preventScroll: true });
+    clampConclusionToastsToMap();
+  });
 }
 
 function syncDirectiveDraft() {
@@ -1469,10 +1456,16 @@ function clearDirectiveDraft() {
   document.getElementById("directiveContent").value = "";
   document.getElementById("directiveRecipients").value = "";
   document.getElementById("directivePriority").value = "urgent";
-  document.getElementById("directiveEditor").hidden = true;
-  document.getElementById("directiveEmpty").hidden = false;
-  cancelDirectiveIssue();
-  setDirectiveContentView("edit");
+  setDirectiveToastError("");
+  const toast = document.getElementById("directiveDraftToast");
+  toast.classList.remove("is-visible");
+  toast.hidden = true;
+  if (state.directiveToast) {
+    state.directiveToast.dragX = 0;
+    state.directiveToast.dragY = 0;
+    toast.style.setProperty("--drag-x", "0px");
+    toast.style.setProperty("--drag-y", "0px");
+  }
 }
 
 async function refreshDirectiveContext() {
@@ -1490,16 +1483,14 @@ async function refreshDirectiveContext() {
 }
 
 function renderDirectiveContext(status = {}) {
-  const workspace = state.directiveDraft?.workspaceId || state.workspaceId || "--";
-  const workspaceLabel = workspace.startsWith("run_") ? workspace.slice(4, 24) : workspace;
   const workspaceElement = document.getElementById("directiveContextWorkspace");
-  workspaceElement.textContent = workspaceLabel;
-  workspaceElement.title = workspace;
+  workspaceElement.textContent = "当前演进";
+  workspaceElement.removeAttribute("title");
   document.getElementById("directiveContextTime").textContent = formatMockTime(status.observed_at);
-  document.getElementById("directiveContextForecast").textContent = String(status.forecast_version ?? "--");
+  document.getElementById("directiveContextForecast").textContent = formatForecastVersion(status.forecast_version);
 }
 
-function prepareDirectiveIssue() {
+function validateDirectiveDraft() {
   const fields = [
     [document.getElementById("directiveTitle"), "请填写指令标题"],
     [document.getElementById("directiveRecipients"), "请填写接收对象"],
@@ -1507,26 +1498,23 @@ function prepareDirectiveIssue() {
   ];
   for (const [field, message] of fields) {
     field.setCustomValidity(field.value.trim() ? "" : message);
-    if (!field.reportValidity()) return;
+    if (!field.reportValidity()) return false;
   }
   syncDirectiveDraft();
-  setDirectiveContentView("preview");
-  const confirm = document.getElementById("directiveIssueConfirm");
-  confirm.hidden = false;
-  confirm.querySelector("strong").textContent = "确认发出这份应急指令？";
-  confirm.querySelector("span").textContent = "发出后将归档到当前演进，原记录不可修改。";
-  document.querySelector(".directive-editor-actions").hidden = true;
+  return true;
 }
 
-function cancelDirectiveIssue() {
-  document.getElementById("directiveIssueConfirm").hidden = true;
-  document.querySelector(".directive-editor-actions").hidden = false;
+function setDirectiveToastError(message) {
+  const output = document.getElementById("directiveToastError");
+  output.textContent = message || "";
+  output.hidden = !message;
 }
 
 async function issueDirective() {
-  syncDirectiveDraft();
   if (!state.directiveDraft) return;
-  const button = document.getElementById("directiveConfirmBtn");
+  if (!validateDirectiveDraft()) return;
+  setDirectiveToastError("");
+  const button = document.getElementById("directiveIssueBtn");
   button.disabled = true;
   try {
     const response = await fetch("/api/directives", {
@@ -1546,13 +1534,11 @@ async function issueDirective() {
     state.directives = [directive, ...state.directives.filter((item) => item.directive_id !== directive.directive_id)];
     renderDirectiveHistory();
     clearDirectiveDraft();
-    setDirectiveView("history");
-    addTrace("COMMAND", "应急指令已发出", `${directive.directive_id} · ${directive.title}\n\n接收对象：${directive.recipients}`);
+    setTelemetryPanelOpen(true);
+    window.requestAnimationFrame(() => revealSituationPanel("directivePanel", "auto"));
+    window.setTimeout(() => revealSituationPanel("directivePanel", "auto"), 240);
   } catch (error) {
-    const confirm = document.getElementById("directiveIssueConfirm");
-    confirm.hidden = false;
-    confirm.querySelector("strong").textContent = "指令发出失败";
-    confirm.querySelector("span").textContent = error.message || String(error);
+    setDirectiveToastError(error.message || String(error));
     addTrace("ERR", "应急指令发出失败", error.message || String(error));
   } finally {
     button.disabled = false;
@@ -1575,6 +1561,16 @@ function formatDirectiveTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return formatMockTime(value);
   return date.toLocaleString("zh-CN", { hour12: false });
+}
+
+function formatForecastVersion(value) {
+  if (value == null || value === "") return "--";
+  const text = String(value);
+  if (/^v\d+$/i.test(text)) return text.toLowerCase();
+  const number = Number(value);
+  return Number.isInteger(number) && number >= 0
+    ? `v${String(number).padStart(3, "0")}`
+    : text;
 }
 
 async function updatePlaybackSpeed(event) {
@@ -1616,12 +1612,14 @@ function setPlaybackButtonState(running, paused = false) {
   btn.classList.toggle("is-paused", state.playbackPaused);
   btn.setAttribute("aria-pressed", String(running));
   btn.title = running
-    ? "停止边界流量过程回放"
+    ? "暂停边界流量过程回放"
     : (state.playbackPaused ? "从暂停位置继续边界流量过程回放" : "启动边界流量过程回放");
   btn.setAttribute("aria-label", btn.title);
   btn.innerHTML = running
-    ? '<i data-lucide="pause"></i><span>停止演进</span>'
-    : `<i data-lucide="play"></i><span>${state.playbackPaused ? "继续演进" : "开始演进"}</span>`;
+    ? '<i data-lucide="pause"></i><span>暂停演进</span>'
+    : (state.playbackPaused
+      ? '<i data-lucide="step-forward"></i><span>继续演进</span>'
+      : '<i data-lucide="play"></i><span>开始演进</span>');
   updatePlaybackRestartButton();
   renderIcons();
 }
@@ -1864,6 +1862,9 @@ function renderDomainEvent(data) {
   if (data.event_type === "ImpactAnalyzed") {
     registerImpactAnalysisResult(data.payload || null);
   }
+  if (data.event_type === "DirectiveIssued") {
+    refreshDirectiveHistory();
+  }
   const tag = data.event_type === "FloodForecastRequired" ? "ALERT" : "EVENT";
   const label = data.event_type === "FloodForecastRequired" ? "洪水预测请求进入智能体" : (data.title || data.event_type);
   addTrace(tag, label, eventDetail(data));
@@ -1917,6 +1918,9 @@ function eventDetail(data) {
     }).filter(Boolean);
     return parts.length ? parts.join("，") : "未识别到受预测淹没影响的对象";
   }
+  if (data.event_type === "DirectiveIssued") {
+    return `${payload.directive_id || ""} · ${payload.title || ""}；接收对象：${payload.recipients || "--"}`;
+  }
   return data.severity || "";
 }
 
@@ -1927,6 +1931,7 @@ function eventPhase(eventType) {
     FloodEpisodeEnded: "monitor",
     InundationGenerated: "compute",
     ImpactAnalyzed: "analyze",
+    DirectiveIssued: "decide",
     ExposureAnalyzed: "decide",
   }[eventType] || "analyze";
 }
@@ -2690,6 +2695,7 @@ function connectChatStream({ message = "", assistant, runId = "", since = 0 }) {
   es.addEventListener("directive_draft", (event) => {
     const data = parseEvent(event);
     openDirectiveDraft(data.draft || {});
+    attachDirectiveDraftCard(assistant, data.draft || {});
     addTrace("COMMAND", "应急指令初稿已生成", data.draft?.title || "已打开指令编辑器");
   });
 
@@ -3182,6 +3188,22 @@ function appendMessageMarkdown(item, content) {
 function setMessageMarkdown(item, content) {
   item.dataset.rawMarkdown = content || "";
   item.innerHTML = renderMarkdown(item.dataset.rawMarkdown);
+  if (item.dataset.directiveDraftTitle) {
+    item.insertAdjacentHTML("beforeend", `
+      <button class="directive-chat-card" type="button" data-open-directive-editor>
+        <i data-lucide="file-pen-line"></i>
+        <span><strong>应急指令初稿已生成</strong><small>${escapeHtml(item.dataset.directiveDraftTitle)}</small></span>
+        <em>打开初稿</em>
+      </button>
+    `);
+    renderIcons();
+  }
+}
+
+function attachDirectiveDraftCard(item, draft = {}) {
+  item.dataset.directiveDraftTitle = String(draft.title || "未命名指令");
+  setMessageMarkdown(item, item.dataset.rawMarkdown || "");
+  scrollChat();
 }
 
 function renderMarkdown(content) {
@@ -3429,7 +3451,11 @@ function clampConclusionToastsToMap() {
   if (!bounds || !region) return;
   const availableHeight = Math.max(72, bounds.bottom - bounds.top - 108);
   region.style.setProperty("--conclusion-body-max-height", `${Math.min(360, availableHeight)}px`);
-  state.conclusionToasts.forEach((item) => {
+  const items = [...state.conclusionToasts];
+  if (state.directiveToast?.element && !state.directiveToast.element.hidden) {
+    items.push(state.directiveToast);
+  }
+  items.forEach((item) => {
     const rect = item.element?.getBoundingClientRect();
     if (!rect?.width || !rect?.height) return;
     const left = clampPanelCoordinate(rect.left, bounds.left, bounds.right - rect.width);
@@ -3451,7 +3477,7 @@ function shouldHideAutonomyTrace(data = {}) {
 }
 
 function activateAgentPane(name) {
-  const active = ["trace", "directive", "chat"].includes(name) ? name : "trace";
+  const active = ["trace", "chat"].includes(name) ? name : "trace";
   document.querySelectorAll("[data-agent-pane]").forEach((section) => {
     const isActive = section.dataset.agentPane === active;
     section.classList.toggle("is-active", isActive);
@@ -3568,7 +3594,7 @@ async function refreshImpactAnalysisForTimeline() {
 function setImpactAnalysisLoading(hour) {
   const panel = document.getElementById("impactPanel");
   panel?.classList.add("is-loading");
-  setSituationView("impact");
+  if (!state.directiveDraft) revealSituationPanel("impactPanel");
   const time = document.getElementById("impactTimeLabel");
   const status = document.getElementById("impactStatus");
   if (time) time.textContent = `${formatHydrodynamicHour(hour)} h`;

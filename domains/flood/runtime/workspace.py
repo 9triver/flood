@@ -25,9 +25,9 @@ _scoped_workspace_id: ContextVar[str | None] = ContextVar(
 
 def workspace_retention_count() -> int:
     try:
-        return max(1, int(os.environ.get("FLOOD_WORKSPACE_RETENTION_COUNT", "3")))
+        return max(0, int(os.environ.get("FLOOD_WORKSPACE_RETENTION_COUNT", "0")))
     except ValueError:
-        return 3
+        return 0
 
 
 class WorkspaceManager:
@@ -35,12 +35,12 @@ class WorkspaceManager:
                  retention_count: int | None = None):
         self.root = root
         self.retention_count = (
-            max(1, retention_count)
+            max(0, retention_count)
             if retention_count is not None
             else workspace_retention_count()
         )
-        self._active_id: str | None = None
         self._lock = threading.RLock()
+        self._active_id = self._restore_active_id()
 
     @property
     def active_id(self) -> str | None:
@@ -64,11 +64,12 @@ class WorkspaceManager:
         self._write_json(path / "manifest.json", manifest)
         with self._lock:
             self._active_id = workspace_id
+            self._write_active_pointer(workspace_id)
         self.prune()
         return manifest
 
     def prune(self) -> list[str]:
-        if not self.root.exists():
+        if self.retention_count == 0 or not self.root.exists():
             return []
         with self._lock:
             active_id = self._active_id
@@ -124,6 +125,41 @@ class WorkspaceManager:
         manifest.update(values)
         manifest["updated_at"] = datetime.now(timezone.utc).isoformat()
         self._write_json(path, manifest)
+
+    def active_manifest(self) -> dict[str, Any] | None:
+        workspace_id = self.active_id
+        if not workspace_id:
+            return None
+        path = self.path(workspace_id) / "manifest.json"
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        return value if isinstance(value, dict) else None
+
+    @property
+    def _active_pointer_path(self) -> Path:
+        return self.root / ".current.json"
+
+    def _restore_active_id(self) -> str | None:
+        try:
+            value = json.loads(
+                self._active_pointer_path.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError):
+            return None
+        workspace_id = str(value.get("workspace_id") or "")
+        if not workspace_id.startswith("run_"):
+            return None
+        if not (self.root / workspace_id / "manifest.json").exists():
+            return None
+        return workspace_id
+
+    def _write_active_pointer(self, workspace_id: str) -> None:
+        self._write_json(self._active_pointer_path, {
+            "workspace_id": workspace_id,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
 
     @staticmethod
     def _write_json(path: Path, value: dict[str, Any]) -> None:

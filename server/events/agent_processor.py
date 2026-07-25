@@ -9,6 +9,7 @@ from domains.flood.runtime.workspace import active_workspace_id, workspace_scope
 from server.events.factory import (
     event_forecast_input_id,
     forecast_completed,
+    forecast_result_context_error,
     make_impact_event,
     make_inundation_event,
 )
@@ -94,13 +95,17 @@ class EventAgentProcessor:
             event, generation,
         )
         forecast_result = agent_result.get("forecast_result")
-        if not forecast_result and agent_result.get("forecast_requested"):
-            forecast_result = self.app.forecast(force=False)
-            agent_result["forecast_result"] = forecast_result
+        context_error = forecast_result_context_error(event, forecast_result)
+        if context_error:
+            agent_result["forecast_context_error"] = context_error
+            agent_result.pop("forecast_result", None)
+            forecast_result = None
         if forecast_result:
             self._record_forecast_policy_result(
                 event, forecast_result, agent_result,
             )
+        else:
+            self._record_forecast_policy_failure(event, agent_result, generation)
         self._append_forecast_complete_trace(agent_result, generation)
         if forecast_completed(forecast_result):
             inundation_event = make_inundation_event(
@@ -165,10 +170,6 @@ class EventAgentProcessor:
                         parsed = parse_json_object(full_result)
                         if parsed and "error" not in parsed:
                             agent_result["forecast_result"] = parsed
-                        elif not data.get("blocked"):
-                            agent_result["forecast_result"] = self.app.forecast(
-                                force=False,
-                            )
                 elif event_type == "reasoning":
                     reasoning_chunks.append(str(data.get("content") or ""))
                 elif event_type == "text":
@@ -177,18 +178,14 @@ class EventAgentProcessor:
             self._collect_agent_side_effects(
                 session_id, agent_result, generation,
             )
-            if (
-                agent_result.get("forecast_requested")
-                and not agent_result.get("forecast_result")
-            ):
-                agent_result["forecast_result"] = self.app.forecast(force=False)
             self._flush_reasoning_trace(reasoning_chunks, generation)
             self._append_agent_conclusion_trace(text_chunks, generation)
         except Exception as exc:
+            agent_result["agent_error"] = str(exc)
             self.append_output("agent_trace", {
                 "type": "agent_trace",
-                "tag": "FALLBACK",
-                "label": "LLM 事件推理失败，启用规则兜底",
+                "tag": "ERR",
+                "label": "LLM 洪水预测事件处理失败",
                 "detail": str(exc),
             }, generation)
         return agent_result
@@ -233,6 +230,33 @@ class EventAgentProcessor:
         elif status == "failed":
             self.playback_runner.mark_forecast_failed(forecast_input_id)
             agent_result["forecast_policy_recorded"] = True
+
+    def _record_forecast_policy_failure(
+        self,
+        source_event: dict[str, Any],
+        agent_result: dict[str, Any],
+        generation: int,
+    ) -> None:
+        if agent_result.get("forecast_policy_recorded"):
+            return
+        forecast_input_id = event_forecast_input_id(source_event)
+        self.playback_runner.mark_forecast_failed(forecast_input_id)
+        agent_result["forecast_policy_recorded"] = True
+        reason = (
+            str(agent_result.get("forecast_context_error") or "")
+            or "智能体调用了预测工具，但没有得到有效预测结果。"
+            if agent_result.get("forecast_requested")
+            else "智能体未调用 run_flood_forecast。"
+        )
+        self.append_output("agent_trace", {
+            "type": "agent_trace",
+            "tag": "ERR",
+            "label": "洪水预测未完成",
+            "detail": (
+                f"{reason}本次结果已拒绝且请求已标记失败，"
+                "后续观测可再次触发智能体重试。"
+            ),
+        }, generation)
 
     def _run_agent_for_followup_event(
         self,
@@ -310,7 +334,7 @@ class EventAgentProcessor:
         except Exception as exc:
             self.append_output("agent_trace", {
                 "type": "agent_trace",
-                "tag": "FALLBACK",
+                "tag": "ERR",
                 "label": fallback_label,
                 "detail": str(exc),
             }, generation)

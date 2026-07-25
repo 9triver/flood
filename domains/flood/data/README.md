@@ -11,12 +11,12 @@ under `local/runtime/flood/workspaces/`. Shared rebuildable caches belong under
 `local/runtime/flood/cache/`. Large downloads and intermediate source rasters belong
 under `local/source_data/`.
 
-Each successful forecast workspace keeps only the boundary input, `max_depth.csv`,
-`depth_series.npy`, `time_steps.json`, and run metadata. `ForecastCell` geometries are
-derived from the shared mesh on demand and are not persisted. Successful CNN temporary
-input/output directories are removed; failed runs keep them for diagnosis. The newest
-three workspaces are retained by default. Set `FLOOD_WORKSPACE_RETENTION_COUNT` to
-change that limit.
+Each successful forecast is archived in its workspace as `forecasts/vNNN`, while
+`forecasts/latest` remains the compatibility path used by the live map. `ForecastCell`
+geometries are derived from the shared mesh on demand and are not persisted. Successful
+CNN temporary input/output directories are removed; failed runs keep them for diagnosis.
+Evolution workspaces are retained by default. Set `FLOOD_WORKSPACE_RETENTION_COUNT` to
+a positive number only when automatic pruning is explicitly wanted.
 
 Legacy design-flood max-depth scenarios are reference material, not live forecasts.
 Local copies are archived under `local/reference_data/flood/design_flood_scenarios/`.

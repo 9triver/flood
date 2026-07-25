@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import math
 import csv
+import os
+import shutil
 import sqlite3
 import threading
 from collections import OrderedDict
@@ -18,7 +20,7 @@ from .workspace import WORKSPACES, active_workspace_id, workspace_dir
 
 
 LATEST_FORECAST_ID = "forecast_latest"
-FORECAST_SCHEMA_VERSION = 5
+FORECAST_SCHEMA_VERSION = 6
 _FORECAST_CELL_CACHE_MAX = 2
 _FORECAST_CELL_CACHE_LOCK = threading.RLock()
 _FORECAST_CELL_CACHE: OrderedDict[tuple[Any, ...], list[dict[str, Any]]] = OrderedDict()
@@ -29,7 +31,15 @@ def forecast_dir(*, create: bool = False) -> Path:
 
 
 def forecast_runs_path() -> Path:
+    return workspace_dir() / "forecasts" / "forecast_runs.jsonl"
+
+
+def legacy_forecast_runs_path() -> Path:
     return forecast_dir() / "forecast_runs.jsonl"
+
+
+def forecast_pointer_path() -> Path:
+    return workspace_dir() / "forecasts" / "latest.json"
 
 
 def forecast_cycle_path() -> Path:
@@ -50,9 +60,22 @@ def hydrodynamic_forecast_time_steps_path() -> Path:
 
 def run_flood_forecast(resolver, forecast_id: str = "latest",
                        force: bool = False) -> dict[str, Any]:
+    requested_id = str(forecast_id or "latest")
+    if requested_id not in {"latest", LATEST_FORECAST_ID}:
+        stored = next(
+            (
+                row for row in read_forecast_runs()
+                if row.get("forecast_id") == requested_id
+                or row.get("forecast_version") == requested_id
+            ),
+            None,
+        )
+        return (
+            {"forecast": stored}
+            if stored
+            else {"error": "forecast not found", "forecast_id": requested_id}
+        )
     run = ensure_latest_forecast(resolver, force=force)
-    if forecast_id not in ("", "latest", LATEST_FORECAST_ID, run["forecast_id"]):
-        return {"error": "forecast not found", "forecast_id": forecast_id}
     return {"forecast": run}
 
 
@@ -95,9 +118,12 @@ def query_forecast_runs(resolver, filters: dict[str, Any] | None = None,
                         offset: int | None = None) -> list[dict]:
     if not active_workspace_id():
         return []
-    ensure_latest_forecast(resolver)
-    rows = read_jsonl(forecast_runs_path())
-    rows = apply_filters(rows, normalize_forecast_filters(filters))
+    rows = read_forecast_runs()
+    normalized_filters = normalize_forecast_filters(filters)
+    if is_latest_forecast_id((filters or {}).get("forecast_id")):
+        rows = rows[-1:]
+        normalized_filters.pop("forecast_id", None)
+    rows = apply_filters(rows, normalized_filters)
     rows = apply_order(rows, order_by)
     return apply_window(rows, limit, offset)
 
@@ -108,12 +134,11 @@ def query_forecast_cells(resolver, filters: dict[str, Any] | None = None,
                          offset: int | None = None) -> list[dict]:
     if not active_workspace_id():
         return []
-    ensure_latest_forecast(resolver)
     normalized_filters = normalize_forecast_filters(filters)
     rows = cached_forecast_cells(normalized_filters)
     object_filters = {
         key: value for key, value in normalized_filters.items()
-        if key != "time_h"
+        if key not in {"forecast_id", "time_h"}
     }
     rows = apply_filters(rows, object_filters)
     rows = apply_order(rows, order_by)
@@ -131,8 +156,8 @@ def count_forecast_cells(resolver, filters: dict[str, Any] | None = None) -> int
 def ensure_latest_forecast(resolver, force: bool = False) -> dict[str, Any]:
     if not active_workspace_id():
         WORKSPACES.create()
-    if not force and forecast_runs_path().exists():
-        rows = read_jsonl(forecast_runs_path())
+    rows = read_forecast_runs()
+    if not force and rows:
         latest_boundary_flow = read_latest_forecast_input()
         if (
             rows
@@ -144,11 +169,111 @@ def ensure_latest_forecast(resolver, force: bool = False) -> dict[str, Any]:
 
     forecast_dir(create=True).mkdir(parents=True, exist_ok=True)
     run = generate_forecast(resolver)
-    write_jsonl(forecast_runs_path(), [run])
+    run = finalize_forecast_run(run, rows)
+    write_jsonl(forecast_runs_path(), [*mark_forecasts_not_latest(rows), run])
+    write_forecast_pointer(run)
     clear_forecast_cell_cache()
     clear_cached_cycle()
     clear_cached_geojson()
     return run
+
+
+def finalize_forecast_run(
+    run: dict[str, Any],
+    existing_runs: list[dict[str, Any]],
+) -> dict[str, Any]:
+    sequence = max(
+        [
+            int(item.get("forecast_sequence") or index)
+            for index, item in enumerate(existing_runs, 1)
+        ],
+        default=0,
+    ) + 1
+    version = f"v{sequence:03d}"
+    boundary_flow = _json_object(run.get("boundary_flow"))
+    trigger = _json_object(run.get("forecast_trigger"))
+    finalized = {
+        **run,
+        "forecast_id": version,
+        "forecast_version": version,
+        "forecast_sequence": sequence,
+        "workspace_id": active_workspace_id(),
+        "forecast_time": (
+            boundary_flow.get("observed_through")
+            or boundary_flow.get("triggered_at")
+            or run.get("generated_at")
+        ),
+        "valid_from": boundary_flow.get("window_start"),
+        "valid_to": boundary_flow.get("window_end"),
+        "trigger_reason": trigger.get("reason"),
+        "is_latest": True,
+    }
+    archive_dir = workspace_dir() / "forecasts" / version
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    output_paths = {
+        "hydrodynamic_depth_path": _archive_forecast_output(
+            hydrodynamic_forecast_depth_path(), archive_dir,
+        ),
+        "hydrodynamic_series_path": _archive_forecast_output(
+            hydrodynamic_forecast_series_path(), archive_dir,
+        ),
+        "hydrodynamic_time_steps_path": _archive_forecast_output(
+            hydrodynamic_forecast_time_steps_path(), archive_dir,
+        ),
+    }
+    finalized.update(output_paths)
+    finalized["data_path"] = output_paths["hydrodynamic_depth_path"]
+    cnn_result = _json_object(finalized.get("cnn_v2"))
+    if cnn_result:
+        cnn_result.update(output_paths)
+        finalized["cnn_v2"] = json.dumps(cnn_result, ensure_ascii=False)
+    (archive_dir / "forecast.json").write_text(
+        json.dumps(finalized, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    return finalized
+
+
+def _archive_forecast_output(source: Path, archive_dir: Path) -> str:
+    if not source.exists():
+        return ""
+    target = archive_dir / source.name
+    if target.exists():
+        target.unlink()
+    try:
+        os.link(source, target)
+    except OSError:
+        shutil.copy2(source, target)
+    return rel(target)
+
+
+def mark_forecasts_not_latest(
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [{**row, "is_latest": False} for row in rows]
+
+
+def write_forecast_pointer(run: dict[str, Any]) -> None:
+    path = forecast_pointer_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({
+            "forecast_id": run.get("forecast_id"),
+            "forecast_version": run.get("forecast_version"),
+            "generated_at": run.get("generated_at"),
+        }, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    try:
+        parsed = json.loads(str(value or "{}"))
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def cached_forecast_matches_input(forecast: dict[str, Any],
@@ -326,7 +451,8 @@ def read_hydrodynamic_depth_csv(path: Path) -> dict[int, float]:
 
 def forecast_cells_from_hydrodynamic_mesh(depths: dict[int, float],
                                           generated_at: str,
-                                          time_h: float | None = None) -> list[dict[str, Any]]:
+                                          time_h: float | None = None,
+                                          forecast_id: str = LATEST_FORECAST_ID) -> list[dict[str, Any]]:
     if not MESH_DB_PATH.exists() or not depths:
         return []
     cells = []
@@ -353,8 +479,8 @@ def forecast_cells_from_hydrodynamic_mesh(depths: dict[int, float],
             area_m2 = triangle_area_m2(coordinates[:3])
             velocity = round(max(0.04, min(2.4, 0.10 + math.sqrt(depth_m) * 0.38)), 3)
             cells.append({
-                "forecast_cell_id": f"{LATEST_FORECAST_ID}_{mesh_cell_id}",
-                "forecast_id": LATEST_FORECAST_ID,
+                "forecast_cell_id": f"{forecast_id}_{mesh_cell_id}",
+                "forecast_id": forecast_id,
                 "model_name": "FLOOD_CNN_V2",
                 "mesh_cell_id": str(mesh_cell_id),
                 "mesh_source_id": "cnn_v2_gt",
@@ -411,6 +537,7 @@ def forecast_cell_summary_from_hydrodynamic_mesh(
 
 def cached_forecast_cells(filters: dict[str, Any]) -> list[dict[str, Any]]:
     forecast_id = str(filters.get("forecast_id") or LATEST_FORECAST_ID)
+    resolved_forecast_id = resolve_forecast_id(forecast_id)
     requested_time_h = coerce_optional_float(filters.get("time_h"))
     depth_entry = forecast_depth_entry(forecast_id, time_h=requested_time_h)
     cache_key = (
@@ -426,8 +553,9 @@ def cached_forecast_cells(filters: dict[str, Any]) -> list[dict[str, Any]]:
             return cached
         rows = forecast_cells_from_hydrodynamic_mesh(
             depth_entry["depths"],
-            generated_at=latest_forecast_generated_at(),
+            generated_at=forecast_generated_at(resolved_forecast_id),
             time_h=depth_entry.get("time_h"),
+            forecast_id=resolved_forecast_id,
         )
         _FORECAST_CELL_CACHE[cache_key] = rows
         _FORECAST_CELL_CACHE.move_to_end(cache_key)
@@ -441,9 +569,16 @@ def clear_forecast_cell_cache() -> None:
         _FORECAST_CELL_CACHE.clear()
 
 
-def latest_forecast_generated_at() -> str:
-    rows = read_jsonl(forecast_runs_path())
+def forecast_generated_at(forecast_id: str = LATEST_FORECAST_ID) -> str:
+    rows = read_forecast_runs()
     if rows:
+        if forecast_id not in {"latest", LATEST_FORECAST_ID}:
+            selected = next(
+                (row for row in rows if row.get("forecast_id") == forecast_id),
+                None,
+            )
+            if selected:
+                return str(selected.get("generated_at") or "")
         return str(rows[-1].get("generated_at") or "")
     return datetime.now(timezone.utc).isoformat()
 
@@ -793,9 +928,28 @@ def project(point: tuple[float, float], ref_lat: float) -> tuple[float, float]:
 
 def normalize_forecast_filters(filters: dict[str, Any] | None) -> dict[str, Any]:
     result = dict(filters or {})
-    if result.get("forecast_id") == "latest":
+    if is_latest_forecast_id(result.get("forecast_id")):
         result["forecast_id"] = LATEST_FORECAST_ID
     return result
+
+
+def is_latest_forecast_id(value: Any) -> bool:
+    return str(value or "") in {"latest", LATEST_FORECAST_ID}
+
+
+def resolve_forecast_id(value: Any) -> str:
+    forecast_id = str(value or LATEST_FORECAST_ID)
+    if not is_latest_forecast_id(forecast_id):
+        return forecast_id
+    rows = read_forecast_runs()
+    return str(rows[-1].get("forecast_id") or LATEST_FORECAST_ID) if rows else LATEST_FORECAST_ID
+
+
+def read_forecast_runs() -> list[dict]:
+    rows = read_jsonl(forecast_runs_path())
+    if rows:
+        return rows
+    return read_jsonl(legacy_forecast_runs_path())
 
 
 def read_jsonl(path: Path) -> list[dict]:

@@ -35,6 +35,7 @@ ID_FIELDS = {
     "ForecastRun": "forecast_id",
     "ForecastCell": "forecast_cell_id",
     "HydrodynamicCell": "hydrodynamic_cell_id",
+    "EmergencyDirective": "directive_id",
 }
 
 

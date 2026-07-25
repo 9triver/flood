@@ -191,6 +191,7 @@ def id_field(object_type: str) -> str:
         "ForecastRun": "forecast_id",
         "ForecastCell": "forecast_cell_id",
         "HydrodynamicCell": "hydrodynamic_cell_id",
+        "EmergencyDirective": "directive_id",
         "Hydrology": "hydrology_id",
     }.get(object_type, f"{object_type.lower()}_id")
 

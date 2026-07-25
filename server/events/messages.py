@@ -217,6 +217,13 @@ def domain_event_detail(event: dict[str, Any]) -> str:
         return inundation_event_detail(event)
     if event.get("event_type") == "ImpactAnalyzed":
         return impact_event_detail(event)
+    if event.get("event_type") == "DirectiveIssued":
+        payload = event.get("payload") or {}
+        return (
+            f"{payload.get('directive_id', '')} · "
+            f"{payload.get('title', '')}；"
+            f"接收对象：{payload.get('recipients', '')}"
+        )
     return str(event.get("severity") or "")
 
 

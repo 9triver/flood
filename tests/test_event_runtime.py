@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -13,6 +15,7 @@ sys.path.insert(0, str(PROJECT_DIR / "agent"))
 from server.events import EventRuntime
 from server.events.agent_processor import EventAgentProcessor
 from server.events.factory import make_impact_event, make_inundation_event
+from server.events.factory import make_directive_issued_event
 from server.events.messages import summarize_event_tool_result
 from server.serialization import format_sse, parse_json_object
 from oag.runtime.events import (
@@ -21,6 +24,7 @@ from oag.runtime.events import (
     ToolCallEvent,
     ToolResultEvent,
 )
+from domains.flood.runtime.workspace import WorkspaceManager
 
 
 class NoAgentApp:
@@ -35,6 +39,15 @@ class NoopPlaybackTracker:
         return True
 
     def mark_forecast_failed(self, forecast_input_id):
+        return True
+
+
+class RecordingPlaybackTracker(NoopPlaybackTracker):
+    def __init__(self):
+        self.failed = []
+
+    def mark_forecast_failed(self, forecast_input_id):
+        self.failed.append(forecast_input_id)
         return True
 
 
@@ -67,7 +80,7 @@ class FakeEventApp:
         })
 
     def forecast(self, force=False):
-        return {"forecast": {"status": "completed", "forecast_id": "fallback"}}
+        raise AssertionError("event processor must not bypass the agent tool call")
 
 
 class EventRuntimeModuleBoundaryTest(unittest.TestCase):
@@ -105,6 +118,15 @@ class EventRuntimeModuleBoundaryTest(unittest.TestCase):
         self.assertEqual("episode_1", inundation["correlation_id"])
         self.assertEqual("critical", impact["severity"])
         self.assertEqual("event-session", impact["correlation_id"])
+
+        directive = make_directive_issued_event({
+            "directive_id": "DIR-20260725-001",
+            "workspace_id": "run_1",
+            "title": "组织转移",
+            "priority": "urgent",
+        })
+        self.assertEqual("DirectiveIssued", directive["event_type"])
+        self.assertEqual("warning", directive["severity"])
 
     def test_agent_processor_ignores_stale_generation(self):
         outputs = []
@@ -211,6 +233,114 @@ class EventRuntimeModuleBoundaryTest(unittest.TestCase):
         self.assertIn("预测淹没单元：65183 个", result_trace["detail"])
         self.assertNotIn('{"forecast":', result_trace["detail"])
         self.assertIn("后续", timeline[-2][2]["detail"])
+
+    def test_missing_forecast_tool_call_is_visible_and_not_bypassed(self):
+        app = FakeEventApp([TextEvent(content="本轮不调用预测工具。")])
+        tracker = RecordingPlaybackTracker()
+        outputs = []
+        processor = EventAgentProcessor(
+            app=app,
+            playback_runner=tracker,
+            current_generation=lambda: 1,
+            append_output=lambda name, data, generation: outputs.append(data),
+            publish_inundation_event=lambda event, generation: self.fail(
+                "inundation event must not be published"
+            ),
+            publish_impact_event=lambda event, generation: None,
+        )
+
+        processor.handle_event({
+            "event_type": "FloodForecastRequired",
+            "event_id": "evt_missing_tool",
+            "source_id": "boundary_v002",
+            "correlation_id": "episode_1",
+            "severity": "warning",
+            "payload": {
+                "observation": {},
+                "forecast_input": {"boundary_flow_id": "boundary_v002"},
+                "forecast_trigger": {"should_run_forecast": True},
+            },
+        }, generation=1)
+
+        self.assertEqual(["boundary_v002"], tracker.failed)
+        error = next(item for item in outputs if item.get("tag") == "ERR")
+        self.assertIn("未调用 run_flood_forecast", error["detail"])
+
+    def test_forecast_result_from_another_workspace_is_rejected(self):
+        forecast_result = {
+            "forecast": {
+                "status": "completed",
+                "forecast_id": "forecast_latest",
+                "forecast_input_id": "boundary_v001",
+                "workspace_id": "run_previous",
+            },
+        }
+        app = FakeEventApp([
+            ToolCallEvent(
+                name="run_flood_forecast",
+                args={"forecast_id": "latest"},
+            ),
+            ToolResultEvent(
+                name="run_flood_forecast",
+                result=json.dumps(forecast_result, ensure_ascii=False),
+            ),
+        ])
+        tracker = RecordingPlaybackTracker()
+        outputs = []
+        published = []
+        processor = EventAgentProcessor(
+            app=app,
+            playback_runner=tracker,
+            current_generation=lambda: 1,
+            append_output=lambda name, data, generation: outputs.append(data),
+            publish_inundation_event=lambda event, generation: published.append(event),
+            publish_impact_event=lambda event, generation: None,
+        )
+
+        processor.handle_event({
+            "event_type": "FloodForecastRequired",
+            "event_id": "evt_wrong_workspace",
+            "source_id": "boundary_v001",
+            "workspace_id": "run_current",
+            "correlation_id": "episode_1",
+            "severity": "warning",
+            "payload": {
+                "forecast_input": {"boundary_flow_id": "boundary_v001"},
+                "forecast_trigger": {"should_run_forecast": True},
+            },
+        }, generation=1)
+
+        self.assertEqual(["boundary_v001"], tracker.failed)
+        self.assertEqual([], published)
+        error = next(item for item in outputs if item.get("tag") == "ERR")
+        self.assertIn("run_current", error["detail"])
+        self.assertIn("run_previous", error["detail"])
+
+    def test_runtime_persists_directive_event_to_current_workspace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = WorkspaceManager(Path(directory) / "workspaces")
+            workspace_id = manager.create()["workspace_id"]
+            with patch("domains.flood.runtime.workspace.WORKSPACES", manager), patch(
+                "server.events.runtime.WORKSPACES", manager,
+            ):
+                runtime = EventRuntime(NoAgentApp())
+                runtime.publish_directive_issued({
+                    "directive_id": "DIR-20260725-001",
+                    "workspace_id": workspace_id,
+                    "title": "组织转移",
+                    "recipients": "凤翔镇人民政府",
+                    "priority": "urgent",
+                    "issued_at": "2026-07-25T12:00:00+08:00",
+                })
+
+            timeline = (
+                manager.path(workspace_id) / "events" / "timeline.jsonl"
+            )
+            records = [
+                json.loads(line)
+                for line in timeline.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual("DirectiveIssued", records[0]["data"]["event_type"])
 
     def test_impact_child_event_is_published_after_parent_stage_done(self):
         impact_result = {

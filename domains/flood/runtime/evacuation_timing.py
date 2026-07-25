@@ -510,7 +510,7 @@ def build_deadline(
 
 def resolve_forecast_context(resolver) -> dict[str, Any]:
     try:
-        rows = resolver.query("ForecastRun", limit=1)
+        rows = resolver.query("ForecastRun", order_by="-forecast_sequence", limit=1)
     except (FileNotFoundError, TypeError, ValueError):
         rows = []
     run = rows[-1] if rows else {}

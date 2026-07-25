@@ -112,8 +112,54 @@
           </section>
         </div>
         <div id="map"></div>
-        <div class="conclusion-toast-region" id="conclusionToastRegion" aria-live="polite"></div>
-        <section class="situation-workbench is-collapsed" id="situationWorkbench" data-view="telemetry" aria-label="态势工作台">
+        <div class="conclusion-toast-region" id="conclusionToastRegion" aria-live="polite">
+          <article class="conclusion-toast directive-draft-toast" id="directiveDraftToast" role="dialog" aria-labelledby="directiveDraftHeading" hidden>
+            <header class="conclusion-toast-drag-handle" title="拖动">
+              <div class="conclusion-toast-heading" id="directiveDraftHeading">
+                <i data-lucide="file-pen-line"></i>
+                <span>应急指令初稿</span>
+              </div>
+              <div class="conclusion-toast-header-actions">
+                <i class="conclusion-toast-grip" data-lucide="grip-horizontal" aria-hidden="true"></i>
+              </div>
+            </header>
+            <div class="directive-toast-body">
+              <div class="directive-context" aria-label="演进上下文">
+                <span><small>状态</small><strong id="directiveContextWorkspace">当前演进</strong></span>
+                <span><small>演进时刻</small><strong id="directiveContextTime">--</strong></span>
+                <span><small>预测版本</small><strong id="directiveContextForecast">--</strong></span>
+              </div>
+              <label class="directive-field">
+                <span>标题</span>
+                <input id="directiveTitle" maxlength="200" autocomplete="off" required />
+              </label>
+              <div class="directive-field-row">
+                <label class="directive-field">
+                  <span>接收对象</span>
+                  <input id="directiveRecipients" maxlength="500" autocomplete="off" required />
+                </label>
+                <label class="directive-field directive-priority-field">
+                  <span>优先级</span>
+                  <select id="directivePriority">
+                    <option value="normal">普通</option>
+                    <option value="urgent" selected>紧急</option>
+                    <option value="critical">特急</option>
+                  </select>
+                </label>
+              </div>
+              <label class="directive-field">
+                <span>正文</span>
+                <textarea id="directiveContent" maxlength="20000" placeholder="输入应急指令正文" required></textarea>
+              </label>
+              <output class="directive-toast-error" id="directiveToastError" hidden></output>
+            </div>
+            <footer class="directive-toast-actions">
+              <button class="directive-secondary-button" id="directiveCancelBtn" type="button">取消</button>
+              <button class="directive-primary-button" id="directiveIssueBtn" type="button">发出</button>
+            </footer>
+          </article>
+        </div>
+        <section class="situation-workbench is-collapsed" id="situationWorkbench" aria-label="态势工作台">
           <header class="situation-workbench-header">
             <button class="icon-button" id="situationToggleBtn" type="button" title="展开态势工作台" aria-label="展开态势工作台" aria-expanded="false">
               <i data-lucide="panel-bottom-open"></i>
@@ -121,10 +167,6 @@
             <div class="situation-heading">
               <strong>态势工作台</strong>
               <span id="situationSummary">等待演进数据</span>
-            </div>
-            <div class="situation-view-tabs" role="tablist" aria-label="态势工作台视图">
-              <button class="is-active" type="button" data-situation-view="telemetry" role="tab" aria-selected="true">演进</button>
-              <button type="button" data-situation-view="impact" role="tab" aria-selected="false">影响</button>
             </div>
             <div class="hydro-timeline is-hidden" id="hydroTimeline" aria-label="预测淹没时间轴">
               <button class="icon-button" id="hydroPlayBtn" type="button" title="播放预测过程" aria-label="播放预测过程">
@@ -173,7 +215,7 @@
                     <span>四边界历史流量</span>
                     <small id="flowHistoryRange">--</small>
                   </div>
-                  <svg id="boundaryFlowHistoryChart" class="flow-history-chart" viewBox="0 0 320 78" preserveAspectRatio="none" aria-hidden="true"></svg>
+                  <svg id="boundaryFlowHistoryChart" class="flow-history-chart" viewBox="0 0 320 78" preserveAspectRatio="xMidYMid meet" aria-hidden="true"></svg>
                 </div>
                 <div class="flow-value-row" style="--flow-color:#1f7a5c">
                   <span>区间 1</span>
@@ -218,6 +260,16 @@
             </header>
             <div class="impact-list" id="impactList"></div>
           </section>
+            <section class="directive-panel situation-pane" id="directivePanel" aria-label="应急指令">
+              <header class="directive-panel-header">
+                <div>
+                  <strong>应急指令</strong>
+                  <span>当前演进已发出</span>
+                </div>
+                <output class="directive-count" id="directiveCount">0</output>
+              </header>
+              <div class="directive-history-list" id="directiveHistoryList"></div>
+            </section>
           </div>
         </section>
       </main>
@@ -261,84 +313,6 @@
             </button>
             <div class="accordion-body">
               <section class="agent-trace" id="agentTrace"></section>
-            </div>
-          </section>
-
-          <section class="accordion-section directive-section" data-agent-pane="directive">
-            <button class="accordion-header" type="button" data-panel-toggle="directive" aria-expanded="false">
-              <span class="accordion-title">
-                <i data-lucide="file-text"></i>
-                <span>应急指令</span>
-                <span class="agent-pane-mode">当前演进</span>
-                <output id="directiveCount">0</output>
-              </span>
-              <i class="accordion-chevron" data-lucide="chevron-down"></i>
-            </button>
-            <div class="accordion-body directive-body">
-              <nav class="directive-view-tabs" aria-label="应急指令视图">
-                <button class="is-active" type="button" data-directive-view="draft">指令初稿</button>
-                <button type="button" data-directive-view="history">已发出</button>
-              </nav>
-
-              <section class="directive-pane is-active" data-directive-pane="draft">
-                <div class="directive-empty" id="directiveEmpty">
-                  <i data-lucide="file-text"></i>
-                  <strong>尚未创建指令初稿</strong>
-                  <span>在对话中要求智能体将建议作为初稿，即可在这里修改并确认发出。</span>
-                </div>
-                <div class="directive-editor" id="directiveEditor" hidden>
-                  <div class="directive-context" aria-label="演进上下文">
-                    <span><small>演进</small><strong id="directiveContextWorkspace">--</strong></span>
-                    <span><small>模拟时间</small><strong id="directiveContextTime">--</strong></span>
-                    <span><small>预测版本</small><strong id="directiveContextForecast">--</strong></span>
-                  </div>
-                  <label class="directive-field">
-                    <span>标题</span>
-                    <input id="directiveTitle" maxlength="200" autocomplete="off" required />
-                  </label>
-                  <div class="directive-field-row">
-                    <label class="directive-field">
-                      <span>接收对象</span>
-                      <input id="directiveRecipients" maxlength="500" autocomplete="off" required />
-                    </label>
-                    <label class="directive-field directive-priority-field">
-                      <span>优先级</span>
-                      <select id="directivePriority">
-                        <option value="normal">普通</option>
-                        <option value="urgent" selected>紧急</option>
-                        <option value="critical">特急</option>
-                      </select>
-                    </label>
-                  </div>
-                  <div class="directive-content-header">
-                    <span>正文</span>
-                    <div class="directive-content-tabs">
-                      <button class="is-active" type="button" data-directive-content-view="edit">编辑</button>
-                      <button type="button" data-directive-content-view="preview">预览</button>
-                    </div>
-                  </div>
-                  <textarea id="directiveContent" maxlength="20000" placeholder="输入应急指令正文" required></textarea>
-                  <div class="directive-preview markdown-body" id="directivePreview" hidden></div>
-                  <div class="directive-issue-confirm" id="directiveIssueConfirm" hidden>
-                    <div>
-                      <strong>确认发出这份应急指令？</strong>
-                      <span>发出后将归档到当前演进，原记录不可修改。</span>
-                    </div>
-                    <div>
-                      <button class="directive-secondary-button" id="directiveBackBtn" type="button">返回修改</button>
-                      <button class="directive-primary-button" id="directiveConfirmBtn" type="button">确认发出</button>
-                    </div>
-                  </div>
-                  <footer class="directive-editor-actions">
-                    <button class="directive-secondary-button" id="directiveCancelBtn" type="button">取消初稿</button>
-                    <button class="directive-primary-button" id="directiveIssueBtn" type="button">检查并发出</button>
-                  </footer>
-                </div>
-              </section>
-
-              <section class="directive-pane directive-history" data-directive-pane="history" hidden>
-                <div class="directive-history-list" id="directiveHistoryList"></div>
-              </section>
             </div>
           </section>
 

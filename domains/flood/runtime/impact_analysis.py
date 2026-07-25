@@ -56,6 +56,7 @@ def analyze_inundation_impacts(resolver, forecast_id: str = "latest",
         }
 
     cell_index = compact_cell_index(cells, min_depth=float(min_depth_m or 0))
+    resolved_forecast_id = str(cells[0].get("forecast_id") or forecast_key)
     impacts: list[dict[str, Any]] = []
     for object_type in target_types:
         if object_type in POINT_TARGET_TYPES:
@@ -101,7 +102,7 @@ def analyze_inundation_impacts(resolver, forecast_id: str = "latest",
     summary = summarize_impacts(target_types, impacts)
     return {
         "status": "completed",
-        "forecast_id": forecast_key,
+        "forecast_id": resolved_forecast_id,
         "time_h": actual_cell_time_h(cells, analysis_time_h),
         "target_type": target_type or "all",
         "parameters": {
