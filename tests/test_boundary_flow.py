@@ -348,7 +348,7 @@ class InundationMapEventTest(unittest.TestCase):
         )
         self.assertEqual(filtered["result_cards"], [])
 
-    def test_targeted_impact_map_actions_are_allowed(self):
+    def test_targeted_impact_map_actions_are_suppressed(self):
         event = {
             "type": "map_actions",
             "context": "预测淹没影响",
@@ -370,10 +370,7 @@ class InundationMapEventTest(unittest.TestCase):
 
         filtered = filter_inundation_map_event(event)
 
-        self.assertEqual(
-            [action["type"] for action in filtered["map_actions"]],
-            ["load_object", "clear_highlights", "highlight_objects"],
-        )
+        self.assertIsNone(filtered)
 
     def test_impact_only_map_event_is_suppressed(self):
         event = {

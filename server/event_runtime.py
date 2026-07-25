@@ -588,15 +588,15 @@ class EventRuntime:
         prompt = (
             "/no_think\n"
             "你正在作为珊瑚河洪水应急智能体接收水动力模型输出事件。"
-            "本轮链路放开预测淹没结果研判、受影响对象确定性分析和地图展示。"
+            "本轮链路放开预测淹没结果研判、受影响对象确定性分析和淹没范围地图展示。"
             "收到 InundationGenerated 事件后，必须调用 analyze_inundation_impacts 分析受影响对象；"
             "对象级受淹判定只能来自该工具返回结果，不要自行猜测学校、医院、道路、桥梁、转移路线或安置点是否受淹。"
-            "如果你认为该淹没事件需要在 GIS 上展示，必须调用 ui_show_objects 显示预测淹没结果，"
+            "如果你认为该淹没事件需要在 GIS 上展示，必须调用 ui_show_objects 且仅显示预测淹没结果，"
             "对象使用 HydrodynamicCell，filters 使用 {\"forecast_id\":\"latest\"}，fit=false，refresh=true；地图工具会拆成显示网格和应用水深结果。"
-            "需要在地图展示影响分析结果时，按 analyze_inundation_impacts 的返回结果调用 ui_show_objects，"
-            "只显示受影响对象并设置 highlight=true、show_only_object_ids=true。"
+            "自动事件处理期间，禁止在地图展示影响分析返回的任何业务对象，包括学校、医院、道路、桥梁、转移路线、转移对象、安置点和风险点；"
+            "不得为这些对象调用 ui_show_objects。受影响对象仅用于文字概况，只有用户在普通对话中主动查询时才展示。"
             "禁止调用 run_emergency_cycle；防洪响应预案仍然切断。"
-            "请用简短结论说明：预测运行、淹没面积、最大水深、受影响对象概况，以及是否已请求地图展示。"
+            "请用简短结论说明：预测运行、淹没面积、最大水深、受影响对象概况，以及是否已请求淹没范围地图展示。"
             "原始事件如下：\n"
             f"{json.dumps(event, ensure_ascii=False, indent=2)}"
         )
@@ -858,34 +858,10 @@ class EventRuntime:
 
 def filter_inundation_map_event(event: dict[str, Any]) -> dict[str, Any] | None:
     allowed_types = {"show_hydrodynamic_mesh", "apply_hydrodynamic_result"}
-    impact_object_types = {"Road", "Bridge", "Facility", "Route", "Transfer", "Place", "Risk"}
     actions = [
         action for action in event.get("map_actions") or []
         if isinstance(action, dict)
-        and (
-            action.get("type") in allowed_types
-            or (
-                action.get("type") == "clear_highlights"
-                and any(
-                    isinstance(item, dict)
-                    and item.get("type") == "highlight_objects"
-                    and item.get("object_type") in impact_object_types
-                    and item.get("object_ids")
-                    for item in event.get("map_actions") or []
-                )
-            )
-            or (
-                action.get("type") == "load_object"
-                and action.get("object_type") in impact_object_types
-                and action.get("object_ids")
-                and action.get("replace_object_type")
-            )
-            or (
-                action.get("type") == "highlight_objects"
-                and action.get("object_type") in impact_object_types
-                and action.get("object_ids")
-            )
-        )
+        and action.get("type") in allowed_types
     ]
     if not actions:
         return None

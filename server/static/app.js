@@ -204,7 +204,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   await bootstrap();
   await loadObject("Watershed", {}, { fit: true });
   await loadObject("River", {}, { fit: false });
-  await loadObject("Reservoir", {}, { fit: false });
+  await loadObject("Reservoir", defaultObjectFilters("Reservoir"), { fit: false });
   startAutonomyStream();
   await refreshPlaybackStatus();
   renderIcons();
@@ -752,6 +752,7 @@ async function toggleObject(objectType) {
 
 function defaultObjectFilters(objectType) {
   if (objectType === "ForecastCell") return { forecast_id: "latest" };
+  if (objectType === "Reservoir") return { reservoir_id: "longtan" };
   return {};
 }
 
