@@ -135,13 +135,7 @@ def plan_evacuation_route(
             "flood_avoidance": flood_areas["summary"],
         }
         if exc.status == "no_safe_route":
-            result.update({
-                "retryable": False,
-                "agent_instruction": (
-                    "本次请求没有满足约束的安全路线。停止调用路线规划工具，"
-                    "不要自行更改交通方式、预测时刻或避洪参数重试；请直接向用户解释结果。"
-                ),
-            })
+            result["retryable"] = False
         if exc.details:
             result["routing_diagnostics"] = exc.details
         return result

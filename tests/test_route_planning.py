@@ -205,7 +205,7 @@ class RoutePlanningTests(unittest.TestCase):
                 self.assertEqual("AMap", result["routing_engine"])
                 self.assertIn("预测淹没约束", result["error"])
                 self.assertFalse(result["retryable"])
-                self.assertIn("停止调用路线规划工具", result["agent_instruction"])
+                self.assertNotIn("agent_instruction", result)
                 diagnostics = result["routing_diagnostics"]
                 self.assertEqual(1, diagnostics["candidate_count"])
                 self.assertEqual(0, diagnostics["safe_candidate_count"])

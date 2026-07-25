@@ -18,8 +18,9 @@ sys.path.insert(0, str(PROJECT_DIR / "agent"))
 
 from oag.runtime.events import event_to_dict  # noqa: E402
 from server.agent_runs import AgentRunManager  # noqa: E402
-from server.event_runtime import EventRuntime  # noqa: E402
+from server.events import EventRuntime  # noqa: E402
 from server.flood_app import FloodApp  # noqa: E402
+from server.serialization import format_sse  # noqa: E402
 
 
 APP = FloodApp()
@@ -105,11 +106,11 @@ class Handler(BaseHTTPRequestHandler):
             run = RUNS.get(run_id)
             if not run:
                 return self._sse([
-                    AgentRunManager._format_sse("text", {
+                    format_sse("text", {
                         "type": "text",
                         "content": "上一次生成任务已经不存在，请重新提问。",
                     }),
-                    AgentRunManager._format_sse("done", {"type": "done"}),
+                    format_sse("done", {"type": "done"}),
                 ])
             return self._sse(RUNS.stream(run, since))
 
@@ -142,13 +143,13 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 for event in APP.agent.confirm_tool(session_id, approved, answer=answer):
                     data = event_to_dict(event)
-                    yield AgentRunManager._format_sse(data["type"], data)
+                    yield format_sse(data["type"], data)
             except Exception as exc:
-                yield AgentRunManager._format_sse("text", {
+                yield format_sse("text", {
                     "type": "text",
                     "content": f"确认后继续执行失败：{exc}",
                 })
-            yield AgentRunManager._format_sse("done", {"type": "done"})
+            yield format_sse("done", {"type": "done"})
 
         return self._sse(generator())
 
@@ -273,11 +274,6 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.flush()
             except BrokenPipeError:
                 break
-
-    @staticmethod
-    def _format_sse(event: str, data: dict) -> bytes:
-        payload = json.dumps(data, ensure_ascii=False)
-        return f"event: {event}\ndata: {payload}\n\n".encode("utf-8")
 
     def log_message(self, fmt: str, *args):
         print(f"{self.address_string()} - {fmt % args}")

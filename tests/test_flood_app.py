@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from pathlib import Path
 
 from server.flood_app import (
     build_agent_task_hint,
@@ -9,9 +10,27 @@ from server.flood_app import (
     configured_agent_max_turns,
     select_user_agent_tools,
 )
+from server.presentation.map_tools import register_map_tools
+from oag.ontology.schema import Ontology
+from oag.tools.registry import ToolRegistry
+
+
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+ONTOLOGY = Ontology.load(PROJECT_DIR / "domains" / "flood" / "ontology.yaml")
 
 
 class FloodAppConfigTest(unittest.TestCase):
+    def test_map_tool_metadata_comes_from_ontology(self):
+        tools = ToolRegistry()
+        register_map_tools(tools, resolver=None, ontology=ONTOLOGY)
+
+        tool = tools.get("ui_show_objects")
+        definition = ONTOLOGY.presentation_tools["ui_show_objects"]
+        self.assertEqual(definition.description, tool.description)
+        self.assertIn("对象名称映射来自 ontology", tool.usage_prompt)
+        self.assertNotIn("{object_aliases}", tool.usage_prompt)
+        self.assertFalse(tool.policy.read_only)
+
     def test_agent_max_turns_defaults_to_ten(self):
         self.assertEqual(10, configured_agent_max_turns({}))
 
@@ -36,39 +55,44 @@ class FloodAppConfigTest(unittest.TestCase):
         )
 
     def test_plain_count_question_uses_read_only_tool_scope(self):
-        tools = select_user_agent_tools("珊瑚河流域内有几个乡镇？")
+        tools = select_user_agent_tools("珊瑚河流域内有几个乡镇？", ONTOLOGY)
 
         self.assertIn("count", tools)
         self.assertIn("query", tools)
         self.assertNotIn("run_flood_forecast", tools)
 
     def test_plain_count_question_gets_exact_domain_tool_hint(self):
-        hint = build_agent_task_hint("珊瑚河流域内有几个乡镇？")
+        hint = build_agent_task_hint("珊瑚河流域内有几个乡镇？", ONTOLOGY)
 
         self.assertIn('count({"object_type": "Town"})', hint)
         self.assertIn("得到 count 结果后立即回答", hint)
 
     def test_current_impact_question_does_not_expose_forecast(self):
-        tools = select_user_agent_tools("当前时刻哪些道路、桥梁受影响？在地图上显示")
+        tools = select_user_agent_tools(
+            "当前时刻哪些道路、桥梁受影响？在地图上显示", ONTOLOGY,
+        )
 
         self.assertIn("analyze_inundation_impacts", tools)
         self.assertIn("ui_show_objects", tools)
         self.assertNotIn("run_flood_forecast", tools)
 
     def test_explicit_reforecast_adds_forecast_tool(self):
-        tools = select_user_agent_tools("重新计算预测并分析哪些道路受影响")
+        tools = select_user_agent_tools(
+            "重新计算预测并分析哪些道路受影响", ONTOLOGY,
+        )
 
         self.assertIn("run_flood_forecast", tools)
         self.assertIn("analyze_inundation_impacts", tools)
 
     def test_follow_up_destination_request_keeps_route_tool_available(self):
-        tools = select_user_agent_tools("那就换一个最近的安置点")
+        tools = select_user_agent_tools("那就换一个最近的安置点", ONTOLOGY)
 
         self.assertIn("plan_evacuation_route", tools)
 
     def test_route_follow_up_inherits_recent_tool_scope(self):
         tools = select_user_agent_tools(
             "石角小学到凤翔镇卫生院",
+            ONTOLOGY,
             "请重新规划并画出路线",
         )
 

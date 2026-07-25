@@ -3,9 +3,135 @@ description: "水库下游洪水、道路桥梁、重要设施与避洪转移联
 tool_preferences:
   generic_search: fallback_only
 
+interaction_policies:
+  user_chat:
+    description: "珊瑚河 GIS 用户对话策略"
+    include_in_system_prompt: true
+    instructions:
+      - "你服务于以珊瑚河流域 GIS 为中心的前端；当前系统只展示实时预测结果，不提供设计洪水方案切换。"
+      - "用户明确要求显示、打开、绘制、加载、叠加、缩放、聚焦或清空地图对象时，必须调用对应 ui_* 工具执行前端动作，不要只用文字说明。"
+      - "用户只要求清除、隐藏淹没范围、预测淹没结果或水动力结果时，调用 ui_clear_map 并传 target=inundation；这只移除淹没结果，不改变地图视野。"
+      - "基于预测淹没范围判断设施、道路、桥梁、转移路线或安置点是否受影响时，必须调用 analyze_inundation_impacts，不得自行猜测对象级受淹结论。"
+      - "已有水动力时间轴时直接分析已有预测；只有用户明确要求运行、重算或更新预测时才调用 run_flood_forecast。"
+      - "前端上下文 hydrodynamic_timeline.mode=time_slice 且用户询问当前时刻、当前画面或该时刻影响时，把 current_hydrodynamic_time_h 作为 analyze_inundation_impacts.time_h；用户询问总体或最大影响时不传 time_h。"
+      - "用户要求运行预测、实时预测或未来淹没时，先调用 run_flood_forecast，再用 HydrodynamicCell 和 forecast_id=latest 展示预测淹没结果。"
+      - "用户要求自主观测、持续预测、自动告警、闭环调度或避洪转移调度时，调用 run_emergency_cycle，再按结果展示相关领域对象。"
+      - "不要把 severity_index 或综合指标映射为 5/10/20/50/100 年一遇设计方案；防洪响应预案必须通过已实现工具或人工审批。"
+      - "用户要求规划导航、避洪路线或绕开淹没区域前往安置点时调用 plan_evacuation_route；同一起终点每个用户请求最多调用一次，no_safe_route 或 retryable=false 后不得自行改变交通方式、预测时刻或避洪参数重试。"
+      - "路线规划成功后使用结果中的 route_id 展示本次生成的 Route；一次展示多个对象时放入同一次 ui_show_objects 调用。"
+    intents:
+      count:
+        keywords: ["几个", "多少个", "数量", "总数"]
+        tools: [count]
+        task_hint: "本问题是领域对象库的直接数量查询。请直接调用 {calls}；不要先查询无关对象或对象几何，也不要添加用户未明确给出的过滤条件。得到 count 结果后立即回答。"
+      map:
+        keywords: ["地图", "显示", "打开", "画", "绘制", "加载", "叠加", "聚焦", "定位", "缩放", "清空", "隐藏", "不显示"]
+        tools: [ui_show_objects, ui_show_event_marker, ui_clear_map, ui_focus_object]
+      impact:
+        keywords: ["受影响", "受淹", "淹水影响", "淹没影响", "涉水", "能否通行"]
+        context_keywords: ["受影响", "受淹", "淹水影响", "淹没影响", "涉水"]
+        tools: [analyze_inundation_impacts, ui_show_objects, ui_show_event_marker, ui_clear_map, ui_focus_object]
+      route:
+        keywords: ["路线", "路径", "导航", "绕行", "怎么走", "安置点", "重新规划", "规划一条", "→", "->"]
+        context_keywords: ["路线", "路径", "导航", "绕行", "安置点", "重新规划"]
+        tools: [plan_evacuation_route, ui_show_objects, ui_show_event_marker, ui_clear_map, ui_focus_object]
+      forecast:
+        keywords: ["运行预测", "重新预测", "重算", "重新计算", "更新预测", "启动预测", "未来淹没"]
+        tools: [run_flood_forecast, ui_show_objects, ui_show_event_marker, ui_clear_map, ui_focus_object]
+      emergency_cycle:
+        keywords: ["闭环", "应急循环", "自主观测", "持续预测", "自动告警", "自动调度"]
+        tools: [run_emergency_cycle, ui_show_objects, ui_show_event_marker, ui_clear_map, ui_focus_object]
+
+presentation_tools:
+  ui_show_objects:
+    summary: "在 GIS 地图中显示领域对象"
+    description: "在前端 GIS 地图中显示一个或多个领域对象。对象类型必须来自 ontology，不使用前端图层名。"
+    usage_prompt: >-
+      用户明确要求显示、打开、绘制、加载、叠加或查看地图对象时调用。
+      对象名称映射来自 ontology：{object_aliases}。
+      根据影响分析结果展示受影响对象时，从 impacts 中按 object_type 汇总 object_id，
+      设置 object_ids、highlight=true 和 show_only_object_ids=true。
+      展示多个类型时，将全部对象放入同一次调用的 objects 数组。
+    side_effect_scope: frontend_map
+    mutates_domain: false
+    object_scope: mappable
+    requires_confirmation: false
+    worker_allowed: false
+
+  ui_clear_map:
+    summary: "清理或重置 GIS 地图显示"
+    description: "清空或重置前端 GIS 地图显示，不修改领域数据。"
+    usage_prompt: >-
+      用户只要求清除、不显示或隐藏淹没范围、预测结果时，target 必须使用 inundation；
+      target=map 用于重置整个地图。
+    side_effect_scope: frontend_map
+    mutates_domain: false
+    object_scope: none
+    requires_confirmation: false
+    worker_allowed: false
+
+  ui_focus_object:
+    summary: "定位并高亮 GIS 对象"
+    description: "缩放、打开弹窗并高亮前端地图中的一个领域对象，不修改领域数据。"
+    usage_prompt: "用户要求定位、聚焦或缩放到某个对象时调用。"
+    side_effect_scope: frontend_map
+    mutates_domain: false
+    object_scope: mappable
+    requires_confirmation: false
+    worker_allowed: false
+
+  ui_show_event_marker:
+    summary: "在 GIS 地图中显示事件标记"
+    description: "在前端 GIS 地图中显示一个具有明确单点位置的领域事件 marker，不修改领域数据。"
+    usage_prompt: >-
+      只有事件对象包含明确 longitude/latitude 时才调用；没有明确单点位置的事件不创建 marker。
+    side_effect_scope: frontend_map
+    mutates_domain: false
+    object_scope: mappable
+    requires_confirmation: false
+    worker_allowed: false
+
+event_policies:
+  FloodForecastRequired:
+    role: "珊瑚河洪水应急智能体"
+    description: "领域策略已根据连续边界流量观测生成洪水预测请求。"
+    allowed_tools: [inspect, query, count, run_flood_forecast]
+    forbidden_functions: [run_emergency_cycle]
+    instructions:
+      - "结合事件中的当前观测、触发原因和模型输入摘要，判断是否需要调用水动力模型。"
+      - "事件 payload 包含 observation、forecast_input 和 forecast_trigger；确需推演时调用 run_flood_forecast，forecast_id 使用 latest，该函数读取事件对应的稳定输入快照。"
+      - "本事件不启动影响评估或防洪响应预案。"
+    conclusion_fields: ["当前四边界流量", "触发原因", "是否调用了预测模型"]
+
+  InundationGenerated:
+    role: "珊瑚河洪水应急智能体"
+    description: "水动力模型已经生成预测淹没结果，本事件负责确定性影响分析和淹没范围展示。"
+    allowed_tools: [inspect, query, count, analyze_inundation_impacts, ui_show_objects]
+    required_functions: [analyze_inundation_impacts]
+    forbidden_functions: [run_emergency_cycle]
+    instructions:
+      - "对象级受淹判定只能来自 analyze_inundation_impacts 返回结果，不得自行猜测设施、道路、桥梁、转移路线、转移对象或安置点是否受淹。"
+      - "防洪响应预案在本事件中保持切断。"
+    automatic_map:
+      mode: when_relevant
+      tool: ui_show_objects
+      objects:
+        - object_type: HydrodynamicCell
+          filters: {forecast_id: latest}
+          label: "预测淹没结果"
+          fit: false
+          refresh: true
+      allowed_action_types: [show_hydrodynamic_mesh, apply_hydrodynamic_result]
+      other_objects: on_user_request
+      include_result_cards: false
+    conclusion_fields: ["预测运行", "淹没面积", "最大水深", "受影响对象概况", "是否已请求淹没范围地图展示"]
+
 objects:
   River:
     kind: entity
+    display_name: "珊瑚河"
+    aliases:
+      - {terms: ["珊瑚河", "主河道", "河道中心线"]}
     data_source: external_api
     mutability: read_only
     source:
@@ -23,6 +149,9 @@ objects:
 
   Watershed:
     kind: entity
+    display_name: "珊瑚河流域"
+    aliases:
+      - {terms: ["流域", "小流域", "流域范围"]}
     data_source: external_api
     mutability: read_only
     source:
@@ -40,6 +169,9 @@ objects:
 
   HydrodynamicBoundary:
     kind: entity
+    display_name: "水动力边界"
+    aliases:
+      - {terms: ["水动力边界", "模型边界", "断面"]}
     data_source: external_api
     mutability: read_only
     source:
@@ -61,6 +193,10 @@ objects:
 
   County:
     kind: entity
+    countable: true
+    display_name: "县级边界"
+    aliases:
+      - {terms: ["县级边界", "行政边界", "县"]}
     data_source: external_api
     mutability: read_only
     source:
@@ -77,6 +213,10 @@ objects:
 
   Town:
     kind: entity
+    countable: true
+    display_name: "乡镇边界"
+    aliases:
+      - {terms: ["乡镇", "乡镇边界", "镇界"]}
     data_source: external_api
     mutability: read_only
     source:
@@ -99,6 +239,10 @@ objects:
 
   Reservoir:
     kind: entity
+    countable: true
+    display_name: "水库"
+    aliases:
+      - {terms: ["水库"]}
     data_source: external_api
     mutability: read_only
     source:
@@ -124,6 +268,10 @@ objects:
 
   Sluice:
     kind: entity
+    countable: true
+    display_name: "水闸"
+    aliases:
+      - {terms: ["水闸", "分洪闸", "闸门"]}
     data_source: external_api
     mutability: read_only
     source:
@@ -146,6 +294,9 @@ objects:
 
   HydraulicStructure:
     kind: entity
+    display_name: "水利工程设施"
+    aliases:
+      - {terms: ["水利设施", "水利工程", "水利工程设施"]}
     data_source: external_api
     mutability: read_only
     source:
@@ -171,6 +322,10 @@ objects:
 
   Road:
     kind: entity
+    countable: true
+    display_name: "道路"
+    aliases:
+      - {terms: ["道路", "路段", "公路"]}
     data_source: external_api
     mutability: read_only
     source:
@@ -191,6 +346,10 @@ objects:
 
   Bridge:
     kind: entity
+    countable: true
+    display_name: "桥梁"
+    aliases:
+      - {terms: ["桥梁", "桥"]}
     data_source: external_api
     mutability: read_only
     source:
@@ -238,6 +397,13 @@ objects:
 
   Facility:
     kind: entity
+    countable: true
+    display_name: "重要设施"
+    aliases:
+      - {terms: ["重要设施", "设施"]}
+      - {terms: ["学校"], filters: {facility_type: school}}
+      - {terms: ["医院"], filters: {facility_type: hospital}}
+      - {terms: ["政府机构"], filters: {facility_type: government}}
     data_source: external_api
     mutability: read_only
     source:
@@ -259,6 +425,10 @@ objects:
 
   Place:
     kind: entity
+    countable: true
+    display_name: "安置地点"
+    aliases:
+      - {terms: ["安置点", "安置地点", "就地安置点", "集合点", "物资点"]}
     data_source: external_api
     mutability: read_only
     source:
@@ -281,6 +451,10 @@ objects:
 
   Transfer:
     kind: entity
+    countable: true
+    display_name: "转移安排"
+    aliases:
+      - {terms: ["转移对象", "转移安排", "转移单元"]}
     data_source: external_api
     mutability: read_only
     source:
@@ -304,6 +478,9 @@ objects:
 
   Route:
     kind: entity
+    display_name: "路线"
+    aliases:
+      - {terms: ["路线", "路径", "转移路线", "绕行路线"]}
     data_source: external_api
     mutability: read_only
     source:
@@ -341,6 +518,9 @@ objects:
 
   ForecastRun:
     kind: entity
+    display_name: "洪水预测运行"
+    aliases:
+      - {terms: ["预测运行", "洪水预测"]}
     data_source: external_api
     mutability: read_only
     source:
@@ -367,6 +547,7 @@ objects:
 
   ForecastCell:
     kind: entity
+    display_name: "预测淹没单元"
     data_source: external_api
     mutability: read_only
     source:
@@ -396,6 +577,9 @@ objects:
 
   HydrodynamicCell:
     kind: entity
+    display_name: "水动力模型网格"
+    aliases:
+      - {terms: ["水动力网格", "模型网格", "GT.txt 网格", "预测淹没结果"]}
     data_source: external_api
     mutability: read_only
     source:
@@ -412,6 +596,7 @@ objects:
 
   Hydrology:
     kind: entity
+    display_name: "水文成果"
     data_source: external_api
     mutability: read_only
     source:
@@ -431,6 +616,9 @@ objects:
 
   HydroStation:
     kind: entity
+    display_name: "水文测站"
+    aliases:
+      - {terms: ["水文站", "测站", "雨量站", "水位站", "气象站"]}
     data_source: mixed
     mutability: read_only
     source:
@@ -455,6 +643,9 @@ objects:
 
   Risk:
     kind: entity
+    display_name: "危险区"
+    aliases:
+      - {terms: ["危险区", "风险点", "风险区"]}
     data_source: mixed
     mutability: append_only
     source:
@@ -626,7 +817,7 @@ functions:
   run_flood_forecast:
     summary: "运行或读取最新洪水预测"
     description: "读取领域策略生成的最新版本化四边界流量输入快照，调用 CNN_V2 水动力模型生成水动力网格 max_depth 预测结果和 ForecastRun 汇总。普通边界观测不会直接改变该快照；该函数也不把 severity 或综合指标映射为 5/10/20/50/100 年一遇设计方案。"
-    usage_prompt: "当用户要求运行预测、查看实时预测、显示未来淹没，或收到 FloodForecastRequired 事件且判断需要推演时调用。该函数只返回 ForecastRun 汇总；如需在 GIS 展示预测淹没范围，LLM 应在本函数返回后调用 ui_show_objects，object_type=HydrodynamicCell，filters={\"forecast_id\":\"latest\"}，label=预测淹没结果，fit=false，refresh=true。"
+    usage_prompt: "当用户要求运行预测、查看实时预测或显示未来淹没，或者当前事件策略要求执行预测时调用。该函数只返回 ForecastRun 汇总；如需在 GIS 展示预测淹没范围，在本函数返回后调用 ui_show_objects，object_type=HydrodynamicCell，filters={\"forecast_id\":\"latest\"}，label=预测淹没结果，fit=false，refresh=true。"
     function_type: lookup
     involves_objects: [ForecastRun, ForecastCell, HydrodynamicCell, River, Reservoir]
     params:
@@ -645,7 +836,7 @@ functions:
   analyze_inundation_impacts:
     summary: "根据预测淹没范围分析受影响对象"
     description: "读取最新或指定 ForecastCell 预测淹没网格，可按指定 time_h 分析某个预测时刻，也可默认使用最大水深包络；对道路、桥梁、重要设施、转移单元、安置地点和转移路线执行确定性空间邻近分析，返回受影响对象清单、风险等级和按类型汇总。"
-    usage_prompt: "收到 InundationGenerated 事件后应优先调用本函数，forecast_id 默认 latest，target_type 默认 all。该函数是本体层确定性空间分析入口：LLM 只能根据返回结果说明哪些对象受影响，不要自行猜测学校、医院、道路、桥梁、转移路线或安置点是否受淹。当前端上下文包含 current_hydrodynamic_time_h，或用户明确询问某个时间点/当前时间轴位置的影响时，必须把该值作为 time_h 传入；用户询问总体/最大影响时不要传 time_h，默认使用最大水深包络。已有水动力时间轴时直接分析已有预测，除非用户明确要求重算，否则不要先调用 run_flood_forecast。需要在地图展示影响分析结果时，只调用一次 ui_show_objects：在同一个 objects 数组中先放 HydrodynamicCell（filters={\"forecast_id\":\"latest\"}、label=预测淹没结果、fit=false、refresh=true），再放 affected_object_ids 中各对象类型对应的对象项，并设置 highlight=true、show_only_object_ids=true；不要按类型连续调用 ui_show_objects，也不要额外加载同类型全量对象。需要缩窄范围时 target_type 可传 Road、Bridge、Facility、Route、Transfer、Place 或 all；min_depth_m 默认 0.15，max_distance_m 默认 10。"
+    usage_prompt: "本函数是对象级受淹判定的确定性空间分析入口，forecast_id 默认 latest，target_type 默认 all；只能根据返回结果说明哪些对象受影响，不得自行猜测。当前端上下文包含 current_hydrodynamic_time_h，或用户明确询问某个时间点、当前时间轴位置的影响时，必须把该值作为 time_h 传入；用户询问总体或最大影响时不传 time_h，默认使用最大水深包络。已有水动力时间轴时直接分析已有预测，除非用户明确要求重算，否则不要先调用 run_flood_forecast。只有用户明确请求在地图展示影响对象时，才把 affected_object_ids 中各对象类型对应的对象项与 HydrodynamicCell 放入同一次 ui_show_objects 调用，并设置 highlight=true、show_only_object_ids=true；自动事件的展示范围由 event_policies 决定。需要缩窄范围时 target_type 可传 Road、Bridge、Facility、Route、Transfer、Place 或 all；min_depth_m 默认 0.15，max_distance_m 默认 10。"
     function_type: lookup
     involves_objects: [ForecastRun, ForecastCell, Road, Bridge, BridgeRoadLink, Facility, Route, Transfer, Place, Risk]
     params:

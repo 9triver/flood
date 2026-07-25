@@ -19,16 +19,19 @@ from domains.flood.runtime.boundary_flow import (
     FloodForecastPolicy,
 )
 from domains.flood.runtime.workspace import WorkspaceManager
-from server.event_runtime import (
-    adaptive_playback_speed,
+from oag.ontology.prompt_builder import OntologyPromptBuilder
+from oag.ontology.registry import FunctionRegistry
+from oag.ontology.schema import Ontology
+from server.events import EventRuntime
+from server.events.playback import (
     BoundaryFlowPlaybackRunner,
-    EventRuntime,
-    INUNDATION_EVENT_TOOLS,
-    filter_inundation_map_event,
+    adaptive_playback_speed,
 )
+from server.presentation.event_maps import filter_event_map_event
 
 
 CSV_PATH = PROJECT_DIR / "domains" / "flood" / "data" / "mock" / "boundary_flow.csv"
+ONTOLOGY = Ontology.load(PROJECT_DIR / "domains" / "flood" / "ontology.yaml")
 
 
 class BoundaryFlowPolicyTest(unittest.TestCase):
@@ -304,7 +307,7 @@ class EventRuntimePlaybackControlTest(unittest.TestCase):
             runtime._generation = 4
             runtime._boundary_flow_runner.playback.source.index = 5
 
-            with patch("server.event_runtime.WORKSPACES", manager):
+            with patch("server.events.runtime.WORKSPACES", manager):
                 with patch("domains.flood.runtime.workspace.WORKSPACES", manager):
                     status = runtime.restart_playback(10)
 
@@ -324,7 +327,21 @@ class EventRuntimePlaybackControlTest(unittest.TestCase):
 
 class InundationMapEventTest(unittest.TestCase):
     def test_inundation_event_agent_can_call_impact_analysis(self):
-        self.assertIn("analyze_inundation_impacts", INUNDATION_EVENT_TOOLS)
+        policy = ONTOLOGY.event_policies["InundationGenerated"]
+
+        self.assertIn("analyze_inundation_impacts", policy.allowed_tools)
+        self.assertIn("analyze_inundation_impacts", policy.required_functions)
+        self.assertIn(policy.automatic_map.tool, ONTOLOGY.presentation_tools)
+
+    def test_inundation_event_prompt_is_built_from_ontology_policy(self):
+        prompt = OntologyPromptBuilder(ONTOLOGY, FunctionRegistry()).build_event_prompt(
+            "InundationGenerated",
+            {"event_type": "InundationGenerated", "event_id": "evt_test"},
+        )
+
+        self.assertIn("必须调用以下函数：analyze_inundation_impacts", prompt)
+        self.assertIn('"object_type": "HydrodynamicCell"', prompt)
+        self.assertIn("只有用户在普通对话中明确请求时才可展示", prompt)
 
     def test_only_hydrodynamic_actions_reach_automatic_frontend_stream(self):
         event = {
@@ -340,7 +357,10 @@ class InundationMapEventTest(unittest.TestCase):
             "result_cards": [{"title": "受影响路线"}],
         }
 
-        filtered = filter_inundation_map_event(event)
+        filtered = filter_event_map_event(
+            event,
+            ONTOLOGY.event_policies["InundationGenerated"].automatic_map,
+        )
 
         self.assertEqual(
             [action["type"] for action in filtered["map_actions"]],
@@ -368,7 +388,10 @@ class InundationMapEventTest(unittest.TestCase):
             ],
         }
 
-        filtered = filter_inundation_map_event(event)
+        filtered = filter_event_map_event(
+            event,
+            ONTOLOGY.event_policies["InundationGenerated"].automatic_map,
+        )
 
         self.assertIsNone(filtered)
 
@@ -378,7 +401,10 @@ class InundationMapEventTest(unittest.TestCase):
             "map_actions": [{"type": "load_object", "object_type": "Facility"}],
         }
 
-        self.assertIsNone(filter_inundation_map_event(event))
+        self.assertIsNone(filter_event_map_event(
+            event,
+            ONTOLOGY.event_policies["InundationGenerated"].automatic_map,
+        ))
 
 
 def _scale_observation(observation, scale):

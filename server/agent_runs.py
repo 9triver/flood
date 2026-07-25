@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import json
 import threading
 import time
 import uuid
-from typing import Any
+from typing import Any, Protocol
+
+from server.serialization import format_sse
 
 
 class AgentRun:
@@ -22,10 +23,31 @@ class AgentRun:
         self.updated_at = self.created_at
         self.condition = threading.Condition()
 
+    def append_event(self, event_type: str, data: dict[str, Any]) -> None:
+        with self.condition:
+            self.seq += 1
+            self.events.append({
+                "seq": self.seq,
+                "type": event_type,
+                "data": {**data, "seq": self.seq, "run_id": self.run_id},
+            })
+            self.updated_at = time.time()
+            self.condition.notify_all()
+
+    def mark_done(self) -> None:
+        with self.condition:
+            self.done = True
+            self.updated_at = time.time()
+            self.condition.notify_all()
+
+
+class ChatStreamer(Protocol):
+    def stream_chat(self, run: AgentRun) -> None: ...
+
 
 class AgentRunManager:
-    def __init__(self, app: FloodApp):
-        self.app = app
+    def __init__(self, chat_streamer: ChatStreamer):
+        self.chat_streamer = chat_streamer
         self._runs: dict[str, AgentRun] = {}
         self._active_by_session: dict[str, str] = {}
         self._lock = threading.Lock()
@@ -63,7 +85,7 @@ class AgentRunManager:
         return True
 
     def stream(self, run: AgentRun, since: int = 0):
-        yield self._format_sse("run", {
+        yield format_sse("run", {
             "type": "run",
             "run_id": run.run_id,
             "session_id": run.session_id,
@@ -85,11 +107,11 @@ class AgentRunManager:
                 pending = [event for event in run.events if int(event.get("seq", 0)) >= next_seq]
                 done = run.done or run.cancelled
             if should_ping:
-                yield self._format_sse("ping", {"type": "ping"})
+                yield format_sse("ping", {"type": "ping"})
                 continue
             for event in pending:
                 next_seq = int(event["seq"]) + 1
-                yield self._format_sse(event["type"], event["data"])
+                yield format_sse(event["type"], event["data"])
             if done and not pending:
                 break
 
@@ -108,19 +130,10 @@ class AgentRunManager:
 
     def _execute(self, run: AgentRun):
         try:
-            self.app.stream_chat(run)
+            self.chat_streamer.stream_chat(run)
         finally:
-            self.app._append_event(run, "done", {"type": "done"})
-            with run.condition:
-                run.done = True
-                run.updated_at = time.time()
-                run.condition.notify_all()
+            run.append_event("done", {"type": "done"})
+            run.mark_done()
             with self._lock:
                 if self._active_by_session.get(run.session_id) == run.run_id:
                     self._active_by_session.pop(run.session_id, None)
-
-    @staticmethod
-    def _format_sse(event: str, data: dict) -> bytes:
-        payload = json.dumps(data, ensure_ascii=False)
-        return f"event: {event}\ndata: {payload}\n\n".encode("utf-8")
-
