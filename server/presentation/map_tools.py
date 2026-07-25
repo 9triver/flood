@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 
 from oag.ontology.schema import Ontology, PresentationToolDef
-from oag.tools.registry import ToolDef, ToolPolicy, ToolRegistry
+from oag.tools.registry import ToolDef, ToolRegistry
 
 from domains.flood.runtime.common import MAPPABLE_OBJECTS
 from server.presentation.map_actions import MapActionBuilder
+from server.presentation.tool_metadata import (
+    presentation_tool,
+    presentation_tool_kwargs,
+)
 
 
 def _object_alias_prompt(ontology: Ontology) -> str:
@@ -26,13 +29,6 @@ def _object_alias_prompt(ontology: Ontology) -> str:
     return "；".join(mappings)
 
 
-def _presentation_tool(ontology: Ontology, name: str) -> PresentationToolDef:
-    tool = ontology.presentation_tools.get(name)
-    if not tool:
-        raise ValueError(f"ontology presentation tool not found: {name}")
-    return tool
-
-
 def _presentation_object_types(ontology: Ontology,
                                tool: PresentationToolDef) -> list[str]:
     if tool.object_scope == "mappable":
@@ -40,28 +36,6 @@ def _presentation_object_types(ontology: Ontology,
     if tool.object_scope == "listed":
         return sorted(set(tool.allowed_objects) & set(MAPPABLE_OBJECTS))
     return []
-
-
-def _presentation_tool_kwargs(ontology: Ontology, name: str,
-                              **prompt_context: str) -> dict[str, Any]:
-    definition = _presentation_tool(ontology, name)
-    usage_prompt = definition.usage_prompt
-    for key, value in prompt_context.items():
-        usage_prompt = usage_prompt.replace("{" + key + "}", value)
-    return {
-        "description": definition.description or definition.summary,
-        "usage_prompt": usage_prompt,
-        "category": definition.category,
-        "policy": ToolPolicy(
-            read_only=definition.side_effect_scope == "none",
-            requires_confirmation=definition.requires_confirmation,
-            concurrency_safe=definition.concurrency_safe,
-            worker_allowed=definition.worker_allowed,
-            idempotent=definition.idempotent,
-            destructive=definition.destructive,
-            timeout_seconds=definition.timeout_seconds,
-        ),
-    }
 
 
 def register_map_tools(tools: ToolRegistry, resolver,
@@ -73,9 +47,9 @@ def register_map_tools(tools: ToolRegistry, resolver,
     """
 
     action_builder = MapActionBuilder(ontology=ontology, resolver=resolver)
-    show_objects_def = _presentation_tool(ontology, "ui_show_objects")
+    show_objects_def = presentation_tool(ontology, "ui_show_objects")
     object_types = _presentation_object_types(ontology, show_objects_def)
-    show_objects_metadata = _presentation_tool_kwargs(
+    show_objects_metadata = presentation_tool_kwargs(
         ontology,
         "ui_show_objects",
         object_aliases=_object_alias_prompt(ontology),
@@ -136,10 +110,10 @@ def register_map_tools(tools: ToolRegistry, resolver,
         },
         handler=action_builder.clear_map,
         max_result_chars=2000,
-        **_presentation_tool_kwargs(ontology, "ui_clear_map"),
+        **presentation_tool_kwargs(ontology, "ui_clear_map"),
     ))
 
-    focus_def = _presentation_tool(ontology, "ui_focus_object")
+    focus_def = presentation_tool(ontology, "ui_focus_object")
     focus_object_types = _presentation_object_types(ontology, focus_def)
     tools.register(ToolDef(
         name="ui_focus_object",
@@ -159,10 +133,10 @@ def register_map_tools(tools: ToolRegistry, resolver,
         },
         handler=lambda args: action_builder.focus_object(args, focus_object_types),
         max_result_chars=2000,
-        **_presentation_tool_kwargs(ontology, "ui_focus_object"),
+        **presentation_tool_kwargs(ontology, "ui_focus_object"),
     ))
 
-    event_marker_def = _presentation_tool(ontology, "ui_show_event_marker")
+    event_marker_def = presentation_tool(ontology, "ui_show_event_marker")
     event_source_types = _presentation_object_types(ontology, event_marker_def)
     tools.register(ToolDef(
         name="ui_show_event_marker",
@@ -182,5 +156,5 @@ def register_map_tools(tools: ToolRegistry, resolver,
         },
         handler=lambda args: action_builder.show_event_marker(args, event_source_types),
         max_result_chars=4000,
-        **_presentation_tool_kwargs(ontology, "ui_show_event_marker"),
+        **presentation_tool_kwargs(ontology, "ui_show_event_marker"),
     ))

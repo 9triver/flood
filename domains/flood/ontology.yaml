@@ -12,6 +12,7 @@ interaction_policies:
       - "用户明确要求显示、打开、绘制、加载、叠加、缩放、聚焦或清空地图对象时，必须调用对应 ui_* 工具执行前端动作，不要只用文字说明。"
       - "用户只要求清除、隐藏淹没范围、预测淹没结果或水动力结果时，调用 ui_clear_map 并传 target=inundation；这只移除淹没结果，不改变地图视野。"
       - "基于预测淹没范围判断设施、道路、桥梁、转移路线或安置点是否受影响时，必须调用 analyze_inundation_impacts，不得自行猜测对象级受淹结论。"
+      - "用户根据多时刻淹水预测询问最晚转移时间、转移截止时间或安全转移窗口时，必须调用 analyze_latest_evacuation_time；不得把 Transfer.arrive_time_window 当作预测分析结论，也不要自行逐格查询 ForecastCell 推算。"
       - "已有水动力时间轴时直接分析已有预测；只有用户明确要求运行、重算或更新预测时才调用 run_flood_forecast。"
       - "前端上下文 hydrodynamic_timeline.mode=time_slice 且用户询问当前时刻、当前画面或该时刻影响时，把 current_hydrodynamic_time_h 作为 analyze_inundation_impacts.time_h；用户询问总体或最大影响时不传 time_h。"
       - "用户要求运行预测、实时预测或未来淹没时，先调用 run_flood_forecast，再用 HydrodynamicCell 和 forecast_id=latest 展示预测淹没结果。"
@@ -19,6 +20,7 @@ interaction_policies:
       - "不要把 severity_index 或综合指标映射为 5/10/20/50/100 年一遇设计方案；防洪响应预案必须通过已实现工具或人工审批。"
       - "用户要求规划导航、避洪路线或绕开淹没区域前往安置点时调用 plan_evacuation_route；同一起终点每个用户请求最多调用一次，no_safe_route 或 retryable=false 后不得自行改变交通方式、预测时刻或避洪参数重试。"
       - "路线规划成功后使用结果中的 route_id 展示本次生成的 Route；一次展示多个对象时放入同一次 ui_show_objects 调用。"
+      - "用户要求把当前或刚才的建议作为应急指令初稿、新建应急指令或准备发出指令时，调用 ui_open_emergency_directive_editor；根据对话上下文生成简洁标题、明确接收对象、优先级和可编辑正文。该工具只打开草稿编辑器，必须由用户在前端修改并确认后才会发出。"
     intents:
       count:
         keywords: ["几个", "多少个", "数量", "总数"]
@@ -31,6 +33,10 @@ interaction_policies:
         keywords: ["受影响", "受淹", "淹水影响", "淹没影响", "涉水", "能否通行"]
         context_keywords: ["受影响", "受淹", "淹水影响", "淹没影响", "涉水"]
         tools: [analyze_inundation_impacts, ui_show_objects, ui_show_event_marker, ui_clear_map, ui_focus_object]
+      latest_evacuation_time:
+        keywords: ["最晚转移时间", "最迟转移时间", "转移截止时间", "最晚撤离时间", "最迟撤离时间", "安全转移窗口", "转移时间窗口"]
+        context_keywords: ["24小时淹水", "多时刻淹水", "淹水预测", "洪水到达时间", "转移时间"]
+        tools: [analyze_latest_evacuation_time]
       route:
         keywords: ["路线", "路径", "导航", "绕行", "怎么走", "安置点", "重新规划", "规划一条", "→", "->"]
         context_keywords: ["路线", "路径", "导航", "绕行", "安置点", "重新规划"]
@@ -41,6 +47,10 @@ interaction_policies:
       emergency_cycle:
         keywords: ["闭环", "应急循环", "自主观测", "持续预测", "自动告警", "自动调度"]
         tools: [run_emergency_cycle, ui_show_objects, ui_show_event_marker, ui_clear_map, ui_focus_object]
+      directive:
+        keywords: ["应急指令", "指令初稿", "新建指令", "发出指令", "作为初稿"]
+        context_keywords: ["建议", "应急指令", "指令初稿"]
+        tools: [ui_open_emergency_directive_editor]
 
 presentation_tools:
   ui_show_objects:
@@ -91,6 +101,20 @@ presentation_tools:
     requires_confirmation: false
     worker_allowed: false
 
+  ui_open_emergency_directive_editor:
+    summary: "打开应急指令草稿编辑器"
+    description: "根据智能体当前建议生成应急指令初稿，并在前端打开编辑器供用户修改、确认和发出；本工具本身不发出指令。"
+    usage_prompt: >-
+      用户明确要求把当前或刚才的建议作为初稿、新建应急指令或准备发出指令时调用。
+      title、content 和 recipients 必须根据本轮对话及已核实事实生成；priority 默认 urgent。
+      正文应直接可执行，避免加入未经工具核实的距离、通行状态或资源承诺。
+      调用后不要声称指令已经发出，必须说明草稿已在编辑器中打开，等待用户修改和确认。
+    side_effect_scope: frontend_editor
+    mutates_domain: false
+    object_scope: none
+    requires_confirmation: false
+    worker_allowed: false
+
 event_policies:
   FloodForecastRequired:
     role: "珊瑚河洪水应急智能体"
@@ -100,7 +124,7 @@ event_policies:
     instructions:
       - "结合事件中的当前观测、触发原因和模型输入摘要，判断是否需要调用水动力模型。"
       - "事件 payload 包含 observation、forecast_input 和 forecast_trigger；确需推演时调用 run_flood_forecast，forecast_id 使用 latest，该函数读取事件对应的稳定输入快照。"
-      - "本事件不启动影响评估或防洪响应预案。"
+      - "本 FloodForecastRequired 事件只负责判断并运行洪水预测，不在当前事件阶段执行对象影响分析或防洪响应预案；预测完成后系统会另行发布 InundationGenerated 事件，由下一事件阶段执行确定性影响分析。结论中必须写清‘当前预测请求事件未执行影响分析，后续淹没结果事件将执行’，不要笼统表述为‘未启动影响评估’。"
     conclusion_fields: ["当前四边界流量", "触发原因", "是否调用了预测模型"]
 
   InundationGenerated:
@@ -845,6 +869,26 @@ functions:
       min_depth_m: {type: float, description: "纳入影响判定的最低预测水深，单位 m", default: 0.15}
       max_distance_m: {type: float, description: "对象或采样点到预测淹没网格中心的最大匹配距离，单位 m", default: 10}
       time_h: {type: float, description: "可选预测时刻，单位小时；不传表示使用最大水深包络", default: ""}
+
+  analyze_latest_evacuation_time:
+    summary: "根据24小时淹水序列分析最晚安全转移时间"
+    description: "读取当前演进工作空间的0至24小时水深时间序列，沿指定转移安排的起点、预定路线和安置点逐时检查禁行水深，返回首次不可通行时刻、最后一个确认安全时间切片，以及扣除路线通行或核定清空耗时后的理论最晚出发时刻。"
+    usage_prompt: >-
+      用户询问某个村、转移单元的最晚转移时间、转移截止时间或安全转移窗口时必须调用。
+      已知 transfer_id 时优先传 transfer_id，否则可直接传 transfer_name；除非用户明确指定另一条路线，否则不要传 route_id，函数会使用 Transfer 关联的预定路线。
+      blocked_depth_m 默认0.3米；已有经核定的全体人员集结、分批运输和路线清空总耗时时传 clearance_duration_min，否则函数只按路线已有通行时间或1米/秒步行速度估算单程通行时间。
+      只能根据返回的 deadline 回答：deadline_status=safe_through_horizon 表示24小时内没有由预测形成的截止时间，不得把24小时末端说成最晚转移时间；route_becomes_unsafe 时应同时说明首次不可通行时刻和最后确认安全时刻。
+      Transfer.arrive_time_window 只作为既有计划字段展示，不是本函数的预测判定依据；不要再逐格 query ForecastCell 自行推算。
+    function_type: lookup
+    involves_objects: [Transfer, Route, Place, ForecastRun, ForecastCell]
+    params:
+      transfer_id: {type: str, description: "转移安排ID；与 transfer_name 至少提供一项", default: ""}
+      transfer_name: {type: str, description: "转移对象名称，如新民村；已知 transfer_id 时可不传", default: ""}
+      route_id: {type: str, description: "可选路线ID；不传时使用 Transfer 关联的预定路线", default: ""}
+      forecast_id: {type: str, description: "预测运行ID；latest 表示当前工作空间最新预测", default: "latest"}
+      blocked_depth_m: {type: float, description: "路线禁行水深阈值，米", default: 0.3}
+      clearance_duration_min: {type: float, description: "可选的核定转移准备、通行和路线清空总耗时，分钟", default: ""}
+      safety_buffer_min: {type: float, description: "额外安全提前量，分钟", default: 0}
 
   plan_evacuation_route:
     summary: "按洪水预测约束规划避洪路线"

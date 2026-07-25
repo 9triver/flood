@@ -14,6 +14,7 @@ from oag.runtime import HarnessConfig
 from oag.runtime.hooks import HookResult
 
 from server.presentation.map_tools import register_map_tools
+from server.presentation.directive_tools import register_directive_tools
 
 
 DEFAULT_AGENT_MAX_TURNS = 10
@@ -147,6 +148,7 @@ class FloodAgentFactory:
         )
         configure_agent_query_tools(harness)
         register_map_tools(harness.tools, resolver, ontology)
+        register_directive_tools(harness.tools, ontology)
         harness.hooks.register("post_tool_call", post_tool_call)
         return Agent(
             harness,

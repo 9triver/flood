@@ -18,6 +18,7 @@ from server.events.messages import (
     impact_event_detail,
     is_impact_result,
     readable_event_tool,
+    summarize_event_tool_result,
 )
 from server.presentation.event_maps import filter_event_map_event
 from server.serialization import parse_json_object
@@ -41,6 +42,8 @@ class AgentSideEffectReader(Protocol):
     def pop_forecast_results(self, session_id: str) -> list[dict[str, Any]]: ...
 
     def pop_impact_results(self, session_id: str) -> list[dict[str, Any]]: ...
+
+    def pop_event_tool_results(self, session_id: str) -> list[dict[str, Any]]: ...
 
 
 class EventAgentProcessor:
@@ -85,29 +88,27 @@ class EventAgentProcessor:
 
     def _handle_forecast_required(self, event: dict[str, Any],
                                   generation: int) -> None:
+        trace = self._reason_about_forecast_required_event(event)
+        self.append_output("agent_trace", trace, generation)
         agent_result = self._run_agent_for_forecast_required_event(
             event, generation,
         )
-        trace = self._reason_about_forecast_required_event(event)
-        self.append_output("agent_trace", trace, generation)
         forecast_result = agent_result.get("forecast_result")
         if not forecast_result and agent_result.get("forecast_requested"):
             forecast_result = self.app.forecast(force=False)
+            agent_result["forecast_result"] = forecast_result
         if forecast_result:
             self._record_forecast_policy_result(
                 event, forecast_result, agent_result,
             )
-        if (
-            forecast_completed(forecast_result)
-            and not agent_result.get("forecast_event_published")
-        ):
+        self._append_forecast_complete_trace(agent_result, generation)
+        if forecast_completed(forecast_result):
             inundation_event = make_inundation_event(
                 event,
                 forecast_result,
                 str(trace.get("severity") or "warning"),
             )
             self.publish_inundation_event(inundation_event, generation)
-            agent_result["forecast_event_published"] = True
 
     def _run_agent_for_forecast_required_event(
         self,
@@ -135,12 +136,10 @@ class EventAgentProcessor:
                 self._collect_agent_side_effects(
                     session_id, agent_result, generation,
                 )
-                self._publish_forecast_result_from_agent(
-                    event, agent_result, generation,
-                )
                 data = event_to_dict(raw_event)
                 event_type = data.get("type")
                 if event_type == "tool_call":
+                    self._flush_reasoning_trace(reasoning_chunks, generation)
                     tool_name = str(data.get("name") or "")
                     if tool_name == "run_flood_forecast":
                         agent_result["forecast_requested"] = True
@@ -149,23 +148,31 @@ class EventAgentProcessor:
                         )
                     self._append_tool_trace("CALL", tool_name, data, generation)
                 elif event_type == "tool_result":
+                    self._flush_reasoning_trace(reasoning_chunks, generation)
                     tool_name = str(data.get("name") or "")
-                    self._append_tool_trace("RESULT", tool_name, data, generation)
+                    full_result = self._take_event_tool_result(
+                        agent_result, tool_name, data.get("result") or "",
+                    )
+                    self._append_tool_trace(
+                        "RESULT",
+                        tool_name,
+                        data,
+                        generation,
+                        result_value=full_result,
+                    )
                     if tool_name == "run_flood_forecast":
                         agent_result["forecast_requested"] = True
-                        parsed = parse_json_object(data.get("result") or "")
+                        parsed = parse_json_object(full_result)
                         if parsed and "error" not in parsed:
                             agent_result["forecast_result"] = parsed
                         elif not data.get("blocked"):
                             agent_result["forecast_result"] = self.app.forecast(
                                 force=False,
                             )
-                        self._publish_forecast_result_from_agent(
-                            event, agent_result, generation,
-                        )
                 elif event_type == "reasoning":
                     reasoning_chunks.append(str(data.get("content") or ""))
                 elif event_type == "text":
+                    self._flush_reasoning_trace(reasoning_chunks, generation)
                     text_chunks.append(str(data.get("content") or ""))
             self._collect_agent_side_effects(
                 session_id, agent_result, generation,
@@ -175,12 +182,8 @@ class EventAgentProcessor:
                 and not agent_result.get("forecast_result")
             ):
                 agent_result["forecast_result"] = self.app.forecast(force=False)
-            self._publish_forecast_result_from_agent(
-                event, agent_result, generation,
-            )
-            self._append_agent_text_traces(
-                reasoning_chunks, text_chunks, generation,
-            )
+            self._flush_reasoning_trace(reasoning_chunks, generation)
+            self._append_agent_conclusion_trace(text_chunks, generation)
         except Exception as exc:
             self.append_output("agent_trace", {
                 "type": "agent_trace",
@@ -212,29 +215,6 @@ class EventAgentProcessor:
                 map_event, policy.automatic_map,
             ),
         )
-
-    def _publish_forecast_result_from_agent(
-        self,
-        source_event: dict[str, Any],
-        agent_result: dict[str, Any],
-        generation: int,
-    ) -> None:
-        forecast_result = agent_result.get("forecast_result")
-        if not forecast_result or agent_result.get("forecast_event_published"):
-            return
-        self._record_forecast_policy_result(
-            source_event, forecast_result, agent_result,
-        )
-        if not forecast_completed(forecast_result):
-            return
-        trace = self._reason_about_forecast_required_event(source_event)
-        inundation_event = make_inundation_event(
-            source_event,
-            forecast_result,
-            str(trace.get("severity") or "warning"),
-        )
-        self.publish_inundation_event(inundation_event, generation)
-        agent_result["forecast_event_published"] = True
 
     def _record_forecast_policy_result(
         self,
@@ -285,26 +265,33 @@ class EventAgentProcessor:
                 data = event_to_dict(raw_event)
                 event_type = data.get("type")
                 if event_type == "tool_call":
+                    self._flush_reasoning_trace(reasoning_chunks, generation)
                     self._append_tool_trace(
                         "CALL", str(data.get("name") or ""), data, generation,
                     )
                 elif event_type == "tool_result":
+                    self._flush_reasoning_trace(reasoning_chunks, generation)
                     tool_name = str(data.get("name") or "")
-                    parsed = parse_json_object(data.get("result") or "")
+                    full_result = self._take_event_tool_result(
+                        result, tool_name, data.get("result") or "",
+                    )
+                    parsed = parse_json_object(full_result)
                     if (
                         tool_name == "analyze_inundation_impacts"
                         and is_impact_result(parsed)
                     ):
                         result["impact_result"] = parsed
-                        self.publish_impact_event(
-                            make_impact_event(parsed, session_id), generation,
-                        )
                     self._append_tool_trace(
-                        "RESULT", tool_name, data, generation,
+                        "RESULT",
+                        tool_name,
+                        data,
+                        generation,
+                        result_value=full_result,
                     )
                 elif event_type == "reasoning":
                     reasoning_chunks.append(str(data.get("content") or ""))
                 elif event_type == "text":
+                    self._flush_reasoning_trace(reasoning_chunks, generation)
                     text_chunks.append(str(data.get("content") or ""))
             self._collect_agent_side_effects(
                 session_id,
@@ -312,10 +299,14 @@ class EventAgentProcessor:
                 generation,
                 map_event_filter=map_event_filter,
             )
-            self._append_agent_text_traces(
-                reasoning_chunks, text_chunks, generation,
-            )
+            self._flush_reasoning_trace(reasoning_chunks, generation)
+            self._append_agent_conclusion_trace(text_chunks, generation)
             self._append_followup_complete_trace(result, generation)
+            impact_result = result.get("impact_result")
+            if is_impact_result(impact_result):
+                self.publish_impact_event(
+                    make_impact_event(impact_result, session_id), generation,
+                )
         except Exception as exc:
             self.append_output("agent_trace", {
                 "type": "agent_trace",
@@ -340,22 +331,30 @@ class EventAgentProcessor:
             result["forecast_result"] = forecast_result
         for impact_result in self.side_effects.pop_impact_results(session_id):
             result["impact_result"] = impact_result
-            self.publish_impact_event(
-                make_impact_event(impact_result, session_id), generation,
-            )
         for map_event in self.side_effects.pop_map_events(session_id):
             filtered_event = (
                 map_event_filter(map_event) if map_event_filter else map_event
             )
             if filtered_event:
                 self.append_output("map_actions", filtered_event, generation)
+        for item in self.side_effects.pop_event_tool_results(session_id):
+            tool_name = str(item.get("tool_name") or "")
+            if not tool_name:
+                continue
+            queues = result.setdefault("_event_tool_results", {})
+            queues.setdefault(tool_name, []).append(item.get("result"))
 
     def _append_tool_trace(self, tag: str, tool_name: str,
-                           data: dict[str, Any], generation: int) -> None:
+                           data: dict[str, Any], generation: int,
+                           result_value: Any = None) -> None:
         detail = (
-            json.dumps(data.get("args") or {}, ensure_ascii=False)
+            json.dumps(data.get("args") or {}, ensure_ascii=False, indent=2)
             if tag == "CALL"
-            else compact_event_text(data.get("result") or "")
+            else summarize_event_tool_result(
+                tool_name,
+                result_value if result_value is not None
+                else data.get("result") or "",
+            )
         )
         self.append_output("agent_trace", {
             "type": "agent_trace",
@@ -364,17 +363,20 @@ class EventAgentProcessor:
             "detail": detail,
         }, generation)
 
-    def _append_agent_text_traces(self, reasoning_chunks: list[str],
-                                  text_chunks: list[str],
-                                  generation: int) -> None:
+    def _flush_reasoning_trace(self, reasoning_chunks: list[str],
+                               generation: int) -> None:
         reasoning = "".join(reasoning_chunks).strip()
+        reasoning_chunks.clear()
         if reasoning:
             self.append_output("agent_trace", {
                 "type": "agent_trace",
                 "tag": "THINK",
                 "label": "LLM 事件推理",
-                "detail": compact_event_text(reasoning),
+                "detail": compact_event_text(reasoning, limit=1200),
             }, generation)
+
+    def _append_agent_conclusion_trace(self, text_chunks: list[str],
+                                       generation: int) -> None:
         conclusion = "".join(text_chunks).strip()
         if conclusion:
             self.append_output("agent_trace", {
@@ -383,6 +385,33 @@ class EventAgentProcessor:
                 "label": "智能体结论",
                 "detail": compact_event_text(conclusion, limit=1800),
             }, generation)
+
+    @staticmethod
+    def _take_event_tool_result(result: dict[str, Any], tool_name: str,
+                                fallback: Any) -> Any:
+        queues = result.get("_event_tool_results") or {}
+        queue = queues.get(tool_name) or []
+        return queue.pop(0) if queue else fallback
+
+    def _append_forecast_complete_trace(self, result: dict[str, Any],
+                                        generation: int) -> None:
+        forecast_result = result.get("forecast_result")
+        if forecast_completed(forecast_result):
+            detail = (
+                "FloodForecastRequired 阶段已完成洪水预测。"
+                "本阶段不执行对象影响分析；系统接下来发布后续的 "
+                "InundationGenerated 事件，由该事件阶段执行确定性影响分析。"
+            )
+        elif result.get("forecast_requested"):
+            detail = "FloodForecastRequired 阶段结束，但洪水预测未成功完成。"
+        else:
+            detail = "FloodForecastRequired 阶段结束，智能体未请求运行洪水预测。"
+        self.append_output("agent_trace", {
+            "type": "agent_trace",
+            "tag": "DONE",
+            "label": "洪水预测请求事件完成",
+            "detail": detail,
+        }, generation)
 
     def _append_followup_complete_trace(self, result: dict[str, Any],
                                         generation: int) -> None:
@@ -395,8 +424,8 @@ class EventAgentProcessor:
         self.append_output("agent_trace", {
             "type": "agent_trace",
             "tag": "DONE",
-            "label": "事件处理完成",
-            "detail": detail,
+            "label": "预测淹没影响事件完成",
+            "detail": f"InundationGenerated 阶段处理结束。{detail}",
         }, generation)
 
     def _reason_about_forecast_required_event(
@@ -415,7 +444,7 @@ class EventAgentProcessor:
         return {
             "type": "agent_trace",
             "tag": "SYSTEM",
-            "label": "洪水预测请求",
+            "label": "事件开始 · 洪水预测请求",
             "detail": (
                 f"{detail} {boundary_flow_observation_detail(observation)} "
                 f"{trigger.get('reason', '')}"

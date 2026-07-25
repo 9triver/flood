@@ -18,6 +18,7 @@ sys.path.insert(0, str(PROJECT_DIR / "agent"))
 
 from oag.runtime.events import event_to_dict  # noqa: E402
 from server.agent_runs import AgentRunManager  # noqa: E402
+from server.directives import DirectiveStore  # noqa: E402
 from server.events import EventRuntime  # noqa: E402
 from server.flood_app import FloodApp  # noqa: E402
 from server.serialization import format_sse  # noqa: E402
@@ -26,6 +27,7 @@ from server.serialization import format_sse  # noqa: E402
 APP = FloodApp()
 RUNS = AgentRunManager(APP)
 EVENT_RUNTIME = EventRuntime(APP)
+DIRECTIVES = DirectiveStore()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -42,6 +44,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._autonomy_stream(parsed.query)
             if parsed.path == "/api/autonomy/status":
                 return self._json(EVENT_RUNTIME.status())
+            if parsed.path == "/api/directives":
+                return self._json(DIRECTIVES.list_issued())
             if parsed.path == "/api/agent/runs/active":
                 return self._active_run(parsed.query)
             if parsed.path == "/api/hydrodynamic-grid/meta":
@@ -87,6 +91,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(EVENT_RUNTIME.set_playback_speed(payload.get("speed_multiplier", 1)))
             if parsed.path == "/api/agent/confirm":
                 return self._confirm(payload)
+            if parsed.path == "/api/directives":
+                return self._issue_directive(payload)
             if parsed.path == "/api/autonomy/reset":
                 return self._json(EVENT_RUNTIME.restart_playback(payload.get("speed_multiplier", 20)))
             if parsed.path.startswith("/api/agent/runs/") and parsed.path.endswith("/cancel"):
@@ -152,6 +158,14 @@ class Handler(BaseHTTPRequestHandler):
             yield format_sse("done", {"type": "done"})
 
         return self._sse(generator())
+
+    def _issue_directive(self, payload: dict[str, Any]):
+        try:
+            directive = DIRECTIVES.issue(payload, EVENT_RUNTIME.status())
+        except ValueError as exc:
+            return self._json({"error": str(exc)}, status=400)
+        EVENT_RUNTIME.publish_directive_issued(directive)
+        return self._json({"directive": directive}, status=201)
 
     def _autonomy_stream(self, query: str):
         params = parse_qs(query)

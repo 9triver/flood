@@ -11,6 +11,7 @@ from server.flood_app import (
     select_user_agent_tools,
 )
 from server.presentation.map_tools import register_map_tools
+from server.presentation.directive_tools import register_directive_tools
 from oag.ontology.schema import Ontology
 from oag.tools.registry import ToolRegistry
 
@@ -29,6 +30,21 @@ class FloodAppConfigTest(unittest.TestCase):
         self.assertEqual(definition.description, tool.description)
         self.assertIn("对象名称映射来自 ontology", tool.usage_prompt)
         self.assertNotIn("{object_aliases}", tool.usage_prompt)
+        self.assertFalse(tool.policy.read_only)
+
+    def test_directive_editor_tool_metadata_comes_from_ontology(self):
+        tools = ToolRegistry()
+        register_directive_tools(tools, ONTOLOGY)
+
+        tool = tools.get("ui_open_emergency_directive_editor")
+        result = json.loads(tool.handler({
+            "title": "组织新民村避洪转移",
+            "content": "立即组织群众转移。",
+            "recipients": "凤翔镇人民政府",
+        }))
+
+        self.assertEqual("frontend_directive_editor", result["kind"])
+        self.assertEqual("urgent", result["draft"]["priority"])
         self.assertFalse(tool.policy.read_only)
 
     def test_agent_max_turns_defaults_to_ten(self):
@@ -76,6 +92,15 @@ class FloodAppConfigTest(unittest.TestCase):
         self.assertIn("ui_show_objects", tools)
         self.assertNotIn("run_flood_forecast", tools)
 
+    def test_latest_evacuation_question_exposes_dedicated_analysis_tool(self):
+        tools = select_user_agent_tools(
+            "你根据预测的24小时淹水情况，分析一下新民村的最晚转移时间",
+            ONTOLOGY,
+        )
+
+        self.assertIn("analyze_latest_evacuation_time", tools)
+        self.assertNotIn("run_flood_forecast", tools)
+
     def test_explicit_reforecast_adds_forecast_tool(self):
         tools = select_user_agent_tools(
             "重新计算预测并分析哪些道路受影响", ONTOLOGY,
@@ -88,6 +113,13 @@ class FloodAppConfigTest(unittest.TestCase):
         tools = select_user_agent_tools("那就换一个最近的安置点", ONTOLOGY)
 
         self.assertIn("plan_evacuation_route", tools)
+
+    def test_directive_request_exposes_editor_tool(self):
+        tools = select_user_agent_tools(
+            "把刚才的建议作为初稿，新建一个应急指令", ONTOLOGY,
+        )
+
+        self.assertIn("ui_open_emergency_directive_editor", tools)
 
     def test_route_follow_up_inherits_recent_tool_scope(self):
         tools = select_user_agent_tools(

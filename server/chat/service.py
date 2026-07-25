@@ -50,10 +50,10 @@ class FloodChatService:
             ):
                 if run.cancelled:
                     break
-                self._append_pending_map_events(run, agent_session_id)
+                self._append_pending_frontend_events(run, agent_session_id)
                 data = event_to_dict(event)
                 run.append_event(data["type"], data)
-            self._append_pending_map_events(run, agent_session_id)
+            self._append_pending_frontend_events(run, agent_session_id)
         except Exception as exc:
             print(f"OAG agent stream failed: {exc}")
             run.append_event("text", {
@@ -65,8 +65,8 @@ class FloodChatService:
     def agent_session_id(session_id: str) -> str:
         return f"{active_workspace_id() or 'manual'}:{session_id}"
 
-    def _append_pending_map_events(self, run: AgentRun,
-                                   session_id: str) -> None:
+    def _append_pending_frontend_events(self, run: AgentRun,
+                                        session_id: str) -> None:
         for result in self.side_effects.pop_map_events(session_id):
             run.append_event("map_actions", {
                 "type": "map_actions",
@@ -74,6 +74,11 @@ class FloodChatService:
                 "map_actions": result.get("map_actions", []),
                 "result_cards": result.get("result_cards", []),
                 "llm_enabled": bool(self.agent),
+            })
+        for result in self.side_effects.pop_directive_events(session_id):
+            run.append_event("directive_draft", {
+                "type": "directive_draft",
+                "draft": result.get("draft", {}),
             })
 
     def _agent_message(self, message: str, selected: dict) -> str:

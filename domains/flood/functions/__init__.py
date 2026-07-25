@@ -4,6 +4,7 @@ from oag.ontology.registry import FunctionRegistry
 from oag.ontology.repository import ObjectRepository
 from oag.ontology.schema import Ontology
 
+from domains.flood.runtime.evacuation_timing import analyze_latest_evacuation_time
 from domains.flood.runtime.forecast import run_emergency_cycle, run_flood_forecast
 from domains.flood.runtime.impact_analysis import analyze_inundation_impacts
 from domains.flood.runtime.repository import FloodRepository
@@ -24,6 +25,16 @@ def register(registry: FunctionRegistry, repository: ObjectRepository,
     registry.register("analyze_inundation_impacts", lambda forecast_id="latest", target_type="all", min_depth_m=0.15, max_distance_m=10, time_h=None: analyze_inundation_impacts(
         resolver, forecast_id, target_type, min_depth_m, max_distance_m, time_h,
     ), ontology.functions["analyze_inundation_impacts"])
+    registry.register("analyze_latest_evacuation_time", lambda transfer_id="", transfer_name="", route_id="", forecast_id="latest", blocked_depth_m=0.3, clearance_duration_min=None, safety_buffer_min=0: analyze_latest_evacuation_time(
+        resolver,
+        transfer_id,
+        transfer_name,
+        route_id,
+        forecast_id,
+        blocked_depth_m,
+        clearance_duration_min,
+        safety_buffer_min,
+    ), ontology.functions["analyze_latest_evacuation_time"])
     registry.register("plan_evacuation_route", lambda start_object_type="Transfer", start_object_id="", destination_place_id="", start_lon=None, start_lat=None, destination_lon=None, destination_lat=None, forecast_id="latest", time_h=None, blocked_depth_m=None, profile="car", avoid_flood=True, max_endpoint_distance_m=800, max_detour_ratio=10: plan_evacuation_route(
         resolver,
         start_object_type,

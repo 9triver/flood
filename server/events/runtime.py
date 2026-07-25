@@ -232,6 +232,19 @@ class EventRuntime:
                 **self._boundary_flow_runner.status(),
             }
 
+    def publish_directive_issued(self, directive: dict[str, Any]) -> None:
+        self._append_output("agent_trace", {
+            "type": "agent_trace",
+            "tag": "COMMAND",
+            "label": "应急指令已发出",
+            "detail": (
+                f"{directive.get('directive_id', '')} · "
+                f"{directive.get('title', '')}\n\n"
+                f"接收对象：{directive.get('recipients', '')}"
+            ),
+            "workspace_id": directive.get("workspace_id"),
+        })
+
     def stream(self, interval: int):
         self.ensure_started()
         with self.condition:

@@ -107,6 +107,43 @@ class ChatServiceBoundaryTest(unittest.TestCase):
 
         self.assertEqual(1, len(effects.pop_map_events("chat-1")))
 
+    def test_side_effect_mailbox_captures_directive_editor_event(self):
+        effects = AgentSideEffects(["ui_open_emergency_directive_editor"])
+        effects.capture_tool_event({
+            "tool_name": "ui_open_emergency_directive_editor",
+            "session_id": "chat-1",
+            "result": json.dumps({
+                "kind": "frontend_directive_editor",
+                "draft": {
+                    "title": "组织新民村避洪转移",
+                    "content": "立即组织群众转移。",
+                    "recipients": "凤翔镇人民政府",
+                    "priority": "urgent",
+                },
+            }, ensure_ascii=False),
+        })
+
+        event = effects.pop_directive_events("chat-1")[0]
+        self.assertEqual("directive_draft", event["type"])
+        self.assertEqual("组织新民村避洪转移", event["draft"]["title"])
+
+    def test_side_effect_mailbox_keeps_full_event_tool_result(self):
+        effects = AgentSideEffects([])
+        raw_result = json.dumps({
+            "summary": {"Road": {"count": 12}},
+            "impacts": [{"object_id": f"road_{index}"} for index in range(30)],
+        })
+
+        effects.capture_tool_event({
+            "tool_name": "query",
+            "session_id": "event-evt_1",
+            "result": raw_result,
+        })
+
+        stored = effects.pop_event_tool_results("event-evt_1")[0]
+        self.assertEqual(raw_result, stored["result"])
+        self.assertEqual([], effects.pop_event_tool_results("event-evt_1"))
+
     def test_domain_service_delegates_deterministic_functions(self):
         registry = FakeRegistry()
         service = FloodDomainService(
