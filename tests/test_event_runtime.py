@@ -74,7 +74,7 @@ class FakeEventApp:
                 allowed_tools=["run_flood_forecast"],
             ),
             "InundationGenerated": SimpleNamespace(
-                allowed_tools=["analyze_inundation_impacts"],
+                allowed_tools=["ui_set_inundation_alert", "ui_show_objects"],
                 automatic_map=automatic_map,
             ),
         })
@@ -342,27 +342,27 @@ class EventRuntimeModuleBoundaryTest(unittest.TestCase):
             ]
             self.assertEqual("DirectiveIssued", records[0]["data"]["event_type"])
 
-    def test_impact_child_event_is_published_after_parent_stage_done(self):
-        impact_result = {
-            "status": "completed",
-            "forecast_id": "forecast_latest",
-            "summary": {"Road": {"count": 2, "high": 1, "medium": 1}},
-            "total_impacts": 2,
-            "impacts": [
-                {"object_type": "Road", "object_id": "road_1"},
-                {"object_type": "Road", "object_id": "road_2"},
-            ],
+    def test_inundation_stage_sets_alert_without_publishing_impact_event(self):
+        alert_result = {
+            "kind": "frontend_map_actions",
+            "context": "24小时淹没警戒 · 珊瑚河流域",
+            "map_actions": [{
+                "type": "set_watershed_inundation_alert",
+                "active": True,
+            }],
+            "result_cards": [],
         }
         app = FakeEventApp([
-            ReasoningEvent(content="先执行确定性空间分析。"),
-            ToolCallEvent(name="analyze_inundation_impacts", args={}),
+            ReasoningEvent(content="预测期内存在淹没单元。"),
+            ToolCallEvent(name="ui_set_inundation_alert", args={"active": True}),
             ToolResultEvent(
-                name="analyze_inundation_impacts",
-                result=json.dumps(impact_result, ensure_ascii=False),
+                name="ui_set_inundation_alert",
+                result=json.dumps(alert_result, ensure_ascii=False),
             ),
-            TextEvent(content="已完成影响分析。"),
+            TextEvent(content="已显示流域警戒边界。"),
         ])
         timeline = []
+        impact_events = []
         processor = EventAgentProcessor(
             app=app,
             playback_runner=NoopPlaybackTracker(),
@@ -371,9 +371,7 @@ class EventRuntimeModuleBoundaryTest(unittest.TestCase):
                 ("trace", data.get("tag"), data)
             ),
             publish_inundation_event=lambda event, generation: None,
-            publish_impact_event=lambda event, generation: timeline.append(
-                ("publish", event["event_type"], event)
-            ),
+            publish_impact_event=lambda event, generation: impact_events.append(event),
         )
 
         processor.handle_event({
@@ -386,7 +384,8 @@ class EventRuntimeModuleBoundaryTest(unittest.TestCase):
             ["THINK", "CALL", "RESULT", "TEXT", "DONE"],
             [item[1] for item in timeline if item[0] == "trace"],
         )
-        self.assertEqual(("publish", "ImpactAnalyzed"), timeline[-1][:2])
+        self.assertEqual([], impact_events)
+        self.assertIn("set_watershed_inundation_alert", timeline[2][2]["detail"])
 
     def test_generic_tool_summary_keeps_valid_bounded_json(self):
         detail = summarize_event_tool_result("query", {

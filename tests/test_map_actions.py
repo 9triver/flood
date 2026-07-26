@@ -138,6 +138,18 @@ class MapActionBuilderTest(unittest.TestCase):
             result["error"],
         )
 
+    def test_builds_watershed_inundation_alert_action(self):
+        active = json.loads(self.builder.set_inundation_alert({"active": True}))
+        inactive = json.loads(self.builder.set_inundation_alert({"active": False}))
+        invalid = json.loads(self.builder.set_inundation_alert({"active": 1}))
+
+        self.assertEqual(
+            {"type": "set_watershed_inundation_alert", "active": True},
+            active["map_actions"][0],
+        )
+        self.assertFalse(inactive["map_actions"][0]["active"])
+        self.assertIn("active must be a boolean", invalid["error"])
+
     def test_dedupe_only_removes_exact_duplicate_actions(self):
         actions = dedupe_actions([
             {"type": "load_object", "object_type": "Road", "fit": True},

@@ -13,6 +13,7 @@ def readable_event_tool(name: str) -> str:
         "ui_show_event_marker": "地图展示事件",
         "ui_focus_object": "地图聚焦对象",
         "ui_clear_map": "清空地图",
+        "ui_set_inundation_alert": "设置流域淹没警戒",
     }.get(name, name or "tool")
 
 
@@ -184,8 +185,8 @@ def is_impact_result(value: dict[str, Any] | None) -> bool:
     )
 
 
-def boundary_flow_observation_detail(observation: dict[str, Any]) -> str:
-    boundaries = observation.get("boundaries") or {}
+def boundary_flow_forecast_detail(forecast_point: dict[str, Any]) -> str:
+    boundaries = forecast_point.get("boundaries") or {}
     parts = []
     for key in ("interval1", "interval2", "tonggu", "upstream"):
         item = boundaries.get(key) or {}
@@ -194,12 +195,17 @@ def boundary_flow_observation_detail(observation: dict[str, Any]) -> str:
                 f"{item.get('label', key)} "
                 f"{format_float(item.get('flow_m3s'), 2)} m³/s"
             )
-    return f"{observation.get('observed_at', '')}: " + "，".join(parts)
+    simulation_time = (
+        forecast_point.get("simulation_time")
+        or forecast_point.get("observed_at")
+        or ""
+    )
+    return f"{simulation_time}: " + "，".join(parts)
 
 
 def boundary_flow_event_detail(event: dict[str, Any]) -> str:
     payload = event.get("payload") or {}
-    return boundary_flow_observation_detail(payload.get("observation") or {})
+    return boundary_flow_forecast_detail(payload.get("observation") or {})
 
 
 def domain_event_detail(event: dict[str, Any]) -> str:

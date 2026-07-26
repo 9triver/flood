@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import json
 import sys
 import tempfile
@@ -42,11 +41,6 @@ class BoundaryFlowPolicyTest(unittest.TestCase):
             CSV_PATH,
             self.temp_dir / "observations.jsonl",
         )
-        self.policy = FloodForecastPolicy(
-            self.source.rows,
-            forecast_input_dir=self.temp_dir / "forecast_inputs",
-            latest_forecast_input_path=self.temp_dir / "latest_forecast_input.json",
-        )
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -62,107 +56,138 @@ class BoundaryFlowPolicyTest(unittest.TestCase):
                 lead_in_flows[key].append(flow)
                 self.assertGreater(flow, reference * 0.85)
                 self.assertLess(flow, reference * 1.15)
-            self.assertEqual(self.policy.observe(row), [])
         for flows in lead_in_flows.values():
             self.assertGreater(len(set(flows)), 12)
             self.assertGreater(max(flows) - min(flows), 0)
-        self.assertEqual(self.policy.state, FloodForecastPolicy.NORMAL)
-        self.assertEqual(self.policy.episode_id, "")
 
         flood_row = next(row for row in self.source.rows if row["observed_at"].startswith("2025-01-01T08:00"))
         interval2 = flood_row["boundaries"]["interval2"]["flow_m3s"]
         tonggu = flood_row["boundaries"]["tonggu"]["flow_m3s"]
         self.assertAlmostEqual(tonggu, interval2 * 0.946, places=6)
 
-    def test_initial_trigger_and_stable_25_point_forecast_input(self):
-        events = self._play_all()
-        requests = [event for event in events if event["event_type"] == "FloodForecastRequired"]
-        self.assertEqual(len(requests), 1)
-        self.assertEqual(requests[0]["time"], "2025-01-01T08:00:00+08:00")
+    def test_trigger_and_cnn_input_use_the_same_current_to_plus_24h_window(self):
+        rows = _forecast_rows(30, {25: 240.0})
+        policy = self._policy(rows)
 
-        summary = requests[0]["payload"]["forecast_input"]
+        self.assertEqual(policy.observe(rows[0]), [])
+        request = policy.observe(rows[1])[0]
+
+        self.assertEqual(request["time"], rows[1]["observed_at"])
+        summary = request["payload"]["forecast_input"]
+        trigger = request["payload"]["forecast_trigger"]
         self.assertEqual(summary["version"], 1)
-        self.assertEqual(summary["window_start"], "2025-01-01T03:00:00+08:00")
-        self.assertEqual(summary["window_end"], "2025-01-02T03:00:00+08:00")
-        self.assertEqual(summary["observed_point_count"], 6)
-        self.assertEqual(summary["forecast_point_count"], 19)
+        self.assertEqual(summary["simulation_time"], rows[1]["observed_at"])
+        self.assertEqual(summary["window_start"], rows[1]["observed_at"])
+        self.assertEqual(summary["window_end"], rows[25]["observed_at"])
+        self.assertEqual(summary["forecast_point_count"], 25)
+        self.assertEqual(trigger["trigger_type"], "forecast_window_peak")
+        self.assertEqual(trigger["threshold_m3s"], 230.0)
+        self.assertEqual(trigger["window_peak_total_flow_m3s"], 240.0)
+        self.assertEqual(trigger["threshold_exceeded_at"], rows[25]["observed_at"])
         for boundary in summary["boundaries"].values():
             self.assertEqual(len(boundary["series"]), 25)
             self.assertEqual(boundary["series"][0]["time_h"], 0)
             self.assertEqual(boundary["series"][-1]["time_h"], 24)
+            self.assertEqual(
+                [point["flow_m3s"] for point in boundary["series"]],
+                [row["total_flow_m3s"] / 4 for row in rows[1:26]],
+            )
+            self.assertEqual(
+                {point["source"] for point in boundary["series"]},
+                {"csv_forecast"},
+            )
 
-    def test_active_episode_does_not_repeat_initial_request(self):
-        request = self._play_until_request()
+    def test_threshold_is_strictly_greater_than_230(self):
+        rows = _forecast_rows(25, {24: 230.0})
+        policy = self._policy(rows)
+
+        self.assertEqual(policy.observe(rows[0]), [])
+        self.assertEqual(policy.state, FloodForecastPolicy.NORMAL)
+        self.assertEqual(policy.version, 0)
+
+    def test_window_without_exceedance_does_not_trigger(self):
+        rows = _forecast_rows(25)
+        policy = self._policy(rows)
+
+        self.assertEqual(policy.observe(rows[0]), [])
+        self.assertFalse((self.temp_dir / "latest_forecast_input.json").exists())
+
+    def test_fewer_than_25_remaining_points_does_not_trigger(self):
+        rows = _forecast_rows(25, {24: 400.0})
+        policy = self._policy(rows)
+
+        self.assertEqual(policy.observe(rows[1]), [])
+        self.assertEqual(policy.version, 0)
+
+    def test_completed_forecast_does_not_trigger_again(self):
+        rows = _forecast_rows(30, {24: 300.0, 25: 310.0})
+        policy = self._policy(rows)
+        request = policy.observe(rows[0])[0]
         input_id = request["source_id"]
-        self.assertTrue(self.policy.mark_forecast_started(input_id))
-        self.assertFalse(self.policy.mark_forecast_started(input_id))
-        self.assertTrue(self.policy.mark_forecast_completed(input_id))
+        self.assertTrue(policy.mark_forecast_started(input_id))
+        self.assertFalse(policy.mark_forecast_started(input_id))
+        self.assertTrue(policy.mark_forecast_completed(input_id))
 
-        later_events = self._play_all()
-        requests = [event for event in later_events if event["event_type"] == "FloodForecastRequired"]
-        self.assertEqual(requests, [])
-        self.assertEqual(self.policy.version, 1)
+        later_events = [event for row in rows[1:] for event in policy.observe(row)]
+        self.assertEqual(later_events, [])
+        self.assertEqual(policy.version, 1)
 
-    def test_two_deviating_periods_after_cooldown_create_version_two(self):
-        request = self._play_until_request()
-        self.policy.mark_forecast_started(request["source_id"])
-        self.policy.mark_forecast_completed(request["source_id"])
+    def test_every_rolling_step_retriggers_until_window_has_no_exceedance(self):
+        rows = _forecast_rows(50, {24: 300.0})
+        policy = self._policy(rows)
+        initial = policy.observe(rows[0])[0]
+        self.assertTrue(policy.mark_forecast_started(initial["source_id"]))
+        self.assertTrue(policy.mark_forecast_completed(initial["source_id"]))
 
-        recompute = None
-        while recompute is None:
-            observation = self.source.next_observation()
-            self.assertIsNotNone(observation)
-            if observation["observed_at"].startswith(("2025-01-01T11:00", "2025-01-01T12:00")):
-                observation = _scale_observation(observation, 1.5)
-            for event in self.policy.observe(observation):
-                if event["event_type"] == "FloodForecastRequired":
-                    recompute = event
-                    break
+        for sequence in range(1, 25):
+            request = policy.observe(rows[sequence], rolling=True)[0]
+            trigger = request["payload"]["forecast_trigger"]
+            summary = request["payload"]["forecast_input"]
+            self.assertEqual(trigger["trigger_type"], "rolling_step")
+            self.assertEqual(summary["window_start"], rows[sequence]["observed_at"])
+            self.assertEqual(summary["window_end"], rows[sequence + 24]["observed_at"])
+            self.assertTrue(policy.mark_forecast_started(request["source_id"]))
+            self.assertTrue(policy.mark_forecast_completed(request["source_id"]))
 
-        self.assertEqual(recompute["time"], "2025-01-01T12:00:00+08:00")
-        self.assertEqual(recompute["payload"]["forecast_trigger"]["trigger_type"], "deviation")
-        self.assertEqual(recompute["payload"]["forecast_input"]["version"], 2)
-        self.assertTrue((self.temp_dir / "forecast_inputs" / "flood_20250101T0300" / "v002.json").exists())
+        self.assertEqual(policy.observe(rows[25], rolling=True), [])
+        self.assertEqual(policy.version, 25)
+        self.assertEqual(policy.completed_version, 25)
+        self.assertEqual(policy.state, FloodForecastPolicy.ACTIVE)
+
+    def test_failed_forecast_can_retry_at_the_next_prediction_time(self):
+        rows = _forecast_rows(26, {24: 300.0})
+        policy = self._policy(rows)
+        first = policy.observe(rows[0])[0]
+        self.assertTrue(policy.mark_forecast_started(first["source_id"]))
+        self.assertTrue(policy.mark_forecast_failed(first["source_id"]))
+
+        retry = policy.observe(rows[1])[0]
+
+        self.assertEqual(retry["time"], rows[1]["observed_at"])
+        self.assertEqual(retry["payload"]["forecast_input"]["version"], 2)
+        self.assertEqual(
+            retry["payload"]["forecast_input"]["window_start"],
+            rows[1]["observed_at"],
+        )
+        self.assertTrue(
+            (self.temp_dir / "forecast_inputs" / "flood_20260101T0000" / "v002.json").exists()
+        )
 
     def test_pending_request_is_coalesced(self):
-        request = self._play_until_request()
-        self.assertTrue(self.policy.mark_forecast_started(request["source_id"]))
-        events = self._play_all()
-        requests = [event for event in events if event["event_type"] == "FloodForecastRequired"]
-        self.assertEqual(requests, [])
-        self.assertEqual(self.policy.version, 1)
+        rows = _forecast_rows(26, {24: 300.0})
+        policy = self._policy(rows)
+        request = policy.observe(rows[0])[0]
+        self.assertTrue(policy.mark_forecast_started(request["source_id"]))
 
-    def test_three_clear_observations_close_episode_and_reset_allows_another(self):
-        request = self._play_until_request()
-        self.policy.mark_forecast_started(request["source_id"])
-        self.policy.mark_forecast_completed(request["source_id"])
-        start = datetime.fromisoformat(request["time"])
-        end_events = []
-        for offset in range(1, 4):
-            end_events.extend(self.policy.observe(_clear_observation(start + timedelta(hours=offset), offset)))
+        self.assertEqual(policy.observe(rows[1]), [])
+        self.assertEqual(policy.version, 1)
 
-        self.assertEqual([event["event_type"] for event in end_events], ["FloodEpisodeEnded"])
-        self.assertEqual(self.policy.state, FloodForecastPolicy.CLOSED)
-
-        self.source.reset()
-        self.policy.reset()
-        second_request = self._play_until_request()
-        self.assertEqual(second_request["time"], "2025-01-01T08:00:00+08:00")
-        self.assertEqual(self.policy.version, 1)
-
-    def _play_until_request(self):
-        while True:
-            observation = self.source.next_observation()
-            self.assertIsNotNone(observation)
-            for event in self.policy.observe(observation):
-                if event["event_type"] == "FloodForecastRequired":
-                    return event
-
-    def _play_all(self):
-        events = []
-        while (observation := self.source.next_observation()) is not None:
-            events.extend(self.policy.observe(observation))
-        return events
+    def _policy(self, rows):
+        return FloodForecastPolicy(
+            rows,
+            forecast_input_dir=self.temp_dir / "forecast_inputs",
+            latest_forecast_input_path=self.temp_dir / "latest_forecast_input.json",
+        )
 
 
 class BoundaryFlowPlaybackRunnerTest(unittest.TestCase):
@@ -212,7 +237,7 @@ class BoundaryFlowPlaybackRunnerTest(unittest.TestCase):
 
             self.assertEqual(
                 transitions,
-                [(73, 10.0, "rainfall"), (79, 5.0, "forecast")],
+                [(61, 5.0, "forecast")],
             )
 
     def test_runner_continues_after_forecast_request_until_csv_eof(self):
@@ -246,7 +271,10 @@ class BoundaryFlowPlaybackRunnerTest(unittest.TestCase):
                 1,
             )
             self.assertEqual(len(finished), 1)
-            self.assertEqual(finished[0][1]["event_type"], "BoundaryFlowObserved")
+            self.assertEqual(
+                finished[0][1]["event_type"],
+                "BoundaryFlowForecastAdvanced",
+            )
 
 
 class EventRuntimePlaybackControlTest(unittest.TestCase):
@@ -297,6 +325,89 @@ class EventRuntimePlaybackControlTest(unittest.TestCase):
         self.assertEqual(runtime._boundary_flow_runner.playback.source.index, source_index)
         self.assertEqual(list(runtime._event_queue), [(queued_event, 7)])
 
+    def test_step_advances_once_and_remains_paused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = WorkspaceManager(Path(directory), retention_count=3)
+            manager.create()
+            with patch("server.events.runtime.WORKSPACES", manager), patch(
+                "domains.flood.runtime.workspace.WORKSPACES", manager,
+            ):
+                runtime = EventRuntime(object())
+                runtime._started = True
+                runtime._playback_paused = True
+                source = runtime._boundary_flow_runner.playback.source
+                before = source.index
+
+                status = runtime.step_playback()
+
+            self.assertTrue(status["stepped"])
+            self.assertTrue(status["paused"])
+            self.assertFalse(status["running"])
+            self.assertFalse(status["forecast_triggered"])
+            self.assertTrue(status["step_available"])
+            self.assertEqual(source.index, before + 1)
+            self.assertEqual(runtime.outputs[-1]["data"]["status"], "stepped")
+
+    def test_step_is_rejected_while_forecast_is_pending(self):
+        runtime = EventRuntime(object())
+        runtime._started = True
+        runtime._playback_paused = True
+        runtime._boundary_flow_runner.playback.policy.state = "PENDING"
+        source_index = runtime._boundary_flow_runner.playback.source.index
+
+        with self.assertRaisesRegex(ValueError, "CNN 洪水预测尚未完成"):
+            runtime.step_playback()
+
+        self.assertEqual(
+            runtime._boundary_flow_runner.playback.source.index,
+            source_index,
+        )
+
+    def test_step_uses_rolling_policy_and_enqueues_next_forecast_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manager = WorkspaceManager(root / "workspaces", retention_count=3)
+            manager.create()
+            rows = _forecast_rows(27, {24: 300.0})
+            source = BoundaryFlowPlaybackSource(
+                CSV_PATH,
+                root / "observations.jsonl",
+            )
+            source.rows = rows
+            source.index = 1
+            policy = FloodForecastPolicy(
+                rows,
+                forecast_input_dir=root / "forecast_inputs",
+                latest_forecast_input_path=root / "latest.json",
+            )
+            initial = policy.observe(rows[0])[0]
+            policy.mark_forecast_started(initial["source_id"])
+            policy.mark_forecast_completed(initial["source_id"])
+
+            with patch("server.events.runtime.WORKSPACES", manager), patch(
+                "domains.flood.runtime.workspace.WORKSPACES", manager,
+            ):
+                runtime = EventRuntime(object())
+                runtime._started = True
+                runtime._playback_paused = True
+                runtime._boundary_flow_runner = BoundaryFlowPlaybackRunner(
+                    BoundaryFlowPlayback(source, policy),
+                )
+
+                status = runtime.step_playback()
+
+            self.assertTrue(status["paused"])
+            self.assertTrue(status["forecast_triggered"])
+            self.assertFalse(status["step_available"])
+            self.assertEqual(status["policy_state"], "PENDING")
+            self.assertEqual(status["forecast_version"], 2)
+            queued_event, _ = runtime._event_queue[0]
+            self.assertEqual(queued_event["event_type"], "FloodForecastRequired")
+            self.assertEqual(
+                queued_event["payload"]["forecast_trigger"]["trigger_type"],
+                "rolling_step",
+            )
+
     def test_restart_creates_new_workspace_and_waits_at_start(self):
         with tempfile.TemporaryDirectory() as directory:
             manager = WorkspaceManager(Path(directory), retention_count=3)
@@ -326,11 +437,12 @@ class EventRuntimePlaybackControlTest(unittest.TestCase):
 
 
 class InundationMapEventTest(unittest.TestCase):
-    def test_inundation_event_agent_can_call_impact_analysis(self):
+    def test_inundation_event_agent_sets_watershed_alert_without_impact_analysis(self):
         policy = ONTOLOGY.event_policies["InundationGenerated"]
 
-        self.assertIn("analyze_inundation_impacts", policy.allowed_tools)
-        self.assertIn("analyze_inundation_impacts", policy.required_functions)
+        self.assertIn("ui_set_inundation_alert", policy.allowed_tools)
+        self.assertNotIn("analyze_inundation_impacts", policy.allowed_tools)
+        self.assertNotIn("analyze_inundation_impacts", policy.required_functions)
         self.assertIn(policy.automatic_map.tool, ONTOLOGY.presentation_tools)
 
     def test_inundation_event_prompt_is_built_from_ontology_policy(self):
@@ -339,7 +451,9 @@ class InundationMapEventTest(unittest.TestCase):
             {"event_type": "InundationGenerated", "event_id": "evt_test"},
         )
 
-        self.assertIn("必须调用以下函数：analyze_inundation_impacts", prompt)
+        self.assertIn("forecast_cell_count>0", prompt)
+        self.assertIn("必须调用一次 ui_set_inundation_alert", prompt)
+        self.assertIn("不执行对象级影响分析", prompt)
         self.assertIn('"object_type": "HydrodynamicCell"', prompt)
         self.assertIn("只有用户在普通对话中明确请求时才可展示", prompt)
 
@@ -350,6 +464,7 @@ class InundationMapEventTest(unittest.TestCase):
             "map_actions": [
                 {"type": "show_hydrodynamic_mesh"},
                 {"type": "apply_hydrodynamic_result", "filters": {"forecast_id": "latest"}},
+                {"type": "set_watershed_inundation_alert", "active": True},
                 {"type": "load_object", "object_type": "Route"},
                 {"type": "clear_highlights"},
                 {"type": "highlight_objects", "object_type": "Route"},
@@ -364,7 +479,11 @@ class InundationMapEventTest(unittest.TestCase):
 
         self.assertEqual(
             [action["type"] for action in filtered["map_actions"]],
-            ["show_hydrodynamic_mesh", "apply_hydrodynamic_result"],
+            [
+                "show_hydrodynamic_mesh",
+                "apply_hydrodynamic_result",
+                "set_watershed_inundation_alert",
+            ],
         )
         self.assertEqual(filtered["result_cards"], [])
 
@@ -407,35 +526,30 @@ class InundationMapEventTest(unittest.TestCase):
         ))
 
 
-def _scale_observation(observation, scale):
-    result = copy.deepcopy(observation)
-    for boundary in result["boundaries"].values():
-        boundary["flow_m3s"] = round(float(boundary["flow_m3s"]) * scale, 6)
-    result["total_flow_m3s"] = round(
-        sum(boundary["flow_m3s"] for boundary in result["boundaries"].values()),
-        6,
-    )
-    return result
-
-
-def _clear_observation(observed_at, sequence):
-    boundaries = {
-        key: {"label": label, "flow_m3s": 0.0}
-        for key, label in {
-            "interval1": "区间1",
-            "interval2": "区间2",
-            "tonggu": "同古河",
-            "upstream": "坝址",
-        }.items()
+def _forecast_rows(row_count, totals_by_sequence=None):
+    totals_by_sequence = totals_by_sequence or {}
+    start = datetime.fromisoformat("2026-01-01T00:00:00+08:00")
+    labels = {
+        "interval1": "区间1",
+        "interval2": "区间2",
+        "tonggu": "同古河",
+        "upstream": "坝址",
     }
-    return {
-        "sequence": sequence,
-        "observed_at": observed_at.isoformat(),
-        "rainfall_mm": 0.0,
-        "reservoir_level_m": 245.1,
-        "boundaries": boundaries,
-        "total_flow_m3s": 0.0,
-    }
+    rows = []
+    for sequence in range(row_count):
+        total = float(totals_by_sequence.get(sequence, 100.0))
+        rows.append({
+            "sequence": sequence,
+            "observed_at": (start + timedelta(hours=sequence)).isoformat(),
+            "rainfall_mm": 0.0,
+            "reservoir_level_m": 245.1,
+            "boundaries": {
+                key: {"label": label, "flow_m3s": total / 4}
+                for key, label in labels.items()
+            },
+            "total_flow_m3s": total,
+        })
+    return rows
 
 
 if __name__ == "__main__":

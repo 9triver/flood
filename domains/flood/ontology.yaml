@@ -80,6 +80,19 @@ presentation_tools:
     requires_confirmation: false
     worker_allowed: false
 
+  ui_set_inundation_alert:
+    summary: "设置珊瑚河流域预测淹没警戒"
+    description: "根据24小时洪水预测是否存在淹没，开启或清除珊瑚河流域边界的红色警戒样式。"
+    usage_prompt: >-
+      只用于表达当前24小时预测是否存在淹没，不表示整个流域都会被淹，
+      也不用于判断具体道路、设施或转移对象是否受影响。
+      active=true 显示红色流域警戒边界，active=false 清除警戒并恢复默认边界。
+    side_effect_scope: frontend_map
+    mutates_domain: false
+    object_scope: none
+    requires_confirmation: false
+    worker_allowed: false
+
   ui_focus_object:
     summary: "定位并高亮 GIS 对象"
     description: "缩放、打开弹窗并高亮前端地图中的一个领域对象，不修改领域数据。"
@@ -118,23 +131,24 @@ presentation_tools:
 event_policies:
   FloodForecastRequired:
     role: "珊瑚河洪水应急智能体"
-    description: "领域策略已根据连续边界流量观测生成洪水预测请求。"
+    description: "领域策略已根据当前时刻至 +24h 的边界流量预测窗口生成洪水预测请求。"
     allowed_tools: [inspect, query, count, run_flood_forecast]
     forbidden_functions: [run_emergency_cycle]
     instructions:
       - "领域策略已经完成阈值判断；当事件 forecast_trigger.should_run_forecast=true 时，必须由你调用一次 run_flood_forecast，forecast_id 使用 latest。不要只用文字说明将要预测。"
-      - "事件 payload 包含 observation、forecast_input 和 forecast_trigger；run_flood_forecast 会读取事件对应的稳定输入快照，CNN 计算与结果保存由该工具完成。"
+      - "事件 payload 包含当前预测时刻 observation、与触发判断完全相同的 25 点 forecast_input，以及 forecast_trigger；run_flood_forecast 会读取事件对应的稳定输入快照，CNN 计算与结果保存由该工具完成。"
       - "本 FloodForecastRequired 事件只负责判断并运行洪水预测，不在当前事件阶段执行对象影响分析或防洪响应预案；预测完成后系统会另行发布 InundationGenerated 事件，由下一事件阶段执行确定性影响分析。结论中必须写清‘当前预测请求事件未执行影响分析，后续淹没结果事件将执行’，不要笼统表述为‘未启动影响评估’。"
-    conclusion_fields: ["当前四边界流量", "触发原因", "是否调用了预测模型"]
+    conclusion_fields: ["24小时预测窗口", "触发原因", "是否调用了预测模型"]
 
   InundationGenerated:
     role: "珊瑚河洪水应急智能体"
-    description: "水动力模型已经生成预测淹没结果，本事件负责确定性影响分析和淹没范围展示。"
-    allowed_tools: [inspect, query, count, analyze_inundation_impacts, ui_show_objects]
-    required_functions: [analyze_inundation_impacts]
+    description: "水动力模型已经生成24小时预测结果，本事件负责判断预测期内是否存在淹没并表达流域警戒态势。"
+    allowed_tools: [ui_set_inundation_alert, ui_show_objects]
     forbidden_functions: [run_emergency_cycle]
     instructions:
-      - "对象级受淹判定只能来自 analyze_inundation_impacts 返回结果，不得自行猜测设施、道路、桥梁、转移路线、转移对象或安置点是否受淹。"
+      - "只根据事件 payload 中 CNN 预测汇总判断未来24小时是否存在淹没：forecast_cell_count>0 表示存在至少一个水深不低于0.04米的预测淹没单元，否则表示无淹没。"
+      - "必须调用一次 ui_set_inundation_alert：存在淹没时传 active=true，无淹没时传 active=false，以确保旧警戒状态也能被清除。"
+      - "本事件不执行对象级影响分析，不判断具体道路、设施、桥梁、转移路线、转移对象或安置点是否受影响；这些分析只在用户明确提出后执行。"
       - "防洪响应预案在本事件中保持切断。"
     automatic_map:
       mode: when_relevant
@@ -145,10 +159,10 @@ event_policies:
           label: "预测淹没结果"
           fit: false
           refresh: true
-      allowed_action_types: [show_hydrodynamic_mesh, apply_hydrodynamic_result]
+      allowed_action_types: [show_hydrodynamic_mesh, apply_hydrodynamic_result, set_watershed_inundation_alert]
       other_objects: on_user_request
       include_result_cards: false
-    conclusion_fields: ["预测运行", "淹没面积", "最大水深", "受影响对象概况", "是否已请求淹没范围地图展示"]
+    conclusion_fields: ["预测运行", "24小时内是否存在淹没", "淹没面积", "最大水深", "流域警戒边界状态", "是否已请求淹没范围地图展示"]
 
 objects:
   River:

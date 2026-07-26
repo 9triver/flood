@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import threading
 import time
+from pathlib import Path
 from typing import Any, Callable
 
-from domains.flood.runtime.boundary_flow import BoundaryFlowPlayback
+from domains.flood.runtime.boundary_flow import (
+    BoundaryFlowPlayback,
+    BoundaryFlowPlaybackSource,
+)
 
 
 FORECAST_ATTENTION_STATES = frozenset({"PENDING", "ACTIVE", "RECEDING"})
@@ -57,6 +61,9 @@ class BoundaryFlowPlaybackRunner:
     def reset(self) -> None:
         self.playback.reset()
 
+    def replace_source(self, csv_path: Path) -> None:
+        self.playback = BoundaryFlowPlayback(BoundaryFlowPlaybackSource(csv_path))
+
     def mark_forecast_started(self, forecast_input_id: str) -> bool:
         return self.playback.mark_forecast_started(forecast_input_id)
 
@@ -65,6 +72,9 @@ class BoundaryFlowPlaybackRunner:
 
     def mark_forecast_failed(self, forecast_input_id: str) -> bool:
         return self.playback.mark_forecast_failed(forecast_input_id)
+
+    def step(self) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+        return self.playback.next_events(rolling=True)
 
     def status(self) -> dict[str, Any]:
         return {

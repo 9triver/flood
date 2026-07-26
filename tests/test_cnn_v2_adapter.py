@@ -28,8 +28,8 @@ class CnnV2AdapterTest(unittest.TestCase):
         boundaries = {
             key: {
                 "series": [
-                    {"time_h": 0, "flow_m3s": index + 1},
-                    {"time_h": 1, "flow_m3s": index + 11},
+                    {"time_h": time_h, "flow_m3s": index + time_h}
+                    for time_h in range(25)
                 ],
             }
             for index, (key, _) in enumerate(BOUNDARY_FILES)
@@ -47,8 +47,13 @@ class CnnV2AdapterTest(unittest.TestCase):
             for index, path in enumerate(paths):
                 with path.open(newline="", encoding="utf-8") as file:
                     rows = list(csv.DictReader(file))
-                self.assertEqual(float(rows[0]["flow_m3s"]), index + 1)
-                self.assertEqual(float(rows[1]["flow_m3s"]), index + 11)
+                self.assertEqual(len(rows), 25)
+                self.assertEqual(
+                    [float(row["time_h"]) for row in rows],
+                    list(range(25)),
+                )
+                self.assertEqual(float(rows[0]["flow_m3s"]), index)
+                self.assertEqual(float(rows[-1]["flow_m3s"]), index + 24)
 
     def test_success_keeps_only_canonical_forecast_outputs(self):
         boundaries = {

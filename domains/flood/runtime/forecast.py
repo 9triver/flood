@@ -199,8 +199,9 @@ def finalize_forecast_run(
         "forecast_sequence": sequence,
         "workspace_id": active_workspace_id(),
         "forecast_time": (
-            boundary_flow.get("observed_through")
+            boundary_flow.get("simulation_time")
             or boundary_flow.get("triggered_at")
+            or boundary_flow.get("observed_through")
             or run.get("generated_at")
         ),
         "valid_from": boundary_flow.get("window_start"),
@@ -408,15 +409,22 @@ def generate_forecast(resolver) -> dict[str, Any]:
 def hydrology_inputs_from_boundary_flow(boundary_flow: dict[str, Any] | None) -> dict[str, float]:
     summary = (boundary_flow or {}).get("summary") or {}
     boundaries = summary.get("boundaries") or {}
-    observed_point_count = max(1, int(summary.get("observed_point_count") or 1))
+    legacy_current_index = max(0, int(summary.get("observed_point_count") or 1) - 1)
+    current_index = 0 if summary.get("simulation_time") else legacy_current_index
     current_flows = [
-        float((row.get("series") or [{}])[min(observed_point_count - 1, len(row.get("series") or [{}]) - 1)].get("flow_m3s") or 0)
+        float((row.get("series") or [{}])[min(current_index, len(row.get("series") or [{}]) - 1)].get("flow_m3s") or 0)
         for row in boundaries.values()
     ]
     total_current = sum(current_flows)
+    predicted_rainfall = float(
+        summary.get("predicted_rainfall_24h_mm")
+        or (summary.get("rainfall_total_mm") if summary.get("simulation_time") else 0)
+        or 0
+    )
     return {
         "observed_rainfall_6h_mm": float(summary.get("observed_rainfall_mm") or 0),
         "forecast_rainfall_3h_mm": float(summary.get("forecast_rainfall_mm") or 0),
+        "predicted_rainfall_24h_mm": predicted_rainfall,
         "reservoir_water_level_m": float(summary.get("reservoir_level_m") or 0),
         "reservoir_flood_limit_level_m": 245.3,
         "reservoir_outflow_m3s": float(current_flows[-1] if current_flows else 0),
@@ -611,6 +619,7 @@ def reset_hydrodynamic_forecast_outputs() -> None:
 def forcing_index(inputs: dict[str, float]) -> float:
     rain_term = inputs["observed_rainfall_6h_mm"] / 140.0 * 0.48
     forecast_term = inputs["forecast_rainfall_3h_mm"] / 70.0 * 0.28
+    forecast_term += inputs.get("predicted_rainfall_24h_mm", 0.0) / 560.0 * 0.28
     reservoir_term = max(0.0, inputs["reservoir_water_level_m"] - inputs["reservoir_flood_limit_level_m"]) * 0.08
     outflow_term = inputs["reservoir_outflow_m3s"] / 650.0 * 0.18
     boundary_term = inputs["river_boundary_flow_m3s"] / 900.0 * 0.16

@@ -6,39 +6,6 @@ from typing import Any
 from oag.ontology.schema import Ontology
 
 
-READ_ONLY_AGENT_TOOLS = frozenset({
-    "inspect",
-    "query",
-    "count",
-    "query_links",
-    "describe",
-    "pivot",
-    "distribution",
-    "search",
-    "read_tool_result",
-})
-
-
-def select_user_agent_tools(message: str, ontology: Ontology,
-                            recent_context: str = "") -> frozenset[str]:
-    text = str(message or "").lower()
-    context_text = str(recent_context or "").lower()
-
-    selected = set(READ_ONLY_AGENT_TOOLS)
-    policy = ontology.interaction_policies.get("user_chat")
-    for intent in (policy.intents.values() if policy else []):
-        direct_match = any(
-            keyword.lower() in text for keyword in intent.keywords
-        )
-        context_match = any(
-            keyword.lower() in context_text
-            for keyword in intent.context_keywords
-        )
-        if direct_match or context_match:
-            selected.update(intent.tools)
-    return frozenset(selected)
-
-
 def build_agent_task_hint(message: str, ontology: Ontology) -> str:
     text = str(message or "")
     policy = ontology.interaction_policies.get("user_chat")

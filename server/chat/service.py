@@ -8,7 +8,7 @@ from oag.ontology.schema import Ontology
 from oag.runtime.events import event_to_dict
 
 from domains.flood.runtime.workspace import active_workspace_id
-from server.chat.policy import build_agent_task_hint, select_user_agent_tools
+from server.chat.policy import build_agent_task_hint
 from server.chat.side_effects import AgentSideEffects
 
 if TYPE_CHECKING:
@@ -34,20 +34,20 @@ class FloodChatService:
             return
 
         agent_session_id = self.agent_session_id(run.session_id)
-        recent_user_context = "\n".join(
-            item.get("content", "")
-            for item in self.agent.get_history(agent_session_id)[-6:]
-            if item.get("role") == "user"
-        )
-        allowed_tools = select_user_agent_tools(
-            run.message, self.ontology, recent_user_context,
-        )
         try:
-            for event in self.agent.chat_stream(
-                self._agent_message(run.message, selected),
-                session_id=agent_session_id,
-                allowed_tools=allowed_tools,
-            ):
+            if self.agent.pending_tool_name(agent_session_id) == "ask_user":
+                event_stream = self.agent.confirm_tool(
+                    agent_session_id,
+                    approved=True,
+                    answer=run.message,
+                )
+            else:
+                event_stream = self.agent.chat_stream(
+                    self._agent_message(run.message, selected),
+                    session_id=agent_session_id,
+                    allowed_tools=None,
+                )
+            for event in event_stream:
                 if run.cancelled:
                     break
                 self._append_pending_frontend_events(run, agent_session_id)

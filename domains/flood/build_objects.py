@@ -16,6 +16,9 @@ from .runtime.repository import object_library_path
 
 LONGTAN_RESERVOIR_ID = "longtan"
 LONGTAN_HYDROLAKES_ID = 177294
+WATERSHED_SIMPLIFY_TOLERANCE_M = 75.0
+WATERSHED_CHAIKIN_RATIO = 0.18
+WATERSHED_SMOOTHING_ITERATIONS = 2
 
 
 class FloodObjectBuilder:
@@ -57,7 +60,10 @@ class FloodObjectBuilder:
         rows = []
         path = DATA_DIR / "1.流域边界/珊瑚河流域范围.shp"
         features = _features(path)
-        feature = features[0] if features else {}
+        feature = (
+            _preprocess_watershed_feature(features[0])
+            if features else {}
+        )
         rows.append({
             "watershed_id": "shanhu_watershed",
             "river_id": "shanhu",
@@ -65,6 +71,10 @@ class FloodObjectBuilder:
             "watershed_type": "flood_risk_basin",
             **_geometry_fields(feature),
             "data_path": rel(path),
+            "data_note": (
+                "原始流域边界由栅格转面生成；展示几何先以75米容差做轮廓简化，"
+                "再做两轮轻度Chaikin圆角，以减少固定网格造成的锯齿。"
+            ),
         })
 
         # The external small-watershed unit overlaps the basin context and is
@@ -1698,6 +1708,161 @@ def _geometry_fields(feature: dict) -> dict:
         "geometry_crs": feature.get("_geometry_crs", "EPSG:4326") if geom else "",
         "geometry": json.dumps(geom, ensure_ascii=False) if geom else "",
     }
+
+
+def _preprocess_watershed_feature(feature: dict) -> dict:
+    geometry = feature.get("geometry") or {}
+    return {
+        **feature,
+        "geometry": _smooth_polygon_geometry(
+            geometry,
+            tolerance_m=WATERSHED_SIMPLIFY_TOLERANCE_M,
+            ratio=WATERSHED_CHAIKIN_RATIO,
+            iterations=WATERSHED_SMOOTHING_ITERATIONS,
+        ),
+    }
+
+
+def _smooth_polygon_geometry(geometry: dict, *, tolerance_m: float,
+                             ratio: float, iterations: int) -> dict:
+    geometry_type = str(geometry.get("type") or "")
+    coordinates = geometry.get("coordinates") or []
+    if geometry_type == "Polygon":
+        smoothed = [
+            _smooth_closed_ring(ring, tolerance_m, ratio, iterations)
+            for ring in coordinates
+        ]
+    elif geometry_type == "MultiPolygon":
+        smoothed = [
+            [
+                _smooth_closed_ring(ring, tolerance_m, ratio, iterations)
+                for ring in polygon
+            ]
+            for polygon in coordinates
+        ]
+    else:
+        return geometry
+    return {**geometry, "coordinates": smoothed}
+
+
+def _smooth_closed_ring(raw_ring: list, tolerance_m: float,
+                        ratio: float, iterations: int) -> list[list[float]]:
+    points: list[tuple[float, float]] = []
+    for raw_point in raw_ring:
+        if not isinstance(raw_point, (list, tuple)) or len(raw_point) < 2:
+            continue
+        point = (float(raw_point[0]), float(raw_point[1]))
+        if not points or point != points[-1]:
+            points.append(point)
+    if len(points) > 1 and points[0] == points[-1]:
+        points.pop()
+    if len(points) < 4:
+        closed = [[point[0], point[1]] for point in points]
+        if closed:
+            closed.append(list(closed[0]))
+        return closed
+
+    simplified = _simplify_closed_ring(points, tolerance_m)
+    smoothed = simplified
+    for _ in range(max(0, iterations)):
+        next_points = []
+        for index, point in enumerate(smoothed):
+            following = smoothed[(index + 1) % len(smoothed)]
+            next_points.extend([
+                (
+                    (1 - ratio) * point[0] + ratio * following[0],
+                    (1 - ratio) * point[1] + ratio * following[1],
+                ),
+                (
+                    ratio * point[0] + (1 - ratio) * following[0],
+                    ratio * point[1] + (1 - ratio) * following[1],
+                ),
+            ])
+        smoothed = next_points
+
+    rounded = [[round(lon, 7), round(lat, 7)] for lon, lat in smoothed]
+    rounded.append(list(rounded[0]))
+    return rounded
+
+
+def _simplify_closed_ring(points: list[tuple[float, float]],
+                          tolerance_m: float) -> list[tuple[float, float]]:
+    mean_lat = sum(point[1] for point in points) / len(points)
+    meters_per_lon = 111320.0 * math.cos(math.radians(mean_lat))
+    meters_per_lat = 110540.0
+    projected = [
+        (lon, lat, lon * meters_per_lon, lat * meters_per_lat)
+        for lon, lat in points
+    ]
+
+    first = 0
+    second = max(
+        range(len(projected)),
+        key=lambda index: _projected_distance_sq(
+            projected[first], projected[index],
+        ),
+    )
+    first = max(
+        range(len(projected)),
+        key=lambda index: _projected_distance_sq(
+            projected[second], projected[index],
+        ),
+    )
+    if first > second:
+        first, second = second, first
+
+    first_arc = _simplify_open_path(
+        projected[first:second + 1], tolerance_m,
+    )
+    second_arc = _simplify_open_path(
+        projected[second:] + projected[:first + 1], tolerance_m,
+    )
+    simplified = first_arc[:-1] + second_arc[:-1]
+    if len(simplified) < 3:
+        return points
+    return [(point[0], point[1]) for point in simplified]
+
+
+def _simplify_open_path(points: list[tuple[float, float, float, float]],
+                        tolerance_m: float):
+    if len(points) <= 2:
+        return points
+    keep = {0, len(points) - 1}
+    pending = [(0, len(points) - 1)]
+    tolerance_sq = tolerance_m * tolerance_m
+    while pending:
+        start, end = pending.pop()
+        furthest_index = None
+        furthest_distance = -1.0
+        for index in range(start + 1, end):
+            distance = _point_segment_distance_sq(
+                points[index], points[start], points[end],
+            )
+            if distance > furthest_distance:
+                furthest_distance = distance
+                furthest_index = index
+        if furthest_index is None or furthest_distance <= tolerance_sq:
+            continue
+        keep.add(furthest_index)
+        pending.extend([(start, furthest_index), (furthest_index, end)])
+    return [points[index] for index in sorted(keep)]
+
+
+def _projected_distance_sq(start, end) -> float:
+    return (end[2] - start[2]) ** 2 + (end[3] - start[3]) ** 2
+
+
+def _point_segment_distance_sq(point, start, end) -> float:
+    dx = end[2] - start[2]
+    dy = end[3] - start[3]
+    if dx == 0 and dy == 0:
+        return _projected_distance_sq(point, start)
+    ratio = max(0.0, min(1.0, (
+        (point[2] - start[2]) * dx + (point[3] - start[3]) * dy
+    ) / (dx * dx + dy * dy)))
+    nearest_x = start[2] + ratio * dx
+    nearest_y = start[3] + ratio * dy
+    return (point[2] - nearest_x) ** 2 + (point[3] - nearest_y) ** 2
 
 
 def _first_non_empty(values: dict, *keys: str) -> Any:

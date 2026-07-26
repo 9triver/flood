@@ -142,6 +142,26 @@ class MapActionBuilder:
             note=str(args.get("note") or "已重置地图显示。"),
         )
 
+    def set_inundation_alert(self, args: dict[str, Any]) -> str:
+        active = args.get("active")
+        if not isinstance(active, bool):
+            return _error("active must be a boolean")
+        return _payload(
+            context=(
+                "24小时淹没警戒 · 珊瑚河流域"
+                if active else "24小时无淹没 · 珊瑚河流域"
+            ),
+            actions=[{
+                "type": "set_watershed_inundation_alert",
+                "active": active,
+            }],
+            cards=[],
+            note=(
+                "已显示珊瑚河流域预测淹没警戒边界。"
+                if active else "已清除珊瑚河流域预测淹没警戒边界。"
+            ),
+        )
+
     def focus_object(self, args: dict[str, Any],
                      allowed_object_types: Collection[str]) -> str:
         object_type = str(args.get("object_type") or "")

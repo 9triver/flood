@@ -4,6 +4,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -13,11 +14,39 @@ from server.agent_runs import AgentRun, AgentRunManager
 from server.chat.service import FloodChatService
 from server.chat.side_effects import AgentSideEffects
 from server.domain_service import FloodDomainService
+from oag.runtime.events import TextEvent
 
 
 class FakeChatStreamer:
     def stream_chat(self, run):
         run.append_event("text", {"type": "text", "content": "完成"})
+
+
+class RecordingAgent:
+    def __init__(self):
+        self.allowed_tools = "not-called"
+
+    def chat_stream(self, message, session_id, allowed_tools=None):
+        self.allowed_tools = allowed_tools
+        yield TextEvent(content="完成")
+
+    def pending_tool_name(self, session_id):
+        return None
+
+
+class PendingQuestionAgent:
+    def __init__(self):
+        self.confirmed = None
+
+    def pending_tool_name(self, session_id):
+        return "ask_user"
+
+    def confirm_tool(self, session_id, approved, answer=None):
+        self.confirmed = (session_id, approved, answer)
+        yield TextEvent(content=f"已按“{answer}”继续")
+
+    def chat_stream(self, message, session_id, allowed_tools=None):
+        raise AssertionError("待回答 ask_user 时不应开始新的聊天回合")
 
 
 class FakeRegistry:
@@ -64,6 +93,37 @@ class ChatServiceBoundaryTest(unittest.TestCase):
 
         self.assertEqual("text", run.events[0]["type"])
         self.assertIn("未启用 LLM", run.events[0]["data"]["content"])
+
+    def test_user_chat_does_not_filter_tools_per_request(self):
+        agent = RecordingAgent()
+        run = AgentRun("run-1", "session-1", "新民村最迟什么时候出发")
+        service = FloodChatService(
+            agent=agent,
+            ontology=SimpleNamespace(interaction_policies={}),
+            side_effects=AgentSideEffects([]),
+        )
+
+        service.stream_chat(run)
+
+        self.assertIsNone(agent.allowed_tools)
+        self.assertEqual("完成", run.events[0]["data"]["content"])
+
+    def test_user_message_answers_pending_ask_user_question(self):
+        agent = PendingQuestionAgent()
+        run = AgentRun("run-1", "session-1", "两者都查看")
+        service = FloodChatService(
+            agent=agent,
+            ontology=SimpleNamespace(interaction_policies={}),
+            side_effects=AgentSideEffects([]),
+        )
+
+        service.stream_chat(run)
+
+        self.assertEqual(
+            (service.agent_session_id("session-1"), True, "两者都查看"),
+            agent.confirmed,
+        )
+        self.assertEqual("已按“两者都查看”继续", run.events[0]["data"]["content"])
 
     def test_side_effect_mailbox_captures_domain_results(self):
         effects = AgentSideEffects([])

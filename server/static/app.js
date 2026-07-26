@@ -15,6 +15,7 @@ const BOUNDARY_FLOW_LABELS = {
 
 const state = {
   map: null,
+  watershedRenderer: null,
   baseLayer: null,
   basemapKey: "standard",
   basemapLayers: new Map(),
@@ -37,19 +38,41 @@ const state = {
   directiveToast: null,
   activeStream: null,
   activeRunId: null,
+  pendingQuestion: null,
+  inundationAlertActive: false,
   autonomyStream: null,
-  autonomyPhase: "",
   eventMarkers: new Map(),
   hydrodynamicGridMeta: null,
   hydrodynamicResultMeta: null,
+  hydrodynamicResultLoadToken: 0,
   lastTrace: null,
   playbackRunning: false,
   playbackPaused: false,
   playbackSpeed: 20,
   playbackAutoPauseArmed: false,
   playbackAutoPausePending: false,
+  playbackStepPending: false,
   playbackTotalRows: 0,
+  playbackSource: null,
+  playbackSources: [],
+  playbackSourceMenuOpen: false,
+  playbackLongPressTriggered: false,
   lastMockObservation: null,
+  rainEffect: {
+    canvas: null,
+    context: null,
+    width: 0,
+    height: 0,
+    dpr: 1,
+    particles: [],
+    intensity: 0,
+    targetIntensity: 0,
+    frame: null,
+    lastFrameAt: 0,
+    resizeObserver: null,
+    motionQuery: null,
+    reducedMotion: false,
+  },
   boundaryFlowHistory: {
     interval1: [],
     interval2: [],
@@ -57,6 +80,8 @@ const state = {
     upstream: [],
   },
   boundaryFlowHistoryTimes: [],
+  boundaryFlowChartObserver: null,
+  boundaryFlowChartFrame: null,
   conclusionToasts: [],
   nextConclusionToastId: 1,
   hydrodynamicTimeline: {
@@ -198,13 +223,18 @@ const ICON_OBJECT_TYPES = new Set([
   "Risk",
   "HydroStation",
 ]);
+const MAP_CONTEXT_BASE_OBJECT_TYPES = new Set(["River", "Watershed"]);
+const MAP_CONTEXT_HYDRODYNAMIC_TYPES = new Set([
+  "HydrodynamicCell",
+  "HydrodynamicResult",
+]);
 
 document.addEventListener("DOMContentLoaded", async () => {
   initMap();
   bindEvents();
   initDraggableMapPanels();
   initAgentResize();
-  renderBoundaryFlowHistoryChart();
+  initBoundaryFlowHistoryChart();
   await bootstrap();
   await refreshDirectiveHistory();
   await loadObject("Watershed", {}, { fit: true });
@@ -222,6 +252,7 @@ function initMap() {
     preferCanvas: true,
   }).setView([24.4, 111.35], 10);
   state.map.attributionControl.setPrefix(false);
+  state.watershedRenderer = L.svg({ padding: 0.25 });
 
   state.map.createPane("impactPane");
   state.map.getPane("impactPane").style.zIndex = "475";
@@ -232,6 +263,174 @@ function initMap() {
   state.impactMarkerLayer = L.layerGroup().addTo(state.map);
   L.control.zoom({ position: "bottomleft" }).addTo(state.map);
   setBasemap(readStoredBasemap(), { persist: false });
+  initRainEffect();
+}
+
+function initRainEffect() {
+  const rain = state.rainEffect;
+  const canvas = document.getElementById("rainEffectCanvas");
+  if (!canvas) return;
+  rain.canvas = canvas;
+  rain.context = canvas.getContext("2d", { alpha: true });
+  rain.motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+  rain.reducedMotion = rain.motionQuery.matches;
+  const handleMotionPreference = (event) => {
+    rain.reducedMotion = event.matches;
+    if (rain.reducedMotion) {
+      stopRainAnimation({ clear: true });
+    } else if (rain.targetIntensity > 0) {
+      startRainAnimation();
+    }
+  };
+  rain.motionQuery.addEventListener?.("change", handleMotionPreference);
+  rain.resizeObserver = new ResizeObserver(resizeRainCanvas);
+  rain.resizeObserver.observe(state.map.getContainer());
+  document.addEventListener("visibilitychange", handleRainVisibilityChange);
+  resizeRainCanvas();
+}
+
+function resizeRainCanvas() {
+  const rain = state.rainEffect;
+  if (!rain.canvas || !rain.context) return;
+  const rect = state.map.getContainer().getBoundingClientRect();
+  const width = Math.max(1, Math.round(rect.width));
+  const height = Math.max(1, Math.round(rect.height));
+  const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+  if (rain.width === width && rain.height === height && rain.dpr === dpr) return;
+  rain.width = width;
+  rain.height = height;
+  rain.dpr = dpr;
+  rain.canvas.width = Math.round(width * dpr);
+  rain.canvas.height = Math.round(height * dpr);
+  rain.context.setTransform(dpr, 0, 0, dpr, 0, 0);
+  rain.particles = [];
+  ensureRainParticles();
+}
+
+function setRainfallEffect(rainfallMm) {
+  const rainfall = Math.max(0, Number(rainfallMm) || 0);
+  const rain = state.rainEffect;
+  rain.targetIntensity = rainfall > 0
+    ? Math.min(1, Math.max(0.12, Math.sqrt(rainfall / 25)))
+    : 0;
+  ensureRainParticles();
+  if (rain.targetIntensity > 0 && !rain.reducedMotion && !document.hidden) {
+    startRainAnimation();
+  } else if (rain.targetIntensity === 0 && !rain.reducedMotion && !document.hidden && rain.intensity > 0.005) {
+    startRainAnimation();
+  } else if (rain.targetIntensity === 0 || rain.reducedMotion) {
+    stopRainAnimation({ clear: true });
+  }
+}
+
+function ensureRainParticles() {
+  const rain = state.rainEffect;
+  if (!rain.width || !rain.height) return;
+  const targetCount = Math.min(
+    520,
+    Math.max(120, Math.round(rain.width * rain.height / 1800)),
+  );
+  while (rain.particles.length < targetCount) {
+    rain.particles.push(createRainParticle(true));
+  }
+  if (rain.particles.length > targetCount) {
+    rain.particles.length = targetCount;
+  }
+}
+
+function createRainParticle(anywhere = false) {
+  const rain = state.rainEffect;
+  return {
+    x: Math.random() * rain.width,
+    y: anywhere ? Math.random() * rain.height : -20 - Math.random() * rain.height * 0.2,
+    speed: 360 + Math.random() * 360,
+    length: 7 + Math.random() * 13,
+    drift: -45 - Math.random() * 55,
+    opacity: 0.24 + Math.random() * 0.46,
+  };
+}
+
+function startRainAnimation() {
+  const rain = state.rainEffect;
+  if (rain.frame || rain.reducedMotion || document.hidden || !rain.context) return;
+  rain.canvas?.classList.add("is-active");
+  rain.lastFrameAt = performance.now();
+  rain.frame = window.requestAnimationFrame(drawRainFrame);
+}
+
+function drawRainFrame(now) {
+  const rain = state.rainEffect;
+  rain.frame = null;
+  if (!rain.context || rain.reducedMotion || document.hidden) return;
+  const deltaMs = Math.min(40, Math.max(0, now - rain.lastFrameAt));
+  const deltaSeconds = deltaMs / 1000;
+  rain.lastFrameAt = now;
+  const smoothing = Math.min(1, deltaMs / 650);
+  rain.intensity += (rain.targetIntensity - rain.intensity) * smoothing;
+  if (Math.abs(rain.targetIntensity - rain.intensity) < 0.003) {
+    rain.intensity = rain.targetIntensity;
+  }
+
+  const context = rain.context;
+  context.clearRect(0, 0, rain.width, rain.height);
+  if (rain.intensity > 0.005) {
+    context.fillStyle = `rgba(72, 98, 120, ${0.055 * rain.intensity})`;
+    context.fillRect(0, 0, rain.width, rain.height);
+    const activeCount = Math.max(
+      1,
+      Math.round(rain.particles.length * (0.12 + rain.intensity * 0.88)),
+    );
+    context.lineWidth = 0.7 + rain.intensity * 0.55;
+    context.lineCap = "round";
+    for (let index = 0; index < activeCount; index += 1) {
+      let particle = rain.particles[index];
+      const speedFactor = 0.78 + rain.intensity * 0.52;
+      particle.x += particle.drift * speedFactor * deltaSeconds;
+      particle.y += particle.speed * speedFactor * deltaSeconds;
+      if (
+        particle.y > rain.height + particle.length
+        || particle.x < -particle.length * 3
+      ) {
+        particle = createRainParticle(false);
+        particle.x = Math.random() * (rain.width + 80);
+        rain.particles[index] = particle;
+      }
+      const trailSeconds = 0.024 + rain.intensity * 0.012;
+      context.strokeStyle = `rgba(188, 222, 242, ${particle.opacity * (0.45 + rain.intensity * 0.55)})`;
+      context.beginPath();
+      context.moveTo(particle.x, particle.y);
+      context.lineTo(
+        particle.x - particle.drift * trailSeconds,
+        particle.y - Math.max(particle.length, particle.speed * trailSeconds),
+      );
+      context.stroke();
+    }
+  }
+
+  if (rain.targetIntensity > 0 || rain.intensity > 0.005) {
+    rain.frame = window.requestAnimationFrame(drawRainFrame);
+  } else {
+    stopRainAnimation({ clear: true });
+  }
+}
+
+function stopRainAnimation({ clear = false } = {}) {
+  const rain = state.rainEffect;
+  if (rain.frame) window.cancelAnimationFrame(rain.frame);
+  rain.frame = null;
+  rain.lastFrameAt = 0;
+  if (!clear) return;
+  rain.intensity = 0;
+  rain.context?.clearRect(0, 0, rain.width, rain.height);
+  rain.canvas?.classList.remove("is-active");
+}
+
+function handleRainVisibilityChange() {
+  if (document.hidden) {
+    stopRainAnimation();
+  } else if (state.rainEffect.targetIntensity > 0) {
+    startRainAnimation();
+  }
 }
 
 function setBasemap(key, options = {}) {
@@ -394,8 +593,68 @@ async function bootstrap() {
   const res = await fetch("/api/bootstrap");
   state.bootstrap = await res.json();
   state.workspaceId = state.bootstrap.workspace_id || null;
-  document.getElementById("contextPill").textContent = state.bootstrap.default_context;
+  updateMapContentContext();
   renderObjectList(state.bootstrap.mappable || []);
+}
+
+function deriveMapContentContext() {
+  if (!state.map) return "基础态 · 领域对象地图";
+
+  const visibleTypes = new Set();
+  state.layerMeta.forEach((meta, key) => {
+    const layer = state.layerGroups.get(key);
+    if (layer && state.map.hasLayer(layer) && meta?.objectType) {
+      visibleTypes.add(meta.objectType);
+    }
+  });
+
+  const labels = [];
+  const addLabel = (label) => {
+    if (label && !labels.includes(label)) labels.push(label);
+  };
+
+  if (state.inundationAlertActive) addLabel("24小时淹没警戒");
+
+  if (visibleTypes.has("HydrodynamicResult")) {
+    addLabel("预测淹没");
+  } else if (visibleTypes.has("HydrodynamicCell")) {
+    addLabel("水动力网格");
+  }
+  const hasVisibleEventMarker = Array.from(state.eventMarkers.values())
+    .some((marker) => state.map.hasLayer(marker));
+  const hasVisibleImpactMarker = Array.from(state.impactMarkers.values())
+    .some((marker) => state.map.hasLayer(marker));
+  if (hasVisibleEventMarker) addLabel("事件告警");
+  if (hasVisibleImpactMarker) addLabel("影响对象");
+
+  Object.keys(OBJECT_CONFIG).forEach((objectType) => {
+    if (
+      !visibleTypes.has(objectType)
+      || MAP_CONTEXT_BASE_OBJECT_TYPES.has(objectType)
+      || MAP_CONTEXT_HYDRODYNAMIC_TYPES.has(objectType)
+    ) return;
+    addLabel(OBJECT_CONFIG[objectType]?.label || objectType);
+  });
+
+  const knownTypes = new Set(Object.keys(OBJECT_CONFIG));
+  Array.from(visibleTypes)
+    .filter((objectType) => (
+      !knownTypes.has(objectType)
+      && !MAP_CONTEXT_BASE_OBJECT_TYPES.has(objectType)
+      && !MAP_CONTEXT_HYDRODYNAMIC_TYPES.has(objectType)
+    ))
+    .sort()
+    .forEach(addLabel);
+
+  if (!labels.length) return "基础态 · 领域对象地图";
+  const visibleLabels = labels.slice(0, 3).join("、");
+  const overflow = labels.length > 3 ? `等${labels.length}类` : "";
+  return `${visibleLabels}${overflow} · 珊瑚河流域`;
+}
+
+function updateMapContentContext() {
+  const pill = document.getElementById("contextPill");
+  if (pill) pill.textContent = deriveMapContentContext();
 }
 
 function renderObjectList(items) {
@@ -441,8 +700,9 @@ function bindEvents() {
   document.getElementById("impactFloatBtn").addEventListener("click", () => toggleSituationPanelFloating("impactPanel"));
   document.getElementById("agentDrawerBtn").addEventListener("click", () => setAgentDrawerOpen(true));
   document.getElementById("agentCloseBtn").addEventListener("click", () => setAgentDrawerOpen(false));
-  document.getElementById("playbackToggleBtn").addEventListener("click", toggleBoundaryFlowPlayback);
+  bindPlaybackSourceControls();
   document.getElementById("playbackRestartBtn").addEventListener("click", restartBoundaryFlowPlayback);
+  document.getElementById("playbackStepBtn").addEventListener("click", stepBoundaryFlowPlayback);
   document.getElementById("playbackSpeedSelect").addEventListener("change", updatePlaybackSpeed);
   document.getElementById("hydroPlayBtn").addEventListener("click", toggleHydrodynamicTimelinePlayback);
   document.getElementById("hydroTimeSlider").addEventListener("input", (event) => {
@@ -808,6 +1068,7 @@ async function loadObject(objectType, filters = {}, options = {}) {
     if (!state.map.hasLayer(existing)) existing.addTo(state.map);
     setObjectButtonActive(objectType, true);
     if (options.fit) fitLayer(existing);
+    updateMapContentContext();
     return existing;
   }
 
@@ -825,6 +1086,8 @@ async function loadObject(objectType, filters = {}, options = {}) {
       ? createReservoirLayer(geojson, mapSelectable)
       : L.geoJSON(geojson, {
         interactive: mapSelectable,
+        renderer: objectType === "Watershed" ? state.watershedRenderer : undefined,
+        className: objectType === "Watershed" ? "watershed-boundary" : "",
         style: (feature) => featureStyle(objectType, feature),
         pointToLayer: (feature, latlng) => pointLayer(objectType, feature, latlng),
         onEachFeature: (feature, layerItem) => {
@@ -842,6 +1105,7 @@ async function loadObject(objectType, filters = {}, options = {}) {
   setObjectButtonActive(objectType, true);
   if (objectType === "Watershed") state.baseBounds = layer.getBounds();
   if (options.fit) fitLayer(layer);
+  updateMapContentContext();
   return layer;
 }
 
@@ -856,6 +1120,7 @@ async function showHydrodynamicMesh(options = {}) {
     if (!state.map.hasLayer(existing)) existing.addTo(state.map);
     setObjectButtonActive(objectType, true);
     if (options.fit) fitHydrodynamicGrid();
+    updateMapContentContext();
     return existing;
   }
 
@@ -880,6 +1145,7 @@ async function showHydrodynamicMesh(options = {}) {
   });
   setObjectButtonActive(objectType, true);
   if (options.fit) fitHydrodynamicGrid();
+  updateMapContentContext();
   return layer;
 }
 
@@ -887,21 +1153,31 @@ async function applyHydrodynamicResult(options = {}) {
   const filters = options.filters || {};
   if (!Object.keys(filters).length) throw new Error("apply_hydrodynamic_result requires filters.");
   const key = layerKey("HydrodynamicResult", filters);
+  const loadToken = ++state.hydrodynamicResultLoadToken;
   const timelineSelection = captureHydrodynamicTimelineSelection(key);
   if (options.refresh && state.layerGroups.has(key)) removeLayer(key);
+  removeOtherHydrodynamicResultLayers(key);
   if (state.layerGroups.has(key)) {
     const existing = state.layerGroups.get(key);
     if (!state.map.hasLayer(existing)) existing.addTo(state.map);
     showHydrodynamicTimeline(state.hydrodynamicResultMeta, existing, key, filters, timelineSelection);
     setObjectButtonActive(options.buttonType || "ForecastResult", true);
+    updateMapContentContext();
     return existing;
   }
 
   const metaParams = new URLSearchParams(filters);
   const metaRes = await fetch(`/api/hydrodynamic-grid/meta?${metaParams.toString()}`);
+  if (loadToken !== state.hydrodynamicResultLoadToken) {
+    return state.layerGroups.get(key) || null;
+  }
   if (!metaRes.ok) throw new Error(await metaRes.text());
-  state.hydrodynamicResultMeta = await metaRes.json();
-  const resultVersion = String(state.hydrodynamicResultMeta?.forecast?.result_version || "");
+  const resultMeta = await metaRes.json();
+  if (loadToken !== state.hydrodynamicResultLoadToken) {
+    return state.layerGroups.get(key) || null;
+  }
+  state.hydrodynamicResultMeta = resultMeta;
+  const resultVersion = String(resultMeta?.forecast?.result_version || "");
   const layer = L.gridLayer.hydrodynamicGrid({
     tileSize: 256,
     opacity: 1,
@@ -921,7 +1197,16 @@ async function applyHydrodynamicResult(options = {}) {
   });
   showHydrodynamicTimeline(state.hydrodynamicResultMeta, layer, key, filters, timelineSelection);
   setObjectButtonActive(options.buttonType || "ForecastResult", true);
+  updateMapContentContext();
   return layer;
+}
+
+function removeOtherHydrodynamicResultLayers(activeKey) {
+  Array.from(state.layerMeta.entries()).forEach(([key, meta]) => {
+    if (key !== activeKey && meta?.objectType === "HydrodynamicResult") {
+      removeLayer(key);
+    }
+  });
 }
 
 function showHydrodynamicTimeline(meta, layer, key, filters, previousSelection = null) {
@@ -1010,9 +1295,7 @@ function setHydrodynamicTimelineIndex(index) {
   const hour = timeline.hours[nextIndex];
   filters.time_h = formatHydrodynamicHour(hour);
   label.textContent = `${formatHydrodynamicHour(hour)} h`;
-  timeline.layer.options.resultFilters = filters;
-  timeline.layer.clearSelection?.();
-  timeline.layer.redraw();
+  timeline.layer.setResultFilters(filters);
   scheduleImpactAnalysisRefresh();
 }
 
@@ -1093,6 +1376,7 @@ function removeLayer(key) {
   state.layerGroups.delete(key);
   state.layerMeta.delete(key);
   if (meta) setObjectButtonActive(meta.buttonType || meta.objectType, hasLayerButtonType(meta.buttonType || meta.objectType));
+  updateMapContentContext();
 }
 
 function removeObjectTypeLayers(objectType) {
@@ -1113,6 +1397,8 @@ function filtersWithObjectIds(objectType, filters = {}, objectIds = []) {
 }
 
 function resetMap() {
+  state.hydrodynamicResultLoadToken += 1;
+  setWatershedInundationAlert(false);
   clearFocus();
   clearHighlights();
   clearImpactAnalysisState();
@@ -1123,11 +1409,12 @@ function resetMap() {
       removeLayer(key);
     }
   }
-  document.getElementById("contextPill").textContent = "基础态 · 领域对象地图";
+  updateMapContentContext();
   fitAll();
 }
 
 function clearHydrodynamicResults() {
+  state.hydrodynamicResultLoadToken += 1;
   hideHydrodynamicTimeline();
   clearImpactAnalysisState();
   for (const [key, meta] of Array.from(state.layerMeta.entries())) {
@@ -1135,7 +1422,7 @@ function clearHydrodynamicResults() {
       removeLayer(key);
     }
   }
-  document.getElementById("contextPill").textContent = "淹没结果 · 已隐藏";
+  updateMapContentContext();
 }
 
 function clearImpactAnalysisState() {
@@ -1147,6 +1434,7 @@ function clearImpactAnalysisState() {
   state.impactMarkerLayer?.clearLayers();
   state.impactMarkers.clear();
   clearImpactObjectSelection({ removeLayer: true });
+  updateMapContentContext();
   const panel = document.getElementById("impactPanel");
   panel?.classList.remove("is-loading");
   const count = document.getElementById("impactCount");
@@ -1162,6 +1450,7 @@ function clearImpactAnalysisState() {
 function clearEventMarkers() {
   state.eventMarkers.forEach((marker) => state.map.removeLayer(marker));
   state.eventMarkers.clear();
+  updateMapContentContext();
 }
 
 function startAutonomyStream() {
@@ -1198,6 +1487,14 @@ function startAutonomyStream() {
   es.addEventListener("agent_trace", (event) => {
     const data = parseEvent(event);
     acceptWorkspace(data.workspace_id);
+    if (
+      state.playbackPaused
+      && data.tag === "ERR"
+      && String(data.label || "").includes("洪水预测")
+    ) {
+      state.playbackStepPending = false;
+      void refreshPlaybackStatus();
+    }
     if (shouldHideAutonomyTrace(data)) return;
     addTrace(data.tag || "AGENT", data.label || "智能体事件处理", data.detail || "");
   });
@@ -1206,7 +1503,6 @@ function startAutonomyStream() {
     const data = parseEvent(event);
     acceptWorkspace(data.workspace_id);
     try {
-      if (data.context) document.getElementById("contextPill").textContent = data.context;
       await executeActions(data.map_actions || []);
       renderMetrics(data.result_cards || []);
       addTrace("MAP", "地图动作", (data.map_actions || []).map((item) => item.object_type || item.type).join(", "));
@@ -1239,6 +1535,187 @@ async function refreshPlaybackStatus() {
   }
 }
 
+function bindPlaybackSourceControls() {
+  const control = document.getElementById("playbackSourceControl");
+  const toggleBtn = document.getElementById("playbackToggleBtn");
+  const pickerBtn = document.getElementById("playbackSourcePickerBtn");
+  const menu = document.getElementById("playbackSourceMenu");
+  const list = document.getElementById("playbackSourceList");
+  const uploadBtn = document.getElementById("playbackSourceUploadBtn");
+  const fileInput = document.getElementById("playbackSourceFileInput");
+  let pressTimer = null;
+  let pressOrigin = null;
+
+  const cancelLongPress = () => {
+    if (pressTimer) window.clearTimeout(pressTimer);
+    pressTimer = null;
+    pressOrigin = null;
+  };
+
+  toggleBtn.addEventListener("pointerdown", (event) => {
+    if (toggleBtn.disabled || (event.button !== undefined && event.button !== 0)) return;
+    cancelLongPress();
+    pressOrigin = { x: event.clientX, y: event.clientY };
+    pressTimer = window.setTimeout(() => {
+      state.playbackLongPressTriggered = true;
+      setPlaybackSourceMenuOpen(true);
+      pressTimer = null;
+    }, 600);
+  });
+  toggleBtn.addEventListener("pointermove", (event) => {
+    if (!pressOrigin) return;
+    if (Math.hypot(event.clientX - pressOrigin.x, event.clientY - pressOrigin.y) > 10) {
+      cancelLongPress();
+    }
+  });
+  ["pointerup", "pointercancel", "pointerleave"].forEach((eventName) => {
+    toggleBtn.addEventListener(eventName, () => {
+      cancelLongPress();
+      if (state.playbackLongPressTriggered) {
+        window.setTimeout(() => {
+          state.playbackLongPressTriggered = false;
+        }, 500);
+      }
+    });
+  });
+  toggleBtn.addEventListener("contextmenu", (event) => event.preventDefault());
+  toggleBtn.addEventListener("click", (event) => {
+    if (state.playbackLongPressTriggered) {
+      event.preventDefault();
+      state.playbackLongPressTriggered = false;
+      return;
+    }
+    toggleBoundaryFlowPlayback();
+  });
+
+  pickerBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setPlaybackSourceMenuOpen(!state.playbackSourceMenuOpen);
+  });
+  list.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-playback-source-id]");
+    if (!button || button.disabled) return;
+    await choosePlaybackSource(button.dataset.playbackSourceId);
+  });
+  uploadBtn.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", async () => {
+    const file = fileInput.files?.[0];
+    fileInput.value = "";
+    if (file) await uploadPlaybackSource(file);
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (state.playbackSourceMenuOpen && !control.contains(event.target)) {
+      setPlaybackSourceMenuOpen(false);
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && state.playbackSourceMenuOpen) {
+      setPlaybackSourceMenuOpen(false);
+      pickerBtn.focus();
+    }
+  });
+  menu.addEventListener("click", (event) => event.stopPropagation());
+}
+
+async function setPlaybackSourceMenuOpen(open) {
+  const menu = document.getElementById("playbackSourceMenu");
+  const pickerBtn = document.getElementById("playbackSourcePickerBtn");
+  state.playbackSourceMenuOpen = Boolean(open);
+  menu.hidden = !state.playbackSourceMenuOpen;
+  pickerBtn.classList.toggle("is-active", state.playbackSourceMenuOpen);
+  pickerBtn.setAttribute("aria-expanded", String(state.playbackSourceMenuOpen));
+  if (!state.playbackSourceMenuOpen) return;
+  setPlaybackSourceStatus("正在读取数据列表…");
+  await refreshPlaybackSources();
+}
+
+async function refreshPlaybackSources() {
+  try {
+    const response = await fetch("/api/autonomy/sources");
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "读取演进数据失败");
+    state.playbackSources = Array.isArray(data.sources) ? data.sources : [];
+    const selected = state.playbackSources.find((source) => source.selected);
+    if (!state.playbackSource && selected) updatePlaybackSourceDisplay(selected);
+    renderPlaybackSources();
+    setPlaybackSourceStatus("");
+  } catch (error) {
+    setPlaybackSourceStatus(error.message || String(error), true);
+  }
+}
+
+function renderPlaybackSources() {
+  const list = document.getElementById("playbackSourceList");
+  list.innerHTML = state.playbackSources.map((source) => {
+    const selected = source.source_id === state.playbackSource?.source_id;
+    const kind = source.kind === "builtin" ? "内置" : "已上传";
+    const period = `${source.start_time || "--"} 至 ${source.end_time || "--"}`;
+    return `
+      <button class="playback-source-option${selected ? " is-selected" : ""}" type="button" role="menuitem" data-playback-source-id="${escapeHtml(source.source_id)}">
+        ${source.kind === "builtin"
+          ? '<i data-lucide="database"></i>'
+          : '<i data-lucide="file-spreadsheet"></i>'}
+        <span>
+          <strong>${escapeHtml(source.name || source.original_filename || "未命名数据")}</strong>
+          <small>${escapeHtml(kind)} · ${Number(source.row_count || 0)} 条 · ${escapeHtml(period)}</small>
+        </span>
+        <i class="playback-source-check" data-lucide="check" aria-hidden="true"></i>
+      </button>
+    `;
+  }).join("");
+  renderIcons();
+}
+
+function setPlaybackSourceStatus(message, isError = false) {
+  const status = document.getElementById("playbackSourceStatus");
+  status.hidden = !message;
+  status.textContent = message || "";
+  status.classList.toggle("is-error", Boolean(isError));
+}
+
+async function choosePlaybackSource(sourceId) {
+  const source = state.playbackSources.find((item) => item.source_id === sourceId);
+  if (!source) return;
+  setPlaybackSourceMenuBusy(true);
+  setPlaybackSourceStatus(`正在使用“${source.name}”开始演进…`);
+  const started = await toggleBoundaryFlowPlayback(sourceId);
+  setPlaybackSourceMenuBusy(false);
+  if (started) {
+    setPlaybackSourceMenuOpen(false);
+    await refreshPlaybackSources();
+  }
+}
+
+async function uploadPlaybackSource(file) {
+  setPlaybackSourceMenuBusy(true);
+  setPlaybackSourceStatus(`正在校验并上传“${file.name}”…`);
+  try {
+    const response = await fetch(`/api/autonomy/sources?filename=${encodeURIComponent(file.name)}`, {
+      method: "POST",
+      headers: { "Content-Type": file.type || "text/csv" },
+      body: file,
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "上传演进数据失败");
+    await refreshPlaybackSources();
+    const sourceId = data.source?.source_id;
+    if (!sourceId) throw new Error("上传结果缺少数据标识");
+    await choosePlaybackSource(sourceId);
+  } catch (error) {
+    setPlaybackSourceStatus(error.message || String(error), true);
+    addTrace("ERR", "演进数据上传失败", error.message || String(error));
+  } finally {
+    setPlaybackSourceMenuBusy(false);
+  }
+}
+
+function setPlaybackSourceMenuBusy(busy) {
+  document.getElementById("playbackSourceUploadBtn").disabled = Boolean(busy);
+  document.querySelectorAll("[data-playback-source-id]").forEach((button) => {
+    button.disabled = Boolean(busy);
+  });
+}
+
 async function restartBoundaryFlowPlayback() {
   const toggleBtn = document.getElementById("playbackToggleBtn");
   const restartBtn = document.getElementById("playbackRestartBtn");
@@ -1247,6 +1724,7 @@ async function restartBoundaryFlowPlayback() {
   setPlaybackSpeedControl(20);
   state.playbackAutoPauseArmed = false;
   state.playbackAutoPausePending = false;
+  state.playbackStepPending = false;
   try {
     const res = await fetch("/api/autonomy/reset", {
       method: "POST",
@@ -1261,7 +1739,7 @@ async function restartBoundaryFlowPlayback() {
     setLayerPanelOpen(false);
     revealSituationPanel("telemetryPanel", "auto");
     setTelemetryPanelOpen(true);
-    addTrace("AUTO", "演进已重置", "已创建新的演进工作空间，并回到第一条边界流量观测；点击开始演进后继续回放。");
+    addTrace("AUTO", "演进已重置", "已创建新的演进工作空间，并回到第一个边界流量预测时刻；点击开始演进后继续回放。");
   } catch (error) {
     state.playbackAutoPauseArmed = state.playbackRunning;
     addTrace("ERR", "重新开始演进失败", error.message || String(error));
@@ -1271,11 +1749,41 @@ async function restartBoundaryFlowPlayback() {
   }
 }
 
-async function toggleBoundaryFlowPlayback() {
+async function stepBoundaryFlowPlayback() {
+  if (!state.playbackPaused || state.playbackStepPending) return;
+  const btn = document.getElementById("playbackStepBtn");
+  state.playbackStepPending = true;
+  updatePlaybackStepButton();
+  try {
+    const response = await fetch("/api/autonomy/step", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "单步推进失败");
+    acceptWorkspace(data.workspace_id);
+    state.runtimeStatus = { ...state.runtimeStatus, ...data };
+    state.playbackStepPending = Boolean(data.forecast_triggered);
+    setPlaybackButtonState(Boolean(data.running), Boolean(data.paused));
+    updateTelemetryRuntimeStatus(data);
+  } catch (error) {
+    state.playbackStepPending = false;
+    addTrace("ERR", "演进单步推进失败", error.message || String(error));
+    void refreshPlaybackStatus();
+  } finally {
+    updatePlaybackStepButton();
+    btn.blur();
+  }
+}
+
+async function toggleBoundaryFlowPlayback(requestedSourceId = null) {
   const wasRunning = state.playbackRunning;
   const wasPaused = state.playbackPaused;
   const wasAutoPauseArmed = state.playbackAutoPauseArmed;
-  const action = wasRunning ? "pause" : (wasPaused ? "resume" : "start");
+  const action = requestedSourceId
+    ? "start"
+    : (wasRunning ? "pause" : (wasPaused ? "resume" : "start"));
   const btn = document.getElementById("playbackToggleBtn");
   btn.disabled = true;
   try {
@@ -1289,6 +1797,7 @@ async function toggleBoundaryFlowPlayback() {
       revealSituationPanel("telemetryPanel", "auto");
       setTelemetryPanelOpen(true);
     } else if (action === "resume") {
+      state.playbackStepPending = false;
       state.playbackAutoPauseArmed = true;
       state.playbackAutoPausePending = false;
     } else {
@@ -1297,28 +1806,34 @@ async function toggleBoundaryFlowPlayback() {
     const res = await fetch(`/api/autonomy/${action}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ speed_multiplier: state.playbackSpeed }),
+      body: JSON.stringify({
+        speed_multiplier: state.playbackSpeed,
+        ...(requestedSourceId ? { source_id: requestedSourceId } : {}),
+      }),
     });
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     acceptWorkspace(data.workspace_id);
     setPlaybackButtonState(Boolean(data.running), Boolean(data.paused));
+    updatePlaybackSourceDisplay(data.playback_source);
     if (!data.running) state.playbackAutoPauseArmed = false;
     updateTelemetryRuntimeStatus(data);
     const labels = {
       start: ["边界流量过程回放已启动", "后台开始按时间顺序回放四边界流量。"],
       resume: ["边界流量过程回放已继续", "后台从暂停位置继续回放四边界流量。"],
-      pause: ["边界流量过程回放已暂停", "后台暂停回放新的边界流量观测；已产生的事件继续处理。"],
+      pause: ["边界流量过程回放已暂停", "后台暂停回放新的边界流量预测时刻；已产生的事件继续处理。"],
     };
     addTrace(
       "AUTO",
       labels[action][0],
       labels[action][1],
     );
+    return true;
   } catch (error) {
     state.playbackAutoPauseArmed = wasRunning && wasAutoPauseArmed;
     addTrace("ERR", "边界流量回放切换失败", error.message || String(error));
     setPlaybackButtonState(wasRunning, wasPaused);
+    return false;
   } finally {
     btn.disabled = false;
   }
@@ -1606,6 +2121,7 @@ function setPlaybackSpeedControl(speed) {
 function setPlaybackButtonState(running, paused = false) {
   state.playbackRunning = running;
   state.playbackPaused = !running && paused;
+  if (!state.playbackPaused) state.playbackStepPending = false;
   const btn = document.getElementById("playbackToggleBtn");
   if (!btn) return;
   btn.classList.toggle("is-running", running);
@@ -1615,12 +2131,32 @@ function setPlaybackButtonState(running, paused = false) {
     ? "暂停边界流量过程回放"
     : (state.playbackPaused ? "从暂停位置继续边界流量过程回放" : "启动边界流量过程回放");
   btn.setAttribute("aria-label", btn.title);
-  btn.innerHTML = running
-    ? '<i data-lucide="pause"></i><span>暂停演进</span>'
-    : (state.playbackPaused
-      ? '<i data-lucide="step-forward"></i><span>继续演进</span>'
-      : '<i data-lucide="play"></i><span>开始演进</span>');
+  renderPlaybackToggleButton();
   updatePlaybackRestartButton();
+  updatePlaybackStepButton();
+  renderIcons();
+}
+
+function updatePlaybackSourceDisplay(source) {
+  if (!source?.source_id) return;
+  state.playbackSource = source;
+  renderPlaybackToggleButton();
+  if (state.playbackSourceMenuOpen) renderPlaybackSources();
+}
+
+function renderPlaybackToggleButton() {
+  const btn = document.getElementById("playbackToggleBtn");
+  if (!btn) return;
+  const sourceName = state.playbackSource?.name || "内置演进数据";
+  const icon = state.playbackRunning ? "pause" : (state.playbackPaused ? "step-forward" : "play");
+  const label = state.playbackRunning ? "暂停演进" : (state.playbackPaused ? "继续演进" : "开始演进");
+  btn.innerHTML = `
+    <i data-lucide="${icon}"></i>
+    <span class="playback-toggle-copy">
+      <span>${label}</span>
+      <small id="playbackSourceLabel" title="${escapeHtml(sourceName)}">${escapeHtml(sourceName)}</small>
+    </span>
+  `;
   renderIcons();
 }
 
@@ -1629,8 +2165,22 @@ function updatePlaybackRestartButton() {
   if (btn) btn.hidden = !state.workspaceId;
 }
 
+function updatePlaybackStepButton() {
+  const btn = document.getElementById("playbackStepBtn");
+  if (!btn) return;
+  const policyPending = state.runtimeStatus?.policy_state === "PENDING";
+  btn.hidden = !state.playbackPaused;
+  btn.disabled = !state.playbackPaused || state.playbackStepPending || policyPending;
+  btn.title = state.playbackStepPending || policyPending
+    ? "正在计算当前滚动预测"
+    : "向前步进一个预测时刻";
+  btn.setAttribute("aria-label", btn.title);
+}
+
 function updateTelemetryRuntimeStatus(data) {
   state.runtimeStatus = { ...state.runtimeStatus, ...data };
+  updatePlaybackStepButton();
+  updatePlaybackSourceDisplay(data.playback_source);
   if (Number(data.total_rows || 0) > 0) state.playbackTotalRows = Number(data.total_rows);
   if (data.running) {
     if (!state.lastMockObservation) setTelemetryState("等待", "normal");
@@ -1648,8 +2198,10 @@ function updateTelemetryRuntimeStatus(data) {
 function renderMockObservation(event) {
   const observation = event.payload?.observation;
   if (!observation) return;
+  const simulationTime = observation.simulation_time || observation.observed_at;
   state.lastMockObservation = observation;
-  document.getElementById("telemetryTime").textContent = formatMockTime(observation.observed_at);
+  setRainfallEffect(observation.rainfall_mm);
+  document.getElementById("telemetryTime").textContent = formatMockTime(simulationTime);
   renderTelemetryWeather(observation.rainfall_mm);
   setMockField("rainfall_mm", observation.rainfall_mm, 1);
   setMockField("reservoir_level_m", observation.reservoir_level_m, 3);
@@ -1675,11 +2227,12 @@ function renderMockObservation(event) {
   const ratio = total > 0 ? Math.min(100, current / total * 100) : 0;
   document.getElementById("telemetryProgressBar").style.width = `${ratio.toFixed(2)}%`;
   document.getElementById("telemetryProgressText").textContent = `${current} / ${total}`;
-  setSituationSummary(`${formatMockTime(observation.observed_at)} · 降雨 ${formatMockNumber(observation.rainfall_mm, 1)} mm`);
+  setSituationSummary(`${formatMockTime(simulationTime)} · 降雨 ${formatMockNumber(observation.rainfall_mm, 1)} mm`);
 }
 
 function clearMockTelemetry() {
   state.lastMockObservation = null;
+  setRainfallEffect(0);
   clearBoundaryFlowHistory();
   document.getElementById("telemetryTime").textContent = "--";
   renderTelemetryWeather(null);
@@ -1700,8 +2253,27 @@ function clearBoundaryFlowHistory() {
   renderBoundaryFlowHistoryChart();
 }
 
+function initBoundaryFlowHistoryChart() {
+  const svg = document.getElementById("boundaryFlowHistoryChart");
+  if (!svg) return;
+  const renderAtLayoutSize = () => {
+    if (state.boundaryFlowChartFrame) return;
+    state.boundaryFlowChartFrame = window.requestAnimationFrame(() => {
+      state.boundaryFlowChartFrame = null;
+      renderBoundaryFlowHistoryChart();
+    });
+  };
+  if (window.ResizeObserver) {
+    state.boundaryFlowChartObserver = new ResizeObserver(renderAtLayoutSize);
+    state.boundaryFlowChartObserver.observe(svg);
+  } else {
+    window.addEventListener("resize", renderAtLayoutSize);
+  }
+  renderBoundaryFlowHistoryChart();
+}
+
 function recordBoundaryFlowObservation(observation) {
-  state.boundaryFlowHistoryTimes.push(observation.observed_at || "");
+  state.boundaryFlowHistoryTimes.push(observation.simulation_time || observation.observed_at || "");
   BOUNDARY_FLOW_KEYS.forEach((key) => {
     const flow = Number(observation.boundaries?.[key]?.flow_m3s);
     state.boundaryFlowHistory[key].push(Number.isFinite(flow) ? flow : null);
@@ -1718,19 +2290,20 @@ function recordBoundaryFlowObservation(observation) {
 function renderBoundaryFlowHistoryChart() {
   const svg = document.getElementById("boundaryFlowHistoryChart");
   if (!svg) return;
+  const width = Math.max(240, Math.round(svg.clientWidth || 320));
+  const height = Math.max(78, Math.round(svg.clientHeight || 78));
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   const values = BOUNDARY_FLOW_KEYS.flatMap((key) => state.boundaryFlowHistory[key].filter((value) => Number.isFinite(value)));
   const rangeLabel = document.getElementById("flowHistoryRange");
   if (!values.length) {
-    svg.innerHTML = `<text class="flow-history-empty" x="160" y="42" text-anchor="middle">等待边界流量</text>`;
+    svg.innerHTML = `<text class="flow-history-empty" x="${width / 2}" y="${height / 2 + 4}" text-anchor="middle">等待边界流量</text>`;
     if (rangeLabel) rangeLabel.textContent = "--";
     return;
   }
   const min = Math.min(...values);
   const max = Math.max(...values);
   const paddedRange = expandFlowRange(min, max);
-  const width = 320;
-  const height = 78;
-  const plot = { left: 32, top: 7, right: 8, bottom: 15 };
+  const plot = { left: 36, top: 8, right: 8, bottom: 18 };
   const pointFor = (value, index) => {
     const count = Math.max(1, state.boundaryFlowHistoryTimes.length - 1);
     const ratioX = state.boundaryFlowHistoryTimes.length === 1 ? 1 : index / count;
@@ -1856,6 +2429,11 @@ function setTelemetryState(label, stateName) {
 function renderDomainEvent(data) {
   if (!data || !data.event_type) return;
   if (data.event_type === "InundationGenerated") {
+    if (state.playbackPaused) {
+      state.playbackStepPending = false;
+      updatePlaybackStepButton();
+      void refreshPlaybackStatus();
+    }
     setTelemetryPanelOpen(true);
     void pausePlaybackAfterInundation();
   }
@@ -1887,7 +2465,7 @@ async function pausePlaybackAfterInundation() {
     const status = await res.json();
     setPlaybackButtonState(Boolean(status.running), true);
     updateTelemetryRuntimeStatus(status);
-    addTrace("AUTO", "演进已自动暂停", "已收到 InundationGenerated，停止继续回放边界流量观测。");
+    addTrace("AUTO", "演进已自动暂停", "已收到 InundationGenerated，停止继续回放边界流量预测时刻。");
   } catch (error) {
     state.playbackAutoPauseArmed = state.playbackRunning;
     addTrace("ERR", "演进自动暂停失败", error.message || String(error));
@@ -1926,6 +2504,7 @@ function eventDetail(data) {
 
 function eventPhase(eventType) {
   return {
+    BoundaryFlowForecastAdvanced: "observe",
     BoundaryFlowObserved: "observe",
     FloodForecastRequired: "analyze",
     FloodEpisodeEnded: "monitor",
@@ -1934,15 +2513,6 @@ function eventPhase(eventType) {
     DirectiveIssued: "decide",
     ExposureAnalyzed: "decide",
   }[eventType] || "analyze";
-}
-
-function renderAutonomyEvent(data) {
-  if (!data || !data.phase) return;
-  state.autonomyPhase = data.phase;
-  document.getElementById("contextPill").textContent = phaseContext(data.phase);
-  setCyclePhase(data.phase);
-  addTrace(data.tag || "AUTO", data.label || "自动闭环", data.detail || "");
-  if (Array.isArray(data.metrics)) renderMetrics(data.metrics);
 }
 
 function setCyclePhase(phase) {
@@ -1970,16 +2540,6 @@ function renderMetrics(items) {
     if (item.detail) card.title = item.detail;
     grid.appendChild(card);
   });
-}
-
-function phaseContext(phase) {
-  return {
-    observe: "自动闭环 · 感知水文",
-    analyze: "自动闭环 · 态势分析",
-    compute: "自动闭环 · 水动力计算",
-    decide: "自动闭环 · 预警决策",
-    monitor: "自动闭环 · 持续监测",
-  }[phase] || "自动闭环 · 珊瑚河流域";
 }
 
 function fitAll() {
@@ -2031,7 +2591,7 @@ function featureStyle(objectType, feature) {
     const depth = Number(feature.properties?.depth_m || 0);
     return hydrodynamicCellStyle(depth);
   }
-  if (objectType === "Watershed") return { color: "#1f2937", weight: 1.3, fillColor: "#9bc4df", fillOpacity: 0.1 };
+  if (objectType === "Watershed") return watershedStyle(state.inundationAlertActive);
   if (objectType === "River") return riverMainStyle();
   if (objectType === "Reservoir") return reservoirWaterStyle();
   if (objectType === "County") return { color: "#7b8794", weight: 1.2, fillOpacity: 0 };
@@ -2040,6 +2600,38 @@ function featureStyle(objectType, feature) {
   if (objectType === "Route") return { color: "#d44a3a", weight: 3, opacity: 0.92 };
   if (objectType === "HydraulicStructure") return { color: "#0f766e", weight: 2, opacity: 0.9 };
   return { color: OBJECT_CONFIG[objectType]?.color || "#334155", weight: 2 };
+}
+
+function watershedStyle(alertActive = false) {
+  return {
+    color: alertActive ? "#bd3a32" : "#1f2937",
+    weight: alertActive ? 3.2 : 1.3,
+    opacity: alertActive ? 0.94 : 1,
+    dashArray: alertActive ? "10 7" : null,
+    fillColor: "#9bc4df",
+    fillOpacity: 0.03,
+    lineCap: "round",
+    lineJoin: "round",
+  };
+}
+
+async function setWatershedInundationAlert(active) {
+  state.inundationAlertActive = active === true;
+  if (state.inundationAlertActive && !hasObjectType("Watershed")) {
+    await loadObject("Watershed", {}, { fit: false });
+  }
+  state.layerMeta.forEach((meta, key) => {
+    if (meta?.objectType !== "Watershed") return;
+    const layer = state.layerGroups.get(key);
+    layer?.setStyle?.(watershedStyle(state.inundationAlertActive));
+    layer?.eachLayer?.((item) => {
+      item.getElement?.()?.classList.toggle(
+        "is-inundation-alert",
+        state.inundationAlertActive,
+      );
+    });
+  });
+  updateMapContentContext();
 }
 
 function reservoirWaterStyle() {
@@ -2658,6 +3250,7 @@ async function onChatSubmit(event) {
   const message = input.value.trim();
   if (!message) return;
 
+  settlePendingQuestion();
   input.value = "";
   addMessage("user", message);
   const assistant = addMessage("agent", "");
@@ -2687,7 +3280,6 @@ function connectChatStream({ message = "", assistant, runId = "", since = 0 }) {
 
   es.addEventListener("map_actions", async (event) => {
     const data = parseEvent(event);
-    if (data.context) document.getElementById("contextPill").textContent = data.context;
     await executeActions(data.map_actions || []);
     addTrace("MAP", "地图动作", (data.map_actions || []).map((item) => item.object_type || item.type).join(", "));
   });
@@ -2772,6 +3364,9 @@ async function executeActions(actions) {
     if (action.type === "clear_hydrodynamic_result") {
       clearHydrodynamicResults();
     }
+    if (action.type === "set_watershed_inundation_alert") {
+      await setWatershedInundationAlert(action.active);
+    }
     if (action.type === "load_object") {
       await loadObject(action.object_type, action.filters || {}, {
         fit: action.fit,
@@ -2824,9 +3419,18 @@ L.GridLayer.HydrodynamicGrid = L.GridLayer.extend({
   },
 
   onRemove(map) {
+    this._resultRevision = (this._resultRevision || 0) + 1;
     map.off("click", this._handleCellClick, this);
     this.clearSelection();
     L.GridLayer.prototype.onRemove.call(this, map);
+  },
+
+  setResultFilters(filters) {
+    this.options.resultFilters = { ...(filters || {}) };
+    this._resultRevision = (this._resultRevision || 0) + 1;
+    this.clearSelection();
+    // GridLayer.redraw removes the current tiles before requesting replacements.
+    return this.redraw();
   },
 
   createTile(coords, done) {
@@ -2840,13 +3444,17 @@ L.GridLayer.HydrodynamicGrid = L.GridLayer.extend({
       return tile;
     }
     const ctx = tile.getContext("2d");
+    const requestRevision = this._resultRevision || 0;
+    const resultFilters = {
+      ...(this.options.resultFilters || { result: "mesh" }),
+    };
     const params = new URLSearchParams({
       z: String(coords.z),
       x: String(coords.x),
       y: String(coords.y),
       tile_crs: "gcj02",
     });
-    Object.entries(this.options.resultFilters || { result: "mesh" }).forEach(([name, value]) => {
+    Object.entries(resultFilters).forEach(([name, value]) => {
       params.set(name, value);
     });
     if (this.options.wetOnly) {
@@ -2858,12 +3466,14 @@ L.GridLayer.HydrodynamicGrid = L.GridLayer.extend({
         return res.json();
       })
       .then((data) => {
+        if (requestRevision !== (this._resultRevision || 0) || !this._map) return;
         tile._hydrodynamicData = data;
         tile._hydrodynamicCoords = { ...coords };
         drawHydrodynamicTile(ctx, size, coords, data, this.options.renderMode || "mesh");
         done(null, tile);
       })
       .catch((error) => {
+        if (requestRevision !== (this._resultRevision || 0) || !this._map) return;
         console.warn("hydrodynamic grid tile failed", error);
         done(null, tile);
       });
@@ -3137,6 +3747,7 @@ function showEventMarker(event, action = {}) {
   if (state.eventMarkers.has(eventId)) {
     const existing = state.eventMarkers.get(eventId);
     if (action.fit) state.map.flyTo(existing.getLatLng(), Math.max(state.map.getZoom(), 13), { animate: true, duration: 0.75 });
+    updateMapContentContext();
     return existing;
   }
   const marker = L.circleMarker([lat, lon], {
@@ -3150,6 +3761,7 @@ function showEventMarker(event, action = {}) {
   marker.bindPopup(eventPopupHtml(event));
   marker.on("click", () => marker.openPopup());
   state.eventMarkers.set(eventId, marker);
+  updateMapContentContext();
   if (action.fit) {
     state.map.flyTo([lat, lon], Math.max(state.map.getZoom(), 13), {
       animate: true,
@@ -3650,6 +4262,7 @@ function renderImpactMarkers(impacts) {
     marker.addTo(state.impactMarkerLayer);
     state.impactMarkers.set(key, marker);
   });
+  updateMapContentContext();
 }
 
 function impactMarkerIcon(impact, selected = false) {
@@ -3865,6 +4478,7 @@ function readableTool(name, args) {
     ui_clear_map: "清空地图",
     ui_focus_object: "地图定位",
     ui_open_emergency_directive_editor: "生成应急指令初稿",
+    ui_set_inundation_alert: "设置流域淹没警戒",
   };
   const parts = [];
   if (args.object_type) parts.push(args.object_type);
@@ -3882,6 +4496,7 @@ function setSending(active) {
 }
 
 function appendConfirmation(data) {
+  settlePendingQuestion();
   const item = addMessage("agent", `需要确认：${data.tool_name || ""}`);
   const approve = document.createElement("button");
   approve.textContent = "确认";
@@ -3897,7 +4512,56 @@ function appendConfirmation(data) {
 }
 
 function appendQuestion(data) {
-  addMessage("agent", data.question || "需要补充信息。");
+  const item = addMessage("agent", data.question || "需要补充信息。");
+  state.pendingQuestion = { ...data, element: item };
+  const options = Array.isArray(data.options) ? data.options : [];
+  if (options.length) {
+    const choices = document.createElement("div");
+    choices.className = "question-options";
+    options.forEach((option) => {
+      const label = String(option?.label || "").trim();
+      if (!label) return;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "question-option";
+      const title = document.createElement("strong");
+      title.textContent = label;
+      button.appendChild(title);
+      if (option?.description) {
+        const description = document.createElement("small");
+        description.textContent = String(option.description);
+        button.appendChild(description);
+      }
+      button.addEventListener("click", () => submitQuestionAnswer(label));
+      choices.appendChild(button);
+    });
+    item.appendChild(choices);
+  }
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "question-cancel";
+  cancel.textContent = "取消这个问题";
+  cancel.addEventListener("click", () => {
+    settlePendingQuestion();
+    runConfirm(false);
+  });
+  item.appendChild(cancel);
+  scrollChat();
+}
+
+function submitQuestionAnswer(answer) {
+  if (!answer || state.activeStream || !state.pendingQuestion) return;
+  const input = document.getElementById("chatInput");
+  input.value = answer;
+  input.form?.requestSubmit();
+}
+
+function settlePendingQuestion() {
+  const item = state.pendingQuestion?.element;
+  item?.querySelectorAll(".question-option, .question-cancel").forEach((button) => {
+    button.disabled = true;
+  });
+  state.pendingQuestion = null;
 }
 
 async function runConfirm(approved) {

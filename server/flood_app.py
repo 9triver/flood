@@ -19,10 +19,7 @@ from server.chat.agent_factory import (  # noqa: E402
     configured_agent_max_turns,
     load_env,
 )
-from server.chat.policy import (  # noqa: E402
-    build_agent_task_hint,
-    select_user_agent_tools,
-)
+from server.chat.policy import build_agent_task_hint  # noqa: E402
 from server.chat.service import FloodChatService  # noqa: E402
 from server.chat.side_effects import AgentSideEffects  # noqa: E402
 from server.domain_service import FloodDomainService  # noqa: E402
@@ -131,5 +128,4 @@ __all__ = [
     "build_agent_task_hint",
     "compact_agent_query_result",
     "configured_agent_max_turns",
-    "select_user_agent_tools",
 ]

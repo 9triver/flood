@@ -6,11 +6,16 @@ import threading
 import time
 from typing import Any, TYPE_CHECKING
 
+from domains.flood.runtime.boundary_flow import (
+    BoundaryFlowPlayback,
+    BoundaryFlowPlaybackSource,
+)
+from domains.flood.runtime.playback_sources import PlaybackSourceRegistry
 from domains.flood.runtime.workspace import WORKSPACES, active_workspace_id
 from server.events.agent_processor import EventAgentProcessor
 from server.events.factory import make_directive_issued_event
 from server.events.messages import (
-    boundary_flow_observation_detail,
+    boundary_flow_forecast_detail,
     domain_event_detail,
 )
 from server.events.playback import (
@@ -26,7 +31,11 @@ if TYPE_CHECKING:
 class EventRuntime:
     """Coordinate event playback, queues, child events, and SSE output."""
 
-    def __init__(self, app: FloodApp):
+    def __init__(
+        self,
+        app: FloodApp,
+        playback_sources: PlaybackSourceRegistry | None = None,
+    ):
         self.events: list[dict[str, Any]] = []
         self.outputs: list[dict[str, Any]] = []
         self.condition = threading.Condition()
@@ -40,7 +49,15 @@ class EventRuntime:
         self._generation = 0
         self._published_inundation_sources: set[str] = set()
         self._published_impact_sources: set[str] = set()
-        self._boundary_flow_runner = BoundaryFlowPlaybackRunner()
+        self._playback_sources = playback_sources or PlaybackSourceRegistry()
+        initial_source = self._playback_sources.get(
+            self._playback_sources.selected_source_id
+        )
+        self._current_playback_source = initial_source.public(selected=True)
+        self._prepared_workspace_id: str | None = None
+        self._boundary_flow_runner = BoundaryFlowPlaybackRunner(
+            BoundaryFlowPlayback(BoundaryFlowPlaybackSource(initial_source.csv_path))
+        )
         self._agent_processor = EventAgentProcessor(
             app=app,
             playback_runner=self._boundary_flow_runner,
@@ -67,7 +84,7 @@ class EventRuntime:
                 "label": "边界流量过程回放已启动",
                 "detail": (
                     f"后台正以 {self._boundary_flow_runner.speed_multiplier:g}× "
-                    "速率按时间顺序回放边界流量观测。"
+                    "速率按时间顺序回放边界流量预测时刻。"
                 ),
                 "speed_multiplier": self._boundary_flow_runner.speed_multiplier,
                 "workspace_id": active_workspace_id(),
@@ -92,15 +109,35 @@ class EventRuntime:
         ).start()
         threading.Thread(target=self._event_worker_loop, daemon=True).start()
 
-    def start_playback(self, speed_multiplier: float = 20.0) -> dict[str, Any]:
+    def start_playback(
+        self,
+        speed_multiplier: float = 20.0,
+        source_id: str | None = None,
+    ) -> dict[str, Any]:
         self.ensure_started()
         self._boundary_flow_runner.set_speed(speed_multiplier)
         with self.condition:
-            if self._playback_running:
+            if self._playback_running and not source_id:
                 return self.status()
+            if source_id:
+                self._playback_sources.get(source_id)
+                self._playback_running = False
+                self._playback_paused = False
+                self._generation += 1
+                self._clear_event_queue()
+                if active_workspace_id():
+                    WORKSPACES.update_manifest(status="stopped")
         manifest = WORKSPACES.active_manifest()
-        if not manifest or manifest.get("status") != "ready":
+        force_new_workspace = bool(source_id)
+        if force_new_workspace or not manifest or manifest.get("status") != "ready":
+            if active_workspace_id() and not force_new_workspace:
+                WORKSPACES.update_manifest(status="stopped")
             WORKSPACES.create()
+            self._prepare_playback_source(
+                source_id or self._playback_sources.selected_source_id
+            )
+        elif self._prepared_workspace_id != active_workspace_id():
+            self._restore_workspace_playback_source(manifest)
         with self.condition:
             self._playback_running = True
         self.reset()
@@ -109,13 +146,19 @@ class EventRuntime:
     def restart_playback(
         self,
         speed_multiplier: float = 20.0,
+        source_id: str | None = None,
     ) -> dict[str, Any]:
         self.ensure_started()
         self._boundary_flow_runner.set_speed(speed_multiplier)
+        if source_id:
+            self._playback_sources.get(source_id)
         with self.condition:
             if active_workspace_id():
                 WORKSPACES.update_manifest(status="stopped")
             WORKSPACES.create()
+            self._prepare_playback_source(
+                source_id or self._playback_sources.selected_source_id
+            )
             self._generation += 1
             self._playback_running = False
             self._playback_paused = False
@@ -131,7 +174,7 @@ class EventRuntime:
                 "status": "reset",
                 "label": "演进已重置",
                 "detail": (
-                    "已创建新的演进工作空间，并回到第一条边界流量观测；"
+                    "已创建新的演进工作空间，并回到第一个边界流量预测时刻；"
                     "点击开始演进后继续回放。"
                 ),
                 "speed_multiplier": self._boundary_flow_runner.speed_multiplier,
@@ -170,7 +213,7 @@ class EventRuntime:
                 "status": "stopped",
                 "label": "边界流量过程回放已停止",
                 "detail": (
-                    "后台不再回放新的边界流量观测；已清空待处理事件队列。"
+                    "后台不再回放新的边界流量预测时刻；已清空待处理事件队列。"
                 ),
                 "workspace_id": active_workspace_id(),
             })
@@ -190,7 +233,7 @@ class EventRuntime:
                 "status": "paused",
                 "label": "边界流量过程回放已暂停",
                 "detail": (
-                    "后台已暂停新的边界流量观测；"
+                    "后台已暂停新的边界流量预测时刻；"
                     "已产生的领域事件继续由智能体处理。"
                 ),
                 "speed_multiplier": self._boundary_flow_runner.speed_multiplier,
@@ -217,15 +260,69 @@ class EventRuntime:
                 "type": "runtime_status",
                 "status": "running",
                 "label": "边界流量过程回放已继续",
-                "detail": "后台从暂停位置继续回放边界流量观测。",
+                "detail": "后台从暂停位置继续回放边界流量预测时刻。",
                 "speed_multiplier": self._boundary_flow_runner.speed_multiplier,
                 "workspace_id": active_workspace_id(),
             })
             self.condition.notify_all()
         return {**self.status(), "status": "running"}
 
+    def step_playback(self) -> dict[str, Any]:
+        self.ensure_started()
+        with self.condition:
+            if self._playback_running or not self._playback_paused:
+                raise ValueError("演进当前不在暂停状态")
+            policy = self._boundary_flow_runner.playback.policy
+            if policy.state == policy.PENDING:
+                raise ValueError("CNN 洪水预测尚未完成")
+            generation = self._generation
+            observation_event, policy_events = self._boundary_flow_runner.step()
+            if observation_event is None:
+                self._finish_playback_sequence(generation, None)
+                return {**self.status(), "status": "finished", "stepped": False}
+
+            self._publish_boundary_flow_observation(observation_event)
+            for event in policy_events:
+                self._publish_policy_event(event)
+            WORKSPACES.update_manifest(status="paused")
+            observation = (
+                (observation_event.get("payload") or {}).get("observation") or {}
+            )
+            forecast_triggered = bool(policy_events)
+            playback_status = self._boundary_flow_runner.status()
+            self._append_output_locked("runtime_status", {
+                "type": "runtime_status",
+                "status": "stepped",
+                "label": "演进已单步推进",
+                "detail": (
+                    f"已推进到 {observation.get('simulation_time') or observation.get('observed_at') or ''}；"
+                    + (
+                        "新窗口仍有超限点，已触发滚动洪水预测。"
+                        if forecast_triggered
+                        else "新窗口未触发洪水预测。"
+                    )
+                ),
+                "forecast_triggered": forecast_triggered,
+                "running": False,
+                "paused": True,
+                **playback_status,
+                "step_available": (
+                    playback_status.get("policy_state") != "PENDING"
+                    and bool(playback_status.get("has_next"))
+                ),
+                "workspace_id": active_workspace_id(),
+            })
+            self.condition.notify_all()
+        return {
+            **self.status(),
+            "status": "stepped",
+            "stepped": True,
+            "forecast_triggered": forecast_triggered,
+        }
+
     def status(self) -> dict[str, Any]:
         with self.condition:
+            playback_status = self._boundary_flow_runner.status()
             return {
                 "running": self._playback_running,
                 "paused": self._playback_paused,
@@ -233,8 +330,57 @@ class EventRuntime:
                 "event_count": len(self.events),
                 "output_count": len(self.outputs),
                 "workspace_id": active_workspace_id(),
-                **self._boundary_flow_runner.status(),
+                "playback_source": dict(self._current_playback_source),
+                **playback_status,
+                "step_available": (
+                    self._playback_paused
+                    and playback_status.get("policy_state") != "PENDING"
+                    and bool(playback_status.get("has_next"))
+                ),
             }
+
+    def list_playback_sources(self) -> dict[str, Any]:
+        return self._playback_sources.list_sources()
+
+    def upload_playback_source(
+        self,
+        filename: str,
+        content: bytes,
+    ) -> dict[str, Any]:
+        source = self._playback_sources.upload(filename, content)
+        return {"source": source.public(selected=False)}
+
+    def _prepare_playback_source(self, source_id: str) -> None:
+        workspace_id = active_workspace_id()
+        if not workspace_id:
+            raise RuntimeError("无法为演进数据创建工作空间")
+        csv_path, metadata = self._playback_sources.snapshot(
+            source_id,
+            WORKSPACES.path(workspace_id, create=True),
+        )
+        self._boundary_flow_runner.replace_source(csv_path)
+        self._current_playback_source = metadata
+        self._prepared_workspace_id = workspace_id
+        WORKSPACES.update_manifest(
+            playback_source=metadata,
+            playback_input="inputs/boundary_flow.csv",
+        )
+
+    def _restore_workspace_playback_source(self, manifest: dict[str, Any]) -> None:
+        workspace_id = active_workspace_id()
+        if not workspace_id:
+            return
+        csv_path = WORKSPACES.path(workspace_id) / "inputs" / "boundary_flow.csv"
+        metadata = manifest.get("playback_source")
+        if not csv_path.is_file() or not isinstance(metadata, dict):
+            self._prepare_playback_source(self._playback_sources.selected_source_id)
+            return
+        self._boundary_flow_runner.replace_source(csv_path)
+        self._current_playback_source = dict(metadata)
+        self._prepared_workspace_id = workspace_id
+        source_id = str(metadata.get("source_id") or "")
+        if source_id:
+            self._playback_sources.select(source_id)
 
     def publish_directive_issued(self, directive: dict[str, Any]) -> None:
         self._publish_child_event(
@@ -320,9 +466,9 @@ class EventRuntime:
         with self.condition:
             self._append_output_locked("boundary_flow_data", {
                 "type": "boundary_flow_data",
-                "label": "四边界流量观测",
+                "label": "四边界预测流量",
                 "event": data,
-                "detail": boundary_flow_observation_detail(observation),
+                "detail": boundary_flow_forecast_detail(observation),
                 "workspace_id": active_workspace_id(),
             })
             self.condition.notify_all()
@@ -378,7 +524,7 @@ class EventRuntime:
                 "type": "runtime_status",
                 "status": "finished",
                 "label": "边界流量过程回放已结束",
-                "detail": boundary_flow_observation_detail(observation),
+                "detail": boundary_flow_forecast_detail(observation),
                 "workspace_id": active_workspace_id(),
             })
             self.condition.notify_all()

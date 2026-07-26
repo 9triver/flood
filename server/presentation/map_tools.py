@@ -113,6 +113,23 @@ def register_map_tools(tools: ToolRegistry, resolver,
         **presentation_tool_kwargs(ontology, "ui_clear_map"),
     ))
 
+    tools.register(ToolDef(
+        name="ui_set_inundation_alert",
+        parameters={
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean",
+                    "description": "未来24小时存在预测淹没时为 true，否则为 false",
+                },
+            },
+            "required": ["active"],
+        },
+        handler=action_builder.set_inundation_alert,
+        max_result_chars=2000,
+        **presentation_tool_kwargs(ontology, "ui_set_inundation_alert"),
+    ))
+
     focus_def = presentation_tool(ontology, "ui_focus_object")
     focus_object_types = _presentation_object_types(ontology, focus_def)
     tools.register(ToolDef(

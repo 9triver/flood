@@ -22,6 +22,10 @@ from server.directives import DirectiveStore  # noqa: E402
 from server.events import EventRuntime  # noqa: E402
 from server.flood_app import FloodApp  # noqa: E402
 from server.serialization import format_sse  # noqa: E402
+from domains.flood.runtime.playback_sources import (  # noqa: E402
+    MAX_PLAYBACK_SOURCE_BYTES,
+    PlaybackSourceValidationError,
+)
 
 
 APP = FloodApp()
@@ -44,6 +48,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._autonomy_stream(parsed.query)
             if parsed.path == "/api/autonomy/status":
                 return self._json(EVENT_RUNTIME.status())
+            if parsed.path == "/api/autonomy/sources":
+                return self._json(EVENT_RUNTIME.list_playback_sources())
             if parsed.path == "/api/directives":
                 return self._json(DIRECTIVES.list_issued())
             if parsed.path == "/api/agent/runs/active":
@@ -59,6 +65,8 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/object":
                 return self._object(parsed.query)
             return self._static(parsed.path)
+        except ValueError as exc:
+            return self._json({"error": str(exc)}, status=400)
         except Exception as exc:
             return self._json({"error": str(exc)}, status=500)
 
@@ -78,15 +86,22 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         try:
+            if parsed.path == "/api/autonomy/sources":
+                return self._upload_playback_source(parsed.query)
             payload = self._read_json()
             if parsed.path == "/api/autonomy/start":
-                return self._json(EVENT_RUNTIME.start_playback(payload.get("speed_multiplier", 20)))
+                return self._json(EVENT_RUNTIME.start_playback(
+                    payload.get("speed_multiplier", 20),
+                    payload.get("source_id"),
+                ))
             if parsed.path == "/api/autonomy/stop":
                 return self._json(EVENT_RUNTIME.stop_playback())
             if parsed.path == "/api/autonomy/pause":
                 return self._json(EVENT_RUNTIME.pause_playback())
             if parsed.path == "/api/autonomy/resume":
                 return self._json(EVENT_RUNTIME.resume_playback(payload.get("speed_multiplier", 1)))
+            if parsed.path == "/api/autonomy/step":
+                return self._json(EVENT_RUNTIME.step_playback())
             if parsed.path == "/api/autonomy/speed":
                 return self._json(EVENT_RUNTIME.set_playback_speed(payload.get("speed_multiplier", 1)))
             if parsed.path == "/api/agent/confirm":
@@ -94,11 +109,16 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/directives":
                 return self._issue_directive(payload)
             if parsed.path == "/api/autonomy/reset":
-                return self._json(EVENT_RUNTIME.restart_playback(payload.get("speed_multiplier", 20)))
+                return self._json(EVENT_RUNTIME.restart_playback(
+                    payload.get("speed_multiplier", 20),
+                    payload.get("source_id"),
+                ))
             if parsed.path.startswith("/api/agent/runs/") and parsed.path.endswith("/cancel"):
                 run_id = parsed.path.split("/")[-2]
                 return self._json({"ok": RUNS.cancel(run_id), "run_id": run_id})
             return self._json({"error": "not found"}, status=404)
+        except ValueError as exc:
+            return self._json({"error": str(exc)}, status=400)
         except Exception as exc:
             return self._json({"error": str(exc)}, status=500)
 
@@ -166,6 +186,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": str(exc)}, status=400)
         EVENT_RUNTIME.publish_directive_issued(directive)
         return self._json({"directive": directive}, status=201)
+
+    def _upload_playback_source(self, query: str):
+        params = parse_qs(query)
+        filename = (params.get("filename") or [""])[0]
+        try:
+            content = self._read_bytes(MAX_PLAYBACK_SOURCE_BYTES)
+            result = EVENT_RUNTIME.upload_playback_source(filename, content)
+        except PlaybackSourceValidationError as exc:
+            status = 413 if "5 MB" in str(exc) else 400
+            return self._json({"error": str(exc)}, status=status)
+        return self._json(result, status=201)
 
     def _autonomy_stream(self, query: str):
         params = parse_qs(query)
@@ -267,6 +298,12 @@ class Handler(BaseHTTPRequestHandler):
         if not length:
             return {}
         return json.loads(self.rfile.read(length).decode("utf-8"))
+
+    def _read_bytes(self, maximum: int) -> bytes:
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        if length < 0 or length > maximum:
+            raise PlaybackSourceValidationError("CSV 文件不能超过 5 MB")
+        return self.rfile.read(length)
 
     def _json(self, data: dict | list, status: int = 200):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")

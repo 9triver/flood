@@ -188,6 +188,7 @@ def analyze_latest_evacuation_time(
         or normalize_result_forecast_id(forecast_id),
         "forecast_window": {
             "window_start": forecast_context.get("window_start"),
+            "simulation_time": forecast_context.get("simulation_time"),
             "observed_through": forecast_context.get("observed_through"),
             "horizon_h": DEFAULT_HORIZON_H,
             "first_time_h": timeline[0]["time_h"],
@@ -521,7 +522,18 @@ def resolve_forecast_context(resolver) -> dict[str, Any]:
     return {
         "forecast_id": str(run.get("forecast_id") or ""),
         "window_start": str(boundary_flow.get("window_start") or "") or None,
-        "observed_through": str(boundary_flow.get("observed_through") or "") or None,
+        "simulation_time": str(
+            boundary_flow.get("simulation_time")
+            or boundary_flow.get("triggered_at")
+            or boundary_flow.get("observed_through")
+            or ""
+        ) or None,
+        "observed_through": str(
+            boundary_flow.get("observed_through")
+            or boundary_flow.get("simulation_time")
+            or boundary_flow.get("triggered_at")
+            or ""
+        ) or None,
     }
 
 
@@ -545,7 +557,8 @@ def attach_remaining_time(deadline: dict[str, Any],
                           forecast_context: dict[str, Any]) -> None:
     observed_h = elapsed_hours(
         forecast_context.get("window_start"),
-        forecast_context.get("observed_through"),
+        forecast_context.get("simulation_time")
+        or forecast_context.get("observed_through"),
     )
     deadline["reference_time_h"] = observed_h
     completion_h = deadline.get("latest_safe_completion_time_h")

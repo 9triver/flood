@@ -14,7 +14,7 @@ from server.events.factory import (
     make_inundation_event,
 )
 from server.events.messages import (
-    boundary_flow_observation_detail,
+    boundary_flow_forecast_detail,
     compact_event_text,
     impact_event_detail,
     is_impact_result,
@@ -254,7 +254,7 @@ class EventAgentProcessor:
             "label": "洪水预测未完成",
             "detail": (
                 f"{reason}本次结果已拒绝且请求已标记失败，"
-                "后续观测可再次触发智能体重试。"
+                "后续预测时刻可再次触发智能体重试。"
             ),
         }, generation)
 
@@ -470,7 +470,7 @@ class EventAgentProcessor:
             "tag": "SYSTEM",
             "label": "事件开始 · 洪水预测请求",
             "detail": (
-                f"{detail} {boundary_flow_observation_detail(observation)} "
+                f"{detail} {boundary_flow_forecast_detail(observation)} "
                 f"{trigger.get('reason', '')}"
             ),
             "should_run_model": should_run,

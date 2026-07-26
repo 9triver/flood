@@ -16,6 +16,7 @@ class MapAction(TypedDict, total=False):
     simplify_tolerance: float
     mesh_only: bool
     event: dict[str, Any]
+    active: bool
 
 
 class ResultCard(TypedDict):
