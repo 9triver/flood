@@ -131,6 +131,15 @@ class RoutePlanningTests(unittest.TestCase):
                 ), patch.object(
                     route_planning, "clear_route_geojson_cache",
                     side_effect=lambda: cached_geojson.unlink(missing_ok=True),
+                ), patch.object(
+                    route_planning,
+                    "forecast_time_context",
+                    return_value={
+                        "forecast_time": "2026-07-03T20:00:00+08:00",
+                        "valid_from": "2026-07-03T20:00:00+08:00",
+                        "valid_to": "2026-07-04T20:00:00+08:00",
+                        "valid_at": "2026-07-03T21:30:00+08:00",
+                    },
                 ), patch.dict(
                     os.environ,
                     {
@@ -146,6 +155,7 @@ class RoutePlanningTests(unittest.TestCase):
                         destination_lat=24.41,
                         profile="foot",
                         avoid_flood=False,
+                        time_h=1.5,
                     )
 
                 self.assertEqual("completed", result["status"])
@@ -162,6 +172,8 @@ class RoutePlanningTests(unittest.TestCase):
                 self.assertEqual(["cost,polyline"], query["show_fields"])
                 self.assertEqual(1, result["routing_diagnostics"]["candidate_count"])
                 self.assertEqual(1, result["routing_diagnostics"]["selected_candidate_index"])
+                self.assertEqual("2026-07-03T21:30:00+08:00", result["analysis_time_at"])
+                self.assertEqual("2026-07-03T21:30:00+08:00", result["route"]["analysis_time_at"])
                 self.assertFalse(cached_geojson.exists())
         finally:
             server.shutdown()

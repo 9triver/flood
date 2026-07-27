@@ -6,6 +6,7 @@ import math
 import sqlite3
 import threading
 from collections import OrderedDict
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -424,8 +425,15 @@ def forecast_stats(forecast_id: str = LATEST_FORECAST_ID) -> dict[str, Any]:
     series_path = forecast_series_path(forecast_id)
     time_steps_path = forecast_time_steps_path(forecast_id)
     time_steps = forecast_time_steps(forecast_id)
+    metadata = forecast_metadata(forecast_id)
     return {
         "forecast_id": normalize_forecast_id(forecast_id),
+        "forecast_version": metadata.get("forecast_version") or metadata.get("forecast_id"),
+        "forecast_time": metadata.get("forecast_time"),
+        "valid_from": metadata.get("valid_from"),
+        "valid_to": metadata.get("valid_to"),
+        "generated_at": metadata.get("generated_at"),
+        "lead_time_h": metadata.get("lead_time_h"),
         "result_version": forecast_result_version(path, series_path, time_steps_path),
         "depth_path": str(path.relative_to(PROJECT_DIR)) if path.exists() else "",
         "series_path": str(series_path.relative_to(PROJECT_DIR)) if series_path.exists() else "",
@@ -433,6 +441,16 @@ def forecast_stats(forecast_id: str = LATEST_FORECAST_ID) -> dict[str, Any]:
         "flooded_count": entry["flooded_count"],
         "max_depth_m": round(entry["max_depth_m"], 4),
         "time_steps_h": time_steps,
+        "time_steps": [
+            {
+                "time_h": time_h,
+                "valid_at": offset_time_iso(
+                    metadata.get("valid_from") or metadata.get("forecast_time"),
+                    time_h,
+                ),
+            }
+            for time_h in time_steps
+        ],
         "time_step_count": len(time_steps),
     }
 
@@ -611,6 +629,59 @@ def forecast_time_steps(forecast_id: str = LATEST_FORECAST_ID) -> list[float]:
     except (json.JSONDecodeError, OSError):
         return []
     return [float(value) for value in data.get("time_steps_h") or []]
+
+
+def forecast_metadata(forecast_id: str = LATEST_FORECAST_ID) -> dict[str, Any]:
+    normalized = normalize_forecast_id(forecast_id)
+    if normalized == MESH_ONLY_ID:
+        return {}
+    forecasts_dir = workspace_dir() / "forecasts"
+    resolved = normalized
+    if normalized == LATEST_FORECAST_ID:
+        pointer = read_json_object(forecasts_dir / "latest.json")
+        resolved = str(
+            pointer.get("forecast_version")
+            or pointer.get("forecast_id")
+            or normalized
+        )
+    candidates = [
+        forecasts_dir / resolved / "forecast.json",
+        forecasts_dir / normalized / "forecast.json",
+    ]
+    for path in candidates:
+        metadata = read_json_object(path)
+        if metadata:
+            return metadata
+    return {}
+
+
+def offset_time_iso(valid_from: Any, time_h: Any) -> str | None:
+    if not valid_from or time_h in (None, ""):
+        return None
+    try:
+        base = datetime.fromisoformat(str(valid_from).replace("Z", "+00:00"))
+        return (base + timedelta(hours=float(time_h))).isoformat(timespec="seconds")
+    except (TypeError, ValueError):
+        return None
+
+
+def forecast_time_context(forecast_id: str, time_h: Any = None) -> dict[str, Any]:
+    metadata = forecast_metadata(forecast_id)
+    valid_from = metadata.get("valid_from") or metadata.get("forecast_time")
+    return {
+        "forecast_time": metadata.get("forecast_time"),
+        "valid_from": valid_from,
+        "valid_to": metadata.get("valid_to"),
+        "valid_at": offset_time_iso(valid_from, time_h),
+    }
+
+
+def read_json_object(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 def nearest_time_index(steps: list[float], time_h: float) -> int:

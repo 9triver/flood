@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import unittest
+from unittest.mock import patch
 
 from domains.flood.runtime.impact_analysis import (
     affected_object_ids,
+    analyze_inundation_impacts,
     analyze_linear_objects,
     analyze_point_objects,
     propagate_bridge_impacts,
@@ -53,6 +55,23 @@ class ImpactAnalysisTest(unittest.TestCase):
         self.assertEqual(impacts[0]["longitude"], 111.3)
         self.assertEqual(impacts[0]["latitude"], 24.4)
 
+    def test_facility_impact_preserves_type_for_domain_icon(self):
+        resolver = StaticResolver({
+            "Facility": [{
+                "facility_id": "facility-1",
+                "name": "测试学校",
+                "facility_type": "school",
+                "subtype": "小学",
+                "longitude": 111.3,
+                "latitude": 24.4,
+            }],
+        })
+
+        impacts = analyze_point_objects(resolver, "Facility", [self.cell], 0.15, 10)
+
+        self.assertEqual(impacts[0]["facility_type"], "school")
+        self.assertEqual(impacts[0]["subtype"], "小学")
+
     def test_linear_impact_uses_matching_sample_location(self):
         resolver = StaticResolver({
             "Road": [{
@@ -70,6 +89,44 @@ class ImpactAnalysisTest(unittest.TestCase):
         self.assertEqual(len(impacts), 1)
         self.assertEqual(impacts[0]["longitude"], 111.3)
         self.assertEqual(impacts[0]["latitude"], 24.4)
+
+    def test_time_slice_result_uses_absolute_forecast_time(self):
+        resolver = StaticResolver({
+            "Facility": [{
+                "facility_id": "facility-1",
+                "name": "测试学校",
+                "longitude": 111.3,
+                "latitude": 24.4,
+            }],
+        })
+        cell = {
+            **self.cell,
+            "forecast_id": "v003",
+            "lead_time_h": 1.5,
+        }
+        with patch(
+            "domains.flood.runtime.impact_analysis.query_forecast_cells",
+            return_value=[cell],
+        ), patch(
+            "domains.flood.runtime.impact_analysis.forecast_time_context",
+            return_value={
+                "forecast_time": "2026-07-03T20:00:00+08:00",
+                "valid_from": "2026-07-03T20:00:00+08:00",
+                "valid_to": "2026-07-04T20:00:00+08:00",
+                "valid_at": "2026-07-03T21:30:00+08:00",
+            },
+        ):
+            result = analyze_inundation_impacts(
+                resolver,
+                forecast_id="latest",
+                target_type="Facility",
+                time_h=1.5,
+            )
+
+        self.assertEqual(1.5, result["time_h"])
+        self.assertEqual("2026-07-03T21:30:00+08:00", result["analysis_time_at"])
+        self.assertIn("2026-07-03T21:30:00+08:00", result["basis"])
+        self.assertIn("预测 +1.500 h", result["basis"])
 
     def test_affected_ids_are_not_truncated(self):
         impacts = [

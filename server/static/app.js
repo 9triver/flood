@@ -48,6 +48,7 @@ const state = {
   lastTrace: null,
   playbackRunning: false,
   playbackPaused: false,
+  playbackPhase: "ready",
   playbackSpeed: 20,
   playbackAutoPauseArmed: false,
   playbackAutoPausePending: false,
@@ -86,11 +87,17 @@ const state = {
   nextConclusionToastId: 1,
   hydrodynamicTimeline: {
     hours: [],
+    validTimes: [],
     index: 0,
     layer: null,
     key: null,
     baseFilters: null,
     resultVersion: null,
+    forecastId: null,
+    forecastVersion: null,
+    forecastTime: null,
+    validFrom: null,
+    validTo: null,
     timer: null,
     playing: false,
   },
@@ -694,7 +701,6 @@ function bindEvents() {
   document.getElementById("fitAllBtn").addEventListener("click", fitAll);
   document.getElementById("layerPanelBtn").addEventListener("click", toggleLayerPanel);
   document.getElementById("layerPanelCloseBtn").addEventListener("click", () => setLayerPanelOpen(false));
-  document.getElementById("telemetryPanelBtn").addEventListener("click", toggleTelemetryPanel);
   document.getElementById("situationToggleBtn").addEventListener("click", toggleTelemetryPanel);
   document.getElementById("telemetryFloatBtn").addEventListener("click", () => toggleSituationPanelFloating("telemetryPanel"));
   document.getElementById("impactFloatBtn").addEventListener("click", () => toggleSituationPanelFloating("impactPanel"));
@@ -928,7 +934,6 @@ function toggleTelemetryPanel() {
 
 function setTelemetryPanelOpen(isOpen) {
   const workbench = document.getElementById("situationWorkbench");
-  const btn = document.getElementById("telemetryPanelBtn");
   const toggle = document.getElementById("situationToggleBtn");
   if (!isOpen) {
     document.querySelectorAll(".situation-pane.is-floating").forEach((panel) => {
@@ -936,8 +941,6 @@ function setTelemetryPanelOpen(isOpen) {
     });
   }
   workbench.classList.toggle("is-collapsed", !isOpen);
-  btn.classList.toggle("is-active", isOpen);
-  btn.setAttribute("aria-expanded", String(isOpen));
   toggle.setAttribute("aria-expanded", String(isOpen));
   toggle.title = isOpen ? "收起态势工作台" : "展开态势工作台";
   toggle.setAttribute("aria-label", toggle.title);
@@ -1210,15 +1213,15 @@ function removeOtherHydrodynamicResultLayers(activeKey) {
 }
 
 function showHydrodynamicTimeline(meta, layer, key, filters, previousSelection = null) {
-  const hours = (((meta || {}).forecast || {}).time_steps_h || [])
-    .map((value) => Number(value))
-    .filter((value) => Number.isFinite(value));
-  if (!hours.length) {
+  const forecast = (meta || {}).forecast || {};
+  const steps = hydrodynamicTimelineSteps(forecast);
+  if (!steps.length) {
     hideHydrodynamicTimeline();
     return;
   }
+  const hours = steps.map((step) => step.hour);
   stopHydrodynamicTimelinePlayback();
-  const resultVersion = String(((meta || {}).forecast || {}).result_version || "");
+  const resultVersion = String(forecast.result_version || "");
   const preserveHour = Boolean(
     previousSelection
     && previousSelection.key === key
@@ -1232,11 +1235,17 @@ function showHydrodynamicTimeline(meta, layer, key, filters, previousSelection =
   state.hydrodynamicTimeline = {
     ...state.hydrodynamicTimeline,
     hours,
+    validTimes: steps.map((step) => step.validAt),
     index,
     layer,
     key,
     baseFilters: { ...(filters || {}) },
     resultVersion,
+    forecastId: forecast.forecast_id || filters?.forecast_id || "latest",
+    forecastVersion: forecast.forecast_version || null,
+    forecastTime: forecast.forecast_time || null,
+    validFrom: forecast.valid_from || null,
+    validTo: forecast.valid_to || null,
   };
   const control = document.getElementById("hydroTimeline");
   const slider = document.getElementById("hydroTimeSlider");
@@ -1273,11 +1282,17 @@ function hydrodynamicTileFilters(filters, resultVersion) {
 function hideHydrodynamicTimeline() {
   stopHydrodynamicTimelinePlayback();
   state.hydrodynamicTimeline.hours = [];
+  state.hydrodynamicTimeline.validTimes = [];
   state.hydrodynamicTimeline.index = 0;
   state.hydrodynamicTimeline.layer = null;
   state.hydrodynamicTimeline.key = null;
   state.hydrodynamicTimeline.baseFilters = null;
   state.hydrodynamicTimeline.resultVersion = null;
+  state.hydrodynamicTimeline.forecastId = null;
+  state.hydrodynamicTimeline.forecastVersion = null;
+  state.hydrodynamicTimeline.forecastTime = null;
+  state.hydrodynamicTimeline.validFrom = null;
+  state.hydrodynamicTimeline.validTo = null;
   document.getElementById("hydroTimeline")?.classList.add("is-hidden");
   clearImpactAnalysisState();
 }
@@ -1293,8 +1308,16 @@ function setHydrodynamicTimelineIndex(index) {
   const filters = { ...(timeline.baseFilters || {}) };
   if (timeline.resultVersion) filters.result_version = timeline.resultVersion;
   const hour = timeline.hours[nextIndex];
+  const validAt = timeline.validTimes[nextIndex] || null;
   filters.time_h = formatHydrodynamicHour(hour);
-  label.textContent = `${formatHydrodynamicHour(hour)} h`;
+  const timeLabel = formatHydrodynamicTimeLabel(hour, validAt);
+  if (label) {
+    label.textContent = timeLabel;
+    label.title = validAt
+      ? `${formatForecastActualTime(validAt, true)}（预测 +${formatHydrodynamicHour(hour)} 小时）`
+      : `预测 +${formatHydrodynamicHour(hour)} 小时`;
+  }
+  slider?.setAttribute("aria-valuetext", timeLabel);
   timeline.layer.setResultFilters(filters);
   scheduleImpactAnalysisRefresh();
 }
@@ -1333,6 +1356,60 @@ function setHydrodynamicPlayIcon(playing) {
 
 function formatHydrodynamicHour(hour) {
   return Number(hour).toFixed(2).replace(/\.?0+$/, "");
+}
+
+function hydrodynamicTimelineSteps(forecast) {
+  const detailed = (forecast?.time_steps || [])
+    .map((step) => ({
+      hour: Number(step?.time_h),
+      validAt: step?.valid_at ? String(step.valid_at) : null,
+    }))
+    .filter((step) => Number.isFinite(step.hour));
+  if (detailed.length) return detailed;
+  return (forecast?.time_steps_h || [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value))
+    .map((hour) => ({
+      hour,
+      validAt: offsetForecastTime(forecast?.valid_from || forecast?.forecast_time, hour),
+    }));
+}
+
+function offsetForecastTime(validFrom, hour) {
+  if (!validFrom || !Number.isFinite(Number(hour))) return null;
+  const base = new Date(validFrom);
+  if (Number.isNaN(base.getTime())) return null;
+  return new Date(base.getTime() + Number(hour) * 3600000).toISOString();
+}
+
+function formatForecastActualTime(value, includeYear = false) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const options = {
+    timeZone: "Asia/Shanghai",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  };
+  if (includeYear) options.year = "numeric";
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("zh-CN", options)
+      .formatToParts(date)
+      .map((part) => [part.type, part.value]),
+  );
+  const datePart = includeYear
+    ? `${parts.year}-${parts.month}-${parts.day}`
+    : `${parts.month}-${parts.day}`;
+  return `${datePart} ${parts.hour}:${parts.minute}`;
+}
+
+function formatHydrodynamicTimeLabel(hour, validAt) {
+  const offset = `+${formatHydrodynamicHour(hour)}h`;
+  const actual = formatForecastActualTime(validAt);
+  return actual ? `${actual} · ${offset}` : `预测 ${offset}`;
 }
 
 function fitHydrodynamicGrid() {
@@ -1460,13 +1537,8 @@ function startAutonomyStream() {
 
   es.addEventListener("runtime_status", (event) => {
     const data = parseEvent(event);
-    state.runtimeStatus = { ...state.runtimeStatus, ...data };
     acceptWorkspace(data.workspace_id);
     if (["等待水文事件", "等待边界流量事件", "等待启动边界流量回放"].includes(data.label)) return;
-    if (data.status === "running") setPlaybackButtonState(true, false);
-    if (["paused", "stopped", "finished"].includes(data.status)) {
-      setPlaybackButtonState(false, data.status === "paused");
-    }
     if (data.speed_multiplier) setPlaybackSpeedControl(data.speed_multiplier);
     updateTelemetryRuntimeStatus(data);
     addTrace("AUTO", data.label || "事件运行时", data.detail || "");
@@ -1524,14 +1596,12 @@ async function refreshPlaybackStatus() {
     const res = await fetch("/api/autonomy/status");
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
-    state.runtimeStatus = data;
     acceptWorkspace(data.workspace_id);
-    setPlaybackButtonState(Boolean(data.running), Boolean(data.paused));
     setPlaybackSpeedControl(data.speed_multiplier || 1);
     updateTelemetryRuntimeStatus(data);
   } catch (error) {
     console.warn("boundary flow playback status failed", error);
-    setPlaybackButtonState(false);
+    updatePlaybackControls({ playback_phase: "ready" });
   }
 }
 
@@ -1553,7 +1623,11 @@ function bindPlaybackSourceControls() {
   };
 
   toggleBtn.addEventListener("pointerdown", (event) => {
-    if (toggleBtn.disabled || (event.button !== undefined && event.button !== 0)) return;
+    if (
+      toggleBtn.disabled
+      || !isPlaybackSourceSelectable()
+      || (event.button !== undefined && event.button !== 0)
+    ) return;
     cancelLongPress();
     pressOrigin = { x: event.clientX, y: event.clientY };
     pressTimer = window.setTimeout(() => {
@@ -1620,7 +1694,7 @@ function bindPlaybackSourceControls() {
 async function setPlaybackSourceMenuOpen(open) {
   const menu = document.getElementById("playbackSourceMenu");
   const pickerBtn = document.getElementById("playbackSourcePickerBtn");
-  state.playbackSourceMenuOpen = Boolean(open);
+  state.playbackSourceMenuOpen = Boolean(open) && isPlaybackSourceSelectable();
   menu.hidden = !state.playbackSourceMenuOpen;
   pickerBtn.classList.toggle("is-active", state.playbackSourceMenuOpen);
   pickerBtn.setAttribute("aria-expanded", String(state.playbackSourceMenuOpen));
@@ -1721,7 +1795,6 @@ async function restartBoundaryFlowPlayback() {
   const restartBtn = document.getElementById("playbackRestartBtn");
   toggleBtn.disabled = true;
   restartBtn.disabled = true;
-  setPlaybackSpeedControl(20);
   state.playbackAutoPauseArmed = false;
   state.playbackAutoPausePending = false;
   state.playbackStepPending = false;
@@ -1734,7 +1807,6 @@ async function restartBoundaryFlowPlayback() {
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     acceptWorkspace(data.workspace_id);
-    setPlaybackButtonState(Boolean(data.running), Boolean(data.paused));
     updateTelemetryRuntimeStatus(data);
     setLayerPanelOpen(false);
     revealSituationPanel("telemetryPanel", "auto");
@@ -1744,7 +1816,7 @@ async function restartBoundaryFlowPlayback() {
     state.playbackAutoPauseArmed = state.playbackRunning;
     addTrace("ERR", "重新开始演进失败", error.message || String(error));
   } finally {
-    toggleBtn.disabled = false;
+    updatePlaybackControls(state.runtimeStatus);
     restartBtn.disabled = false;
   }
 }
@@ -1753,7 +1825,7 @@ async function stepBoundaryFlowPlayback() {
   if (!state.playbackPaused || state.playbackStepPending) return;
   const btn = document.getElementById("playbackStepBtn");
   state.playbackStepPending = true;
-  updatePlaybackStepButton();
+  updatePlaybackControls(state.runtimeStatus);
   try {
     const response = await fetch("/api/autonomy/step", {
       method: "POST",
@@ -1763,16 +1835,14 @@ async function stepBoundaryFlowPlayback() {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "单步推进失败");
     acceptWorkspace(data.workspace_id);
-    state.runtimeStatus = { ...state.runtimeStatus, ...data };
     state.playbackStepPending = Boolean(data.forecast_triggered);
-    setPlaybackButtonState(Boolean(data.running), Boolean(data.paused));
     updateTelemetryRuntimeStatus(data);
   } catch (error) {
     state.playbackStepPending = false;
     addTrace("ERR", "演进单步推进失败", error.message || String(error));
     void refreshPlaybackStatus();
   } finally {
-    updatePlaybackStepButton();
+    updatePlaybackControls(state.runtimeStatus);
     btn.blur();
   }
 }
@@ -1780,6 +1850,7 @@ async function stepBoundaryFlowPlayback() {
 async function toggleBoundaryFlowPlayback(requestedSourceId = null) {
   const wasRunning = state.playbackRunning;
   const wasPaused = state.playbackPaused;
+  const wasPhase = state.playbackPhase;
   const wasAutoPauseArmed = state.playbackAutoPauseArmed;
   const action = requestedSourceId
     ? "start"
@@ -1788,7 +1859,6 @@ async function toggleBoundaryFlowPlayback(requestedSourceId = null) {
   btn.disabled = true;
   try {
     if (action === "start") {
-      setPlaybackSpeedControl(20);
       state.playbackAutoPauseArmed = true;
       state.playbackAutoPausePending = false;
       resetMap();
@@ -1814,7 +1884,6 @@ async function toggleBoundaryFlowPlayback(requestedSourceId = null) {
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     acceptWorkspace(data.workspace_id);
-    setPlaybackButtonState(Boolean(data.running), Boolean(data.paused));
     updatePlaybackSourceDisplay(data.playback_source);
     if (!data.running) state.playbackAutoPauseArmed = false;
     updateTelemetryRuntimeStatus(data);
@@ -1832,10 +1901,14 @@ async function toggleBoundaryFlowPlayback(requestedSourceId = null) {
   } catch (error) {
     state.playbackAutoPauseArmed = wasRunning && wasAutoPauseArmed;
     addTrace("ERR", "边界流量回放切换失败", error.message || String(error));
-    setPlaybackButtonState(wasRunning, wasPaused);
+    updatePlaybackControls({
+      running: wasRunning,
+      paused: wasPaused,
+      playback_phase: wasPhase,
+    });
     return false;
   } finally {
-    btn.disabled = false;
+    updatePlaybackControls(state.runtimeStatus);
   }
 }
 
@@ -2118,23 +2191,60 @@ function setPlaybackSpeedControl(speed) {
   if (select) select.value = String(value);
 }
 
-function setPlaybackButtonState(running, paused = false) {
-  state.playbackRunning = running;
-  state.playbackPaused = !running && paused;
+function updatePlaybackControls(data = {}) {
+  const phase = playbackPhaseFromStatus(data);
+  state.playbackPhase = phase;
+  state.playbackRunning = phase === "running";
+  state.playbackPaused = phase === "paused";
   if (!state.playbackPaused) state.playbackStepPending = false;
   const btn = document.getElementById("playbackToggleBtn");
   if (!btn) return;
-  btn.classList.toggle("is-running", running);
+  const forecastPending = state.playbackPaused && (
+    state.playbackStepPending || state.runtimeStatus?.policy_state === "PENDING"
+  );
+  btn.classList.toggle("is-running", state.playbackRunning);
   btn.classList.toggle("is-paused", state.playbackPaused);
-  btn.setAttribute("aria-pressed", String(running));
-  btn.title = running
-    ? "暂停边界流量过程回放"
-    : (state.playbackPaused ? "从暂停位置继续边界流量过程回放" : "启动边界流量过程回放");
+  btn.setAttribute("aria-pressed", String(state.playbackRunning));
+  btn.disabled = forecastPending;
+  btn.title = forecastPending
+    ? "正在计算当前滚动预测，完成后可继续演进"
+    : state.playbackRunning
+      ? "暂停边界流量过程回放"
+      : state.playbackPaused
+        ? "从暂停位置继续边界流量过程回放"
+        : ["finished", "stopped"].includes(phase)
+          ? "开始一轮新的边界流量过程回放"
+          : "启动边界流量过程回放";
   btn.setAttribute("aria-label", btn.title);
+  updatePlaybackSourceAvailability();
   renderPlaybackToggleButton();
   updatePlaybackRestartButton();
   updatePlaybackStepButton();
   renderIcons();
+}
+
+function playbackPhaseFromStatus(data = {}) {
+  const explicit = String(data.playback_phase || "");
+  if (["ready", "running", "paused", "finished", "stopped"].includes(explicit)) {
+    return explicit;
+  }
+  if (data.running) return "running";
+  if (data.paused || data.status === "paused" || data.status === "stepped") return "paused";
+  if (data.status === "finished") return "finished";
+  if (data.status === "stopped") return "stopped";
+  if (data.status === "reset") return "ready";
+  return state.playbackPhase || "ready";
+}
+
+function isPlaybackSourceSelectable() {
+  return ["ready", "finished", "stopped"].includes(state.playbackPhase);
+}
+
+function updatePlaybackSourceAvailability() {
+  const selectable = isPlaybackSourceSelectable();
+  const picker = document.getElementById("playbackSourcePickerBtn");
+  if (picker) picker.disabled = !selectable;
+  if (!selectable && state.playbackSourceMenuOpen) setPlaybackSourceMenuOpen(false);
 }
 
 function updatePlaybackSourceDisplay(source) {
@@ -2149,7 +2259,13 @@ function renderPlaybackToggleButton() {
   if (!btn) return;
   const sourceName = state.playbackSource?.name || "内置演进数据";
   const icon = state.playbackRunning ? "pause" : (state.playbackPaused ? "step-forward" : "play");
-  const label = state.playbackRunning ? "暂停演进" : (state.playbackPaused ? "继续演进" : "开始演进");
+  const label = state.playbackRunning
+    ? "暂停演进"
+    : state.playbackPaused
+      ? "继续演进"
+      : ["finished", "stopped"].includes(state.playbackPhase)
+        ? "开始新演进"
+        : "开始演进";
   btn.innerHTML = `
     <i data-lucide="${icon}"></i>
     <span class="playback-toggle-copy">
@@ -2162,7 +2278,7 @@ function renderPlaybackToggleButton() {
 
 function updatePlaybackRestartButton() {
   const btn = document.getElementById("playbackRestartBtn");
-  if (btn) btn.hidden = !state.workspaceId;
+  if (btn) btn.hidden = !state.playbackPaused;
 }
 
 function updatePlaybackStepButton() {
@@ -2179,18 +2295,20 @@ function updatePlaybackStepButton() {
 
 function updateTelemetryRuntimeStatus(data) {
   state.runtimeStatus = { ...state.runtimeStatus, ...data };
-  updatePlaybackStepButton();
+  updatePlaybackControls(state.runtimeStatus);
   updatePlaybackSourceDisplay(data.playback_source);
   if (Number(data.total_rows || 0) > 0) state.playbackTotalRows = Number(data.total_rows);
-  if (data.running) {
+  if (state.playbackRunning) {
     if (!state.lastMockObservation) setTelemetryState("等待", "normal");
     return;
   }
-  if (data.status === "finished") {
+  if (state.playbackPhase === "finished") {
     setTelemetryState("完成", "normal");
-  } else if (data.status === "paused" || data.paused) {
+  } else if (state.playbackPaused) {
     setTelemetryState("已暂停", "stopped");
-  } else if (data.status === "stopped" || data.running === false) {
+  } else if (state.playbackPhase === "stopped") {
+    setTelemetryState("已停止", "stopped");
+  } else if (state.playbackPhase === "ready") {
     setTelemetryState(state.lastMockObservation ? "已停止" : "待机", "stopped");
   }
 }
@@ -2431,7 +2549,7 @@ function renderDomainEvent(data) {
   if (data.event_type === "InundationGenerated") {
     if (state.playbackPaused) {
       state.playbackStepPending = false;
-      updatePlaybackStepButton();
+      updatePlaybackControls(state.runtimeStatus);
       void refreshPlaybackStatus();
     }
     setTelemetryPanelOpen(true);
@@ -2463,7 +2581,6 @@ async function pausePlaybackAfterInundation() {
     });
     if (!res.ok) throw new Error(await res.text());
     const status = await res.json();
-    setPlaybackButtonState(Boolean(status.running), true);
     updateTelemetryRuntimeStatus(status);
     addTrace("AUTO", "演进已自动暂停", "已收到 InundationGenerated，停止继续回放边界流量预测时刻。");
   } catch (error) {
@@ -2471,7 +2588,7 @@ async function pausePlaybackAfterInundation() {
     addTrace("ERR", "演进自动暂停失败", error.message || String(error));
   } finally {
     state.playbackAutoPausePending = false;
-    btn.disabled = false;
+    updatePlaybackControls(state.runtimeStatus);
   }
 }
 
@@ -2903,7 +3020,7 @@ function objectDivIcon(objectType, feature) {
 }
 
 function objectIconInfo(objectType, feature) {
-  const props = feature?.properties || {};
+  const props = feature?.properties || feature || {};
   if (objectType === "Facility") {
     const type = props.facility_type || "facility";
     return {
@@ -2916,8 +3033,10 @@ function objectIconInfo(objectType, feature) {
     Reservoir: { key: "reservoir", icon: "waves-horizontal", label: "水库" },
     Sluice: { key: "sluice", icon: "dam", label: "水闸" },
     Bridge: { key: "bridge", icon: "bridge", label: "桥梁" },
+    Road: { key: "road", icon: "route", label: "道路" },
     Place: { key: "place", icon: "house-heart", label: "安置地点" },
     Transfer: { key: "transfer", icon: "users", label: "转移对象" },
+    Route: { key: "route", icon: "route", label: "转移路线" },
     Risk: { key: "risk", icon: "triangle-alert", label: "危险区" },
     HydroStation: { key: "station", icon: "radio-tower", label: "水文测站" },
   }[objectType] || { key: "default", icon: "map-pin", label: OBJECT_CONFIG[objectType]?.label || objectType };
@@ -4116,6 +4235,7 @@ function currentHydrodynamicTimelineContext() {
       active: false,
       mode: "none",
       current_hydrodynamic_time_h: null,
+      current_hydrodynamic_valid_at: null,
     };
   }
   if (!timeline.hours.length) {
@@ -4123,13 +4243,20 @@ function currentHydrodynamicTimelineContext() {
       active: true,
       mode: "none",
       current_hydrodynamic_time_h: null,
+      current_hydrodynamic_valid_at: null,
     };
   }
   const hour = Number(timeline.hours[timeline.index]);
   return {
     active: true,
     mode: "time_slice",
+    forecast_id: timeline.forecastId,
+    forecast_version: timeline.forecastVersion,
+    forecast_time: timeline.forecastTime,
+    valid_from: timeline.validFrom,
+    valid_to: timeline.validTo,
     current_hydrodynamic_time_h: Number.isFinite(hour) ? Number(formatHydrodynamicHour(hour)) : null,
+    current_hydrodynamic_valid_at: timeline.validTimes[timeline.index] || null,
   };
 }
 
@@ -4188,7 +4315,10 @@ async function refreshImpactAnalysisForTimeline() {
     time_h: String(timeline.current_hydrodynamic_time_h),
   });
   const seq = ++state.impactRefreshSeq;
-  setImpactAnalysisLoading(timeline.current_hydrodynamic_time_h);
+  setImpactAnalysisLoading(
+    timeline.current_hydrodynamic_time_h,
+    timeline.current_hydrodynamic_valid_at,
+  );
   try {
     const res = await fetch(`/api/impact-analysis?${params.toString()}`);
     if (!res.ok) throw new Error(await res.text());
@@ -4203,13 +4333,13 @@ async function refreshImpactAnalysisForTimeline() {
   }
 }
 
-function setImpactAnalysisLoading(hour) {
+function setImpactAnalysisLoading(hour, validAt = null) {
   const panel = document.getElementById("impactPanel");
   panel?.classList.add("is-loading");
   if (!state.directiveDraft) revealSituationPanel("impactPanel");
   const time = document.getElementById("impactTimeLabel");
   const status = document.getElementById("impactStatus");
-  if (time) time.textContent = `${formatHydrodynamicHour(hour)} h`;
+  if (time) time.textContent = formatHydrodynamicTimeLabel(hour, validAt);
   if (status) status.textContent = "正在计算当前时刻的受影响对象...";
 }
 
@@ -4291,7 +4421,9 @@ function renderImpactList(result, impacts) {
   if (!panel || !count || !time || !status || !list) return;
   panel.classList.remove("is-loading");
   count.textContent = String(impacts.length);
-  time.textContent = result?.time_h == null ? "最大包络" : `${formatHydrodynamicHour(result.time_h)} h`;
+  time.textContent = result?.time_h == null
+    ? "最大包络"
+    : formatHydrodynamicTimeLabel(result.time_h, result.analysis_time_at);
   status.textContent = impacts.length
     ? `按水深与风险排序，共 ${impacts.length} 个对象`
     : "当前时刻未发现受影响对象";
@@ -4299,13 +4431,18 @@ function renderImpactList(result, impacts) {
   list.innerHTML = "";
   impacts.forEach((impact) => {
     const key = impactObjectKey(impact);
+    const iconInfo = objectIconInfo(impact.object_type, impact);
+    const symbol = window.FloodMapSymbols?.render(iconInfo.icon) || "";
     const button = document.createElement("button");
     button.type = "button";
     button.className = "impact-list-item";
     button.classList.toggle("is-selected", key === state.selectedImpactKey);
     button.dataset.impactKey = key;
     button.innerHTML = `
-      <span class="impact-risk-dot is-${escapeHtml(impact.risk_level || "unknown")}"></span>
+      <span class="impact-list-symbol object-symbol-${escapeHtml(iconInfo.key)}">
+        <span class="impact-object-icon" title="${escapeHtml(iconInfo.label)}" aria-hidden="true">${symbol}</span>
+        <span class="impact-risk-dot is-${escapeHtml(impact.risk_level || "unknown")}" role="img" aria-label="${escapeHtml(impactRiskLabel(impact.risk_level))}"></span>
+      </span>
       <span class="impact-list-copy">
         <strong>${escapeHtml(impact.name || impact.object_id)}</strong>
         <small>${escapeHtml(impactTypeLabel(impact.object_type))} · ${escapeHtml(String(impact.object_id))}</small>

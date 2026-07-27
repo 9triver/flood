@@ -72,6 +72,11 @@
   ["path", { d: "M9.5 18h5" }],
   ["path", { d: "m8 22 4-11 4 11" }]
 ],
+    route: [
+      ["circle", { cx: "6", cy: "19", r: "3" }],
+      ["path", { d: "M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15" }],
+      ["circle", { cx: "18", cy: "5", r: "3" }],
+    ],
     'school': [
   ["path", { d: "M14 21v-3a2 2 0 0 0-4 0v3" }],
   ["path", { d: "M18 4.933V21" }],
@@ -136,4 +141,3 @@
     names: Object.freeze(Object.keys(symbolNodes)),
   });
 })(window);
-

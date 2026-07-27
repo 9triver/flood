@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -109,6 +110,57 @@ class WorkspaceTest(unittest.TestCase):
                         second = hydrodynamic_grid.forecast_stats("latest")["result_version"]
 
             self.assertNotEqual(first, second)
+
+    def test_hydrodynamic_meta_includes_forecast_clock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = WorkspaceManager(Path(directory) / "workspaces")
+            workspace_id = manager.create()["workspace_id"]
+            workspace_path = manager.path(workspace_id)
+            forecasts_path = workspace_path / "forecasts"
+            latest_path = forecasts_path / "latest"
+            version_path = forecasts_path / "v003"
+            latest_path.mkdir(parents=True)
+            version_path.mkdir(parents=True)
+            (latest_path / "max_depth.csv").write_text(
+                "cell_id,max_depth\n1,0.4\n", encoding="utf-8",
+            )
+            (latest_path / "time_steps.json").write_text(
+                json.dumps({"time_steps_h": [0.5, 1.0, 24.0]}),
+                encoding="utf-8",
+            )
+            (forecasts_path / "latest.json").write_text(
+                json.dumps({"forecast_id": "v003", "forecast_version": "v003"}),
+                encoding="utf-8",
+            )
+            (version_path / "forecast.json").write_text(
+                json.dumps({
+                    "forecast_id": "v003",
+                    "forecast_version": "v003",
+                    "forecast_time": "2026-07-03T20:00:00+08:00",
+                    "valid_from": "2026-07-03T20:00:00+08:00",
+                    "valid_to": "2026-07-04T20:00:00+08:00",
+                    "generated_at": "2026-07-27T03:01:14+00:00",
+                    "lead_time_h": 24.0,
+                }),
+                encoding="utf-8",
+            )
+
+            with patch("domains.flood.runtime.workspace.WORKSPACES", manager):
+                with patch.object(hydrodynamic_grid, "PROJECT_DIR", Path(directory)):
+                    with workspace_scope(workspace_id):
+                        stats = hydrodynamic_grid.forecast_stats("latest")
+
+            self.assertEqual("v003", stats["forecast_version"])
+            self.assertEqual("2026-07-03T20:00:00+08:00", stats["valid_from"])
+            self.assertEqual("2026-07-04T20:00:00+08:00", stats["valid_to"])
+            self.assertEqual(
+                "2026-07-03T20:30:00+08:00",
+                stats["time_steps"][0]["valid_at"],
+            )
+            self.assertEqual(
+                "2026-07-04T20:00:00+08:00",
+                stats["time_steps"][-1]["valid_at"],
+            )
 
     def test_old_workspaces_are_pruned_to_retention_count(self):
         with tempfile.TemporaryDirectory() as directory:

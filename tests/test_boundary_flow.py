@@ -312,6 +312,7 @@ class EventRuntimePlaybackControlTest(unittest.TestCase):
 
         self.assertFalse(status["running"])
         self.assertEqual(status["status"], "paused")
+        self.assertEqual(status["playback_phase"], "paused")
         self.assertEqual(runtime._generation, 7)
         self.assertEqual(list(runtime._event_queue), [(queued_event, 7)])
         self.assertEqual(runtime.outputs[-1]["data"]["status"], "paused")
@@ -321,6 +322,7 @@ class EventRuntimePlaybackControlTest(unittest.TestCase):
 
         self.assertTrue(resumed["running"])
         self.assertFalse(resumed["paused"])
+        self.assertEqual(resumed["playback_phase"], "running")
         self.assertEqual(runtime._generation, 7)
         self.assertEqual(runtime._boundary_flow_runner.playback.source.index, source_index)
         self.assertEqual(list(runtime._event_queue), [(queued_event, 7)])
@@ -425,6 +427,7 @@ class EventRuntimePlaybackControlTest(unittest.TestCase):
             self.assertFalse(status["running"])
             self.assertFalse(status["paused"])
             self.assertEqual(status["status"], "reset")
+            self.assertEqual(status["playback_phase"], "ready")
             self.assertEqual(status["speed_multiplier"], 10)
             self.assertEqual(runtime._boundary_flow_runner.playback.source.index, 0)
             self.assertEqual(status["workspace_id"], manager.active_id)
@@ -434,6 +437,18 @@ class EventRuntimePlaybackControlTest(unittest.TestCase):
                 (manager.path(first) / "manifest.json").read_text(encoding="utf-8")
             )
             self.assertEqual(first_manifest["status"], "stopped")
+
+    def test_runtime_status_outputs_include_stable_playback_phase(self):
+        runtime = EventRuntime(object())
+        runtime._started = True
+        runtime._playback_running = True
+        runtime._playback_phase = "running"
+
+        runtime.set_playback_speed(10)
+
+        output = runtime.outputs[-1]["data"]
+        self.assertEqual(output["status"], "speed_changed")
+        self.assertEqual(output["playback_phase"], "running")
 
 
 class InundationMapEventTest(unittest.TestCase):

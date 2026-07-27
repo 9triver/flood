@@ -44,6 +44,9 @@ class FakeResolver:
         }
         self.forecast_run = {
             "forecast_id": "forecast_latest",
+            "forecast_time": "2025-01-01T00:00:00+08:00",
+            "valid_from": "2025-01-01T00:00:00+08:00",
+            "valid_to": "2025-01-02T00:00:00+08:00",
             "boundary_flow": json.dumps({
                 "window_start": "2025-01-01T00:00:00+08:00",
                 "observed_through": "2025-01-01T00:30:00+08:00",
@@ -132,6 +135,14 @@ class EvacuationTimingTests(unittest.TestCase):
         self.assertEqual("2025-01-01T01:00:00+08:00", deadline["latest_safe_completion_at"])
         self.assertEqual(0.5, deadline["remaining_to_completion_h"])
         self.assertIn("route", deadline["first_unsafe_components"])
+        self.assertEqual(
+            "2025-01-01T00:00:00+08:00",
+            result["forecast_window"]["valid_from"],
+        )
+        self.assertEqual(
+            "2025-01-01T00:30:00+08:00",
+            result["evidence"]["depth_timeline"][0]["valid_at"],
+        )
 
     def test_uses_confirmed_clearance_duration_and_safety_buffer(self):
         result = self.analyze(

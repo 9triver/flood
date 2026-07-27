@@ -44,6 +44,34 @@ class StaticAssetTest(unittest.TestCase):
         for relative_path in expected_files:
             self.assertTrue((STATIC_DIR / relative_path).is_file(), relative_path)
 
+    def test_impact_list_reuses_domain_map_symbols(self):
+        app = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("objectIconInfo(impact.object_type, impact)", app)
+        self.assertIn("FloodMapSymbols?.render(iconInfo.icon)", app)
+        self.assertIn('class="impact-list-symbol object-symbol-', app)
+
+    def test_evolution_controls_belong_to_situation_workbench(self):
+        index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        toolbar_start = index.index('<div class="map-toolbar">')
+        workbench_start = index.index('id="situationWorkbench"')
+        controls_start = index.index('class="situation-playback-controls"')
+        toolbar_markup = index[toolbar_start:workbench_start]
+        workbench_markup = index[workbench_start:]
+
+        self.assertLess(toolbar_start, workbench_start)
+        self.assertLess(workbench_start, controls_start)
+        self.assertNotIn('id="playbackToggleBtn"', toolbar_markup)
+        self.assertIn('id="playbackToggleBtn"', workbench_markup)
+        self.assertNotIn('id="telemetryPanelBtn"', index)
+
+    def test_evolution_controls_are_rendered_from_playback_phase(self):
+        app = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("function updatePlaybackControls(data = {})", app)
+        self.assertIn('btn.hidden = !state.playbackPaused', app)
+        self.assertIn('? "开始新演进"', app)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +14,7 @@ from .hydrodynamic_grid import (
     MESH_DB_PATH,
     forecast_series_path,
     forecast_time_steps,
+    offset_time_iso,
 )
 
 
@@ -167,7 +168,7 @@ def analyze_latest_evacuation_time(
     )
 
     forecast_context = resolve_forecast_context(resolver)
-    attach_absolute_times(deadline, forecast_context.get("window_start"))
+    attach_absolute_times(deadline, forecast_context.get("valid_from"))
     attach_remaining_time(deadline, forecast_context)
 
     limitations = []
@@ -188,6 +189,9 @@ def analyze_latest_evacuation_time(
         or normalize_result_forecast_id(forecast_id),
         "forecast_window": {
             "window_start": forecast_context.get("window_start"),
+            "forecast_time": forecast_context.get("forecast_time"),
+            "valid_from": forecast_context.get("valid_from"),
+            "valid_to": forecast_context.get("valid_to"),
             "simulation_time": forecast_context.get("simulation_time"),
             "observed_through": forecast_context.get("observed_through"),
             "horizon_h": DEFAULT_HORIZON_H,
@@ -219,6 +223,9 @@ def analyze_latest_evacuation_time(
             },
             "depth_timeline": [{
                 "time_h": row["time_h"],
+                "valid_at": absolute_time(
+                    forecast_context.get("valid_from"), row["time_h"],
+                ),
                 "max_depth_m": row["max_depth_m"],
                 "unsafe_components": row["unsafe_components"],
             } for row in timeline],
@@ -521,7 +528,27 @@ def resolve_forecast_context(resolver) -> dict[str, Any]:
         boundary_flow = {}
     return {
         "forecast_id": str(run.get("forecast_id") or ""),
-        "window_start": str(boundary_flow.get("window_start") or "") or None,
+        "forecast_time": str(
+            run.get("forecast_time")
+            or boundary_flow.get("simulation_time")
+            or boundary_flow.get("triggered_at")
+            or ""
+        ) or None,
+        "valid_from": str(
+            run.get("valid_from")
+            or boundary_flow.get("window_start")
+            or ""
+        ) or None,
+        "valid_to": str(
+            run.get("valid_to")
+            or boundary_flow.get("window_end")
+            or ""
+        ) or None,
+        "window_start": str(
+            run.get("valid_from")
+            or boundary_flow.get("window_start")
+            or ""
+        ) or None,
         "simulation_time": str(
             boundary_flow.get("simulation_time")
             or boundary_flow.get("triggered_at")
@@ -573,15 +600,7 @@ def attach_remaining_time(deadline: dict[str, Any],
 
 def absolute_time(window_start: str | None,
                   time_h: Any) -> str | None:
-    if not window_start or time_h is None:
-        return None
-    try:
-        return (
-            datetime.fromisoformat(window_start)
-            + timedelta(hours=float(time_h))
-        ).isoformat()
-    except (TypeError, ValueError):
-        return None
+    return offset_time_iso(window_start, time_h)
 
 
 def elapsed_hours(start: str | None, end: str | None) -> float | None:

@@ -12,6 +12,7 @@ from .forecast import (
     row_point,
     sampled_geometry_points,
 )
+from .hydrodynamic_grid import forecast_time_context
 
 
 POINT_TARGET_TYPES = ("Facility", "Bridge", "Transfer", "Place")
@@ -37,6 +38,7 @@ def analyze_inundation_impacts(resolver, forecast_id: str = "latest",
             "summary": {},
             "total_impacts": 0,
             "impacts": [],
+            **analysis_time_fields(forecast_key, analysis_time_h),
         }
 
     cell_filters: dict[str, Any] = {"forecast_id": forecast_key}
@@ -44,6 +46,7 @@ def analyze_inundation_impacts(resolver, forecast_id: str = "latest",
         cell_filters["time_h"] = analysis_time_h
     cells = query_forecast_cells(resolver, cell_filters)
     if not cells:
+        time_fields = analysis_time_fields(forecast_key, analysis_time_h)
         return {
             "status": "no_forecast_cells",
             "forecast_id": forecast_key,
@@ -52,7 +55,12 @@ def analyze_inundation_impacts(resolver, forecast_id: str = "latest",
             "summary": {item: 0 for item in target_types},
             "total_impacts": 0,
             "impacts": [],
-            "basis": analysis_basis(analysis_time_h, empty=True),
+            "basis": analysis_basis(
+                analysis_time_h,
+                time_fields.get("analysis_time_at"),
+                empty=True,
+            ),
+            **time_fields,
         }
 
     cell_index = compact_cell_index(cells, min_depth=float(min_depth_m or 0))
@@ -100,10 +108,13 @@ def analyze_inundation_impacts(resolver, forecast_id: str = "latest",
         ),
     )
     summary = summarize_impacts(target_types, impacts)
+    actual_time_h = actual_cell_time_h(cells, analysis_time_h)
+    time_fields = analysis_time_fields(resolved_forecast_id, actual_time_h)
     return {
         "status": "completed",
         "forecast_id": resolved_forecast_id,
-        "time_h": actual_cell_time_h(cells, analysis_time_h),
+        "time_h": actual_time_h,
+        **time_fields,
         "target_type": target_type or "all",
         "parameters": {
             "min_depth_m": float(min_depth_m or 0),
@@ -113,7 +124,7 @@ def analyze_inundation_impacts(resolver, forecast_id: str = "latest",
         "summary": summary,
         "affected_object_ids": affected_object_ids(target_types, impacts),
         "total_impacts": len(impacts),
-        "basis": analysis_basis(actual_cell_time_h(cells, analysis_time_h)),
+        "basis": analysis_basis(actual_time_h, time_fields.get("analysis_time_at")),
         "impacts": impacts,
     }
 
@@ -137,9 +148,25 @@ def actual_cell_time_h(cells: list[dict[str, Any]], fallback: float | None) -> f
     return round(float(fallback), 3)
 
 
-def analysis_basis(time_h: float | None, empty: bool = False) -> str:
+def analysis_time_fields(forecast_id: str, time_h: float | None) -> dict[str, Any]:
+    context = forecast_time_context(forecast_id, time_h)
+    return {
+        "forecast_time": context.get("forecast_time"),
+        "valid_from": context.get("valid_from"),
+        "valid_to": context.get("valid_to"),
+        "analysis_time_at": context.get("valid_at"),
+    }
+
+
+def analysis_basis(time_h: float | None, analysis_time_at: str | None = None,
+                   empty: bool = False) -> str:
     prefix = (
-        f"使用水动力模型 {time_h:.3f} h 时刻的 ForecastCell 预测淹没网格"
+        (
+            f"使用水动力模型 {analysis_time_at}（预测 +{time_h:.3f} h）的 "
+            "ForecastCell 预测淹没网格"
+        )
+        if time_h is not None and analysis_time_at
+        else f"使用水动力模型预测 +{time_h:.3f} h 时刻的 ForecastCell 预测淹没网格"
         if time_h is not None
         else "使用最新 ForecastCell 最大水深包络预测淹没网格"
     )
@@ -235,7 +262,7 @@ def make_impact(object_type: str, row: dict[str, Any], object_id_field: str,
                 impact_point: tuple[float, float]) -> dict[str, Any]:
     depth = float(cell.get("depth_m") or 0)
     velocity = float(cell.get("velocity_mps") or 0)
-    return {
+    impact = {
         "object_type": object_type,
         "object_id": str(row.get(object_id_field) or ""),
         "name": row.get("name") or row.get(object_id_field) or "",
@@ -250,6 +277,10 @@ def make_impact(object_type: str, row: dict[str, Any], object_id_field: str,
         "basis": basis,
         "directly_inundated": True,
     }
+    if object_type == "Facility":
+        impact["facility_type"] = str(row.get("facility_type") or "")
+        impact["subtype"] = str(row.get("subtype") or "")
+    return impact
 
 
 def propagate_bridge_impacts(resolver, bridge_impacts: list[dict[str, Any]],

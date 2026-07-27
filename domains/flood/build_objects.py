@@ -51,8 +51,8 @@ class FloodObjectBuilder:
             **_geometry_fields(feature),
             "data_path": rel(path) if features else "",
             "data_note": (
-                "河流主体使用本地珊瑚河河道中心线；上游端点按最短路径延伸至"
-                "龙潭水库高德卫星影像判读岸线，保证水系拓扑连续。"
+                "河流主体使用本地珊瑚河河道中心线；河库连接段沿高德标准地图"
+                "标示的坝下河道延伸至龙潭水库岸线，保证水系拓扑连续。"
             ),
         }]
 
@@ -226,8 +226,8 @@ class FloodObjectBuilder:
                 None,
             )
             if longtan:
-                imagery_water = _load_longtan_imagery_water_candidate()
-                rows.insert(0, _longtan_reservoir_record(longtan, imagery_water))
+                standard_map = _load_longtan_standard_map_candidate()
+                rows.insert(0, _longtan_reservoir_record(longtan, standard_map))
         return rows
 
     def _build_sluice(self) -> list[dict]:
@@ -756,8 +756,8 @@ def _load_hydrolakes_candidates() -> list[dict]:
     return candidates
 
 
-def _load_longtan_imagery_water_candidate() -> dict | None:
-    source_path = SOURCES_DIR / "amap_longtan_water_extent.geojson"
+def _load_longtan_standard_map_candidate() -> dict | None:
+    source_path = SOURCES_DIR / "amap_standard_longtan_geometry.geojson"
     if not source_path.exists():
         return None
     try:
@@ -765,16 +765,31 @@ def _load_longtan_imagery_water_candidate() -> dict | None:
     except json.JSONDecodeError:
         return None
     features = source.get("features") or []
-    if not features:
+    extent = next(
+        (
+            feature for feature in features
+            if (feature.get("properties") or {}).get("role") == "reservoir_extent"
+        ),
+        None,
+    )
+    if not extent:
         return None
-    feature = features[0]
-    geometry = feature.get("geometry") or {}
+    geometry = extent.get("geometry") or {}
     if geometry.get("type") != "Polygon" or not geometry.get("coordinates"):
         return None
-    properties = feature.get("properties") or {}
+    properties = extent.get("properties") or {}
+    connection = next(
+        (
+            feature.get("geometry") or {}
+            for feature in features
+            if (feature.get("properties") or {}).get("role") == "river_connection"
+        ),
+        {},
+    )
     return {
         "geometry": geometry,
-        "source_ref": properties.get("source_ref") or "amap/style6/z18/2026-07-24",
+        "connection_geometry": connection,
+        "source_ref": properties.get("source_ref") or "amap/style7/z18/2026-07-27",
         "source_path": source_path,
         "properties": properties,
     }
@@ -796,8 +811,28 @@ def _connect_river_to_longtan(feature: dict, max_gap_m: float = 1000) -> dict:
     if not longtan:
         return feature
 
-    imagery_water = _load_longtan_imagery_water_candidate()
-    reservoir_geometry = imagery_water["geometry"] if imagery_water else longtan["geometry"]
+    standard_map = _load_longtan_standard_map_candidate()
+    reservoir_geometry = standard_map["geometry"] if standard_map else longtan["geometry"]
+
+    connection_geometry = (standard_map or {}).get("connection_geometry") or {}
+    connection_coordinates = connection_geometry.get("coordinates") or []
+    if connection_geometry.get("type") == "LineString" and len(connection_coordinates) >= 2:
+        connection_coordinates = [list(item) for item in connection_coordinates]
+        if _distance_m(connection_coordinates[0], coordinates[0]) < _distance_m(
+            connection_coordinates[-1], coordinates[0]
+        ):
+            connection_coordinates.reverse()
+        gap_m = _distance_m(connection_coordinates[-1], coordinates[0])
+        if gap_m <= max_gap_m:
+            if gap_m < 0.05:
+                connection_coordinates.pop()
+            return {
+                **feature,
+                "geometry": {
+                    **geometry,
+                    "coordinates": connection_coordinates + [list(item) for item in coordinates],
+                },
+            }
 
     start_match = _nearest_point_on_polygon_boundary(coordinates[0], reservoir_geometry)
     end_match = _nearest_point_on_polygon_boundary(coordinates[-1], reservoir_geometry)
@@ -926,21 +961,22 @@ def _reservoir_record(index: int, feature: dict, path: Path) -> dict:
     }
 
 
-def _longtan_reservoir_record(match: dict, imagery_water: dict | None = None) -> dict:
-    geometry = imagery_water["geometry"] if imagery_water else match["geometry"]
+def _longtan_reservoir_record(match: dict, standard_map: dict | None = None) -> dict:
+    geometry = standard_map["geometry"] if standard_map else match["geometry"]
     geometry_source = (
-        "amap_satellite_water_extent_interpretation"
-        if imagery_water else "hydrolakes_reservoir_area"
+        "amap_standard_map_water_extent_interpretation"
+        if standard_map else "hydrolakes_reservoir_area"
     )
-    external_source = "Amap satellite imagery" if imagery_water else "HydroLAKES"
+    external_source = "Amap standard map" if standard_map else "HydroLAKES"
     external_ref = (
-        imagery_water["source_ref"]
-        if imagery_water else f"Hylak_id/{match['hylak_id']}"
+        standard_map["source_ref"]
+        if standard_map else f"Hylak_id/{match['hylak_id']}"
     )
     external_area_km2 = (
         round(_geometry_area_m2(geometry) / 1_000_000, 6)
-        if imagery_water else match["lake_area_km2"]
+        if standard_map else match["lake_area_km2"]
     )
+    map_properties = (standard_map or {}).get("properties", {})
     return {
         "reservoir_id": LONGTAN_RESERVOIR_ID,
         "name": "龙潭水库",
@@ -972,15 +1008,18 @@ def _longtan_reservoir_record(match: dict, imagery_water: dict | None = None) ->
         "osm_distance_m": 0.0,
         "osm_tags": "",
         "osm_data_path": "",
-        "water_extent_type": "satellite_interpreted_water_extent" if imagery_water else "lake_extent",
-        "imagery_tile_zoom": int(_float((imagery_water or {}).get("properties", {}).get("tile_zoom"))),
-        "imagery_retrieved_on": (imagery_water or {}).get("properties", {}).get("retrieved_on", ""),
-        "geometry_review_status": (imagery_water or {}).get("properties", {}).get("visual_review_status", ""),
-        "data_path": rel(imagery_water["source_path"] if imagery_water else match["source_path"]),
+        "water_extent_type": "cartographic_water_extent" if standard_map else "lake_extent",
+        "map_tile_zoom": int(_float(map_properties.get("tile_zoom"))),
+        "map_retrieved_on": map_properties.get("retrieved_on", ""),
+        "geometry_review_status": map_properties.get("visual_review_status", ""),
+        "data_path": rel(standard_map["source_path"] if standard_map else match["source_path"]),
         "data_note": (
             "龙潭水库名称及珊瑚河关联来自龙潭水库站和灌区水闸台账；"
-            "水面范围按高德地图 z18 卫星影像的连续水体边界判读，"
+            "水面范围及坝下连接河道按高德地图 z18 标准地图判读，"
             "HydroLAKES Hylak_id/177294 仅用于水库身份与范围校核。"
+            if standard_map else
+            "龙潭水库名称及珊瑚河关联来自龙潭水库站和灌区水闸台账；"
+            "水面范围来自 HydroLAKES Hylak_id/177294。"
         ),
     }
 

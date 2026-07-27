@@ -57,6 +57,11 @@ def _forecast_result_summary(result: dict[str, Any]) -> str:
         lines.append(f"- 输入版本：{forecast['forecast_input_id']}")
     if forecast.get("model_name"):
         lines.append(f"- 水动力模型：{forecast['model_name']}")
+    if forecast.get("valid_from") or forecast.get("valid_to"):
+        lines.append(
+            f"- 预测时段：{forecast.get('valid_from') or '--'} 至 "
+            f"{forecast.get('valid_to') or '--'}"
+        )
     lines.extend([
         f"- 预测淹没单元：{int(forecast.get('forecast_cell_count') or 0)} 个",
         f"- 淹没面积：{format_float(forecast.get('inundated_area_km2'), 3)} km²",
@@ -71,7 +76,7 @@ def _impact_result_summary(result: dict[str, Any]) -> str:
     lines = [
         f"- 运行状态：{result.get('status') or '--'}",
         f"- 预测编号：{result.get('forecast_id') or '--'}",
-        f"- 分析时刻：{_analysis_time_label(result.get('time_h'))}",
+        f"- 分析时刻：{_analysis_time_label(result.get('time_h'), result.get('analysis_time_at'))}",
         f"- 受影响对象：{int(result.get('total_impacts') or 0)} 个",
     ]
     summary = result.get("summary") or {}
@@ -170,10 +175,11 @@ def _compact_plain_text(value: Any, limit: int = 1200) -> str:
     return f"{text[:limit]}\n\n（另有 {len(text) - limit} 字符未展示）"
 
 
-def _analysis_time_label(value: Any) -> str:
+def _analysis_time_label(value: Any, actual_time: Any = None) -> str:
     if value in (None, ""):
         return "最大水深包络"
-    return f"{format_float(value, 2)} h"
+    offset = f"预测 +{format_float(value, 2)} h"
+    return f"{actual_time}（{offset}）" if actual_time else offset
 
 
 def is_impact_result(value: dict[str, Any] | None) -> bool:

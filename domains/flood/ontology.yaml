@@ -15,6 +15,7 @@ interaction_policies:
       - "用户根据多时刻淹水预测询问最晚转移时间、转移截止时间或安全转移窗口时，必须调用 analyze_latest_evacuation_time；不得把 Transfer.arrive_time_window 当作预测分析结论，也不要自行逐格查询 ForecastCell 推算。"
       - "已有水动力时间轴时直接分析已有预测；只有用户明确要求运行、重算或更新预测时才调用 run_flood_forecast。"
       - "前端上下文 hydrodynamic_timeline.mode=time_slice 且用户询问当前时刻、当前画面或该时刻影响时，把 current_hydrodynamic_time_h 作为 analyze_inundation_impacts.time_h；用户询问总体或最大影响时不传 time_h。"
+      - "预测结果中的 time_h、arrival_time_h 以及名称以 _time_h 结尾的预测时间均是相对 valid_from 的小时偏移，不是钟表时间。面向用户说明何时发生时，优先使用工具返回的 analysis_time_at、valid_at、first_unsafe_at、latest_departure_at 等实际时刻，并可把预测 +Nh 作为辅助信息；不得把 generated_at 当作预测基准时刻。"
       - "用户要求运行预测、实时预测或未来淹没时，先调用 run_flood_forecast，再用 HydrodynamicCell 和 forecast_id=latest 展示预测淹没结果。"
       - "用户要求自主观测、持续预测、自动告警、闭环调度或避洪转移调度时，调用 run_emergency_cycle，再按结果展示相关领域对象。"
       - "不要把 severity_index 或综合指标映射为 5/10/20/50/100 年一遇设计方案；防洪响应预案必须通过已实现工具或人工审批。"
@@ -908,7 +909,7 @@ functions:
   analyze_inundation_impacts:
     summary: "根据预测淹没范围分析受影响对象"
     description: "读取最新或指定 ForecastCell 预测淹没网格，可按指定 time_h 分析某个预测时刻，也可默认使用最大水深包络；对道路、桥梁、重要设施、转移单元、安置地点和转移路线执行确定性空间邻近分析，返回受影响对象清单、风险等级和按类型汇总。"
-    usage_prompt: "本函数是对象级受淹判定的确定性空间分析入口，forecast_id 默认 latest，target_type 默认 all；只能根据返回结果说明哪些对象受影响，不得自行猜测。当前端上下文包含 current_hydrodynamic_time_h，或用户明确询问某个时间点、当前时间轴位置的影响时，必须把该值作为 time_h 传入；用户询问总体或最大影响时不传 time_h，默认使用最大水深包络。已有水动力时间轴时直接分析已有预测，除非用户明确要求重算，否则不要先调用 run_flood_forecast。只有用户明确请求在地图展示影响对象时，才把 affected_object_ids 中各对象类型对应的对象项与 HydrodynamicCell 放入同一次 ui_show_objects 调用，并设置 highlight=true、show_only_object_ids=true；自动事件的展示范围由 event_policies 决定。需要缩窄范围时 target_type 可传 Road、Bridge、Facility、Route、Transfer、Place 或 all；min_depth_m 默认 0.15，max_distance_m 默认 10。"
+    usage_prompt: "本函数是对象级受淹判定的确定性空间分析入口，forecast_id 默认 latest，target_type 默认 all；只能根据返回结果说明哪些对象受影响，不得自行猜测。当前端上下文包含 current_hydrodynamic_time_h，或用户明确询问某个时间点、当前时间轴位置的影响时，必须把该值作为 time_h 传入；用户询问总体或最大影响时不传 time_h，默认使用最大水深包络。time_h 是相对 valid_from 的偏移量，回答用户时应以结果的 analysis_time_at 实际时刻为主，并把预测 +Nh 作为辅助信息。已有水动力时间轴时直接分析已有预测，除非用户明确要求重算，否则不要先调用 run_flood_forecast。只有用户明确请求在地图展示影响对象时，才把 affected_object_ids 中各对象类型对应的对象项与 HydrodynamicCell 放入同一次 ui_show_objects 调用，并设置 highlight=true、show_only_object_ids=true；自动事件的展示范围由 event_policies 决定。需要缩窄范围时 target_type 可传 Road、Bridge、Facility、Route、Transfer、Place 或 all；min_depth_m 默认 0.15，max_distance_m 默认 10。"
     function_type: lookup
     involves_objects: [ForecastRun, ForecastCell, Road, Bridge, BridgeRoadLink, Facility, Route, Transfer, Place, Risk]
     params:
@@ -926,6 +927,7 @@ functions:
       已知 transfer_id 时优先传 transfer_id，否则可直接传 transfer_name；除非用户明确指定另一条路线，否则不要传 route_id，函数会使用 Transfer 关联的预定路线。
       blocked_depth_m 默认0.3米；已有经核定的全体人员集结、分批运输和路线清空总耗时时传 clearance_duration_min，否则函数只按路线已有通行时间或1米/秒步行速度估算单程通行时间。
       只能根据返回的 deadline 回答：deadline_status=safe_through_horizon 表示24小时内没有由预测形成的截止时间，不得把24小时末端说成最晚转移时间；route_becomes_unsafe 时应同时说明首次不可通行时刻和最后确认安全时刻。
+      回答时间时优先使用 first_unsafe_at、last_confirmed_safe_at、latest_safe_completion_at 和 latest_departure_at 等实际时刻，*_time_h 只作为相对 valid_from 的预测偏移量补充说明。
       Transfer.arrive_time_window 只作为既有计划字段展示，不是本函数的预测判定依据；不要再逐格 query ForecastCell 自行推算。
     function_type: lookup
     involves_objects: [Transfer, Route, Place, ForecastRun, ForecastCell]
@@ -941,7 +943,7 @@ functions:
   plan_evacuation_route:
     summary: "按洪水预测约束规划避洪路线"
     description: "使用高德 Web 服务规划起点至安置点的路线，并将 GCJ-02 路线转为 WGS84 Route 对象。步行规划请求最多三条候选路线，逐条排除穿过 blocked_depth_m 禁行 ForecastCell 的路线，再选择距离最短的安全路线。"
-    usage_prompt: "当用户要求路线规划、导航、绕开淹没区域前往安置点或为某个 Transfer 生成避洪路线时调用。优先使用 start_object_type + start_object_id 和 destination_place_id；只有没有领域对象时才传经纬度。如果前端处于水动力时间轴某一时刻，必须把 current_hydrodynamic_time_h 作为 time_h。驾车使用 profile=car 且默认禁行水深0.3米；步行使用 profile=foot 且默认禁行水深0.15米。avoid_flood 默认 true；函数会自行筛选高德候选路线。同一起终点在一个用户请求中最多调用一次本函数。若返回 no_safe_route 或 retryable=false，这是终止结果：立即向用户说明当前没有满足约束的安全路线，不得自行切换 profile、time_h、avoid_flood 或其他约束重试。成功后调用 ui_show_objects，object_type=Route，filters 使用结果 route.route_id，只显示本次动态路线。"
+    usage_prompt: "当用户要求路线规划、导航、绕开淹没区域前往安置点或为某个 Transfer 生成避洪路线时调用。优先使用 start_object_type + start_object_id 和 destination_place_id；只有没有领域对象时才传经纬度。如果前端处于水动力时间轴某一时刻，必须把 current_hydrodynamic_time_h 作为 time_h；回答时以结果的 analysis_time_at 实际时刻为主，time_h 只作为预测偏移量补充。驾车使用 profile=car 且默认禁行水深0.3米；步行使用 profile=foot 且默认禁行水深0.15米。avoid_flood 默认 true；函数会自行筛选高德候选路线。同一起终点在一个用户请求中最多调用一次本函数。若返回 no_safe_route 或 retryable=false，这是终止结果：立即向用户说明当前没有满足约束的安全路线，不得自行切换 profile、time_h、avoid_flood 或其他约束重试。成功后调用 ui_show_objects，object_type=Route，filters 使用结果 route.route_id，只显示本次动态路线。"
     function_type: lookup
     involves_objects: [Route, Transfer, Place, ForecastRun, ForecastCell]
     params:

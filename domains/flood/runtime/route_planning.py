@@ -15,6 +15,7 @@ from urllib.request import Request, urlopen
 from .common import PROJECT_DIR, rel
 from .coordinates import gcj02_to_wgs84, wgs84_to_gcj02
 from .forecast import LATEST_FORECAST_ID, query_forecast_cells, row_point
+from .hydrodynamic_grid import forecast_time_context
 from .workspace import workspace_dir
 
 
@@ -87,6 +88,7 @@ def plan_evacuation_route(
     ))
     analysis_time_h = coerce_optional_float(time_h)
     forecast_key = LATEST_FORECAST_ID if forecast_id in ("", "latest") else forecast_id
+    time_fields = forecast_analysis_fields(forecast_key, analysis_time_h)
     flood_areas = empty_flood_areas(threshold)
     if avoid_flood:
         filters: dict[str, Any] = {"forecast_id": forecast_key}
@@ -108,6 +110,7 @@ def plan_evacuation_route(
             "start": endpoint_summary(start, start_object_type, start_object_id, start_name),
             "destination": endpoint_summary(destination, "Place", destination_place_id, destination_name),
             "flood_avoidance": flood_areas["summary"],
+            **time_fields,
         }
     timeout_seconds = float(routing_setting("AMAP_TIMEOUT_SECONDS", "20"))
     try:
@@ -133,6 +136,7 @@ def plan_evacuation_route(
             "start": endpoint_summary(start, start_object_type, start_object_id, start_name),
             "destination": endpoint_summary(destination, "Place", destination_place_id, destination_name),
             "flood_avoidance": flood_areas["summary"],
+            **time_fields,
         }
         if exc.status == "no_safe_route":
             result["retryable"] = False
@@ -169,6 +173,7 @@ def plan_evacuation_route(
         },
         "flood_avoidance": flood_areas["summary"],
         "routing_diagnostics": routing_diagnostics,
+        **time_fields,
     }
 
 
@@ -686,6 +691,7 @@ def make_route_record(*, path: dict[str, Any], start: tuple[float, float],
         ),
         "forecast_id": forecast_id,
         "time_h": time_h,
+        **forecast_analysis_fields(forecast_id, time_h),
         "blocked_depth_m": blocked_depth_m,
         "flood_area_count": int(flood_summary.get("area_count") or 0),
         "flood_source_cell_count": int(flood_summary.get("source_cell_count") or 0),
@@ -697,6 +703,17 @@ def make_route_record(*, path: dict[str, Any], start: tuple[float, float],
         "instructions": json.dumps(instructions, ensure_ascii=False),
         "routing_request": json.dumps(request_payload, ensure_ascii=False),
         "data_path": rel(planned_routes_path(create=True)),
+    }
+
+
+def forecast_analysis_fields(forecast_id: str,
+                             time_h: float | None) -> dict[str, Any]:
+    context = forecast_time_context(forecast_id, time_h)
+    return {
+        "forecast_time": context.get("forecast_time"),
+        "valid_from": context.get("valid_from"),
+        "valid_to": context.get("valid_to"),
+        "analysis_time_at": context.get("valid_at"),
     }
 
 

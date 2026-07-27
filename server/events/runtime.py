@@ -42,6 +42,7 @@ class EventRuntime:
         self._started = False
         self._playback_running = False
         self._playback_paused = False
+        self._playback_phase = "ready"
         self._event_queue: collections.deque[
             tuple[dict[str, Any], int]
         ] = collections.deque()
@@ -72,6 +73,7 @@ class EventRuntime:
         with self.condition:
             self._generation += 1
             self._playback_paused = False
+            self._playback_phase = "running"
             self.events.clear()
             self.outputs.clear()
             self._boundary_flow_runner.reset()
@@ -162,6 +164,7 @@ class EventRuntime:
             self._generation += 1
             self._playback_running = False
             self._playback_paused = False
+            self._playback_phase = "ready"
             self.events.clear()
             self.outputs.clear()
             self._boundary_flow_runner.reset()
@@ -205,6 +208,7 @@ class EventRuntime:
                 return self.status()
             self._playback_running = False
             self._playback_paused = False
+            self._playback_phase = "stopped"
             self._generation += 1
             self._clear_event_queue()
             WORKSPACES.update_manifest(status="stopped")
@@ -227,6 +231,7 @@ class EventRuntime:
                 return self.status()
             self._playback_running = False
             self._playback_paused = True
+            self._playback_phase = "paused"
             WORKSPACES.update_manifest(status="paused")
             self._append_output_locked("runtime_status", {
                 "type": "runtime_status",
@@ -255,6 +260,7 @@ class EventRuntime:
                 raise ValueError("boundary flow playback is not paused")
             self._playback_running = True
             self._playback_paused = False
+            self._playback_phase = "running"
             WORKSPACES.update_manifest(status="active")
             self._append_output_locked("runtime_status", {
                 "type": "runtime_status",
@@ -326,6 +332,7 @@ class EventRuntime:
             return {
                 "running": self._playback_running,
                 "paused": self._playback_paused,
+                "playback_phase": self._playback_phase,
                 "started": self._started,
                 "event_count": len(self.events),
                 "output_count": len(self.outputs),
@@ -519,6 +526,7 @@ class EventRuntime:
                 return
             self._playback_running = False
             self._playback_paused = False
+            self._playback_phase = "finished"
             WORKSPACES.update_manifest(status="finished")
             self._append_output_locked("runtime_status", {
                 "type": "runtime_status",
@@ -651,6 +659,8 @@ class EventRuntime:
         data: dict[str, Any],
     ) -> None:
         workspace_id = data.get("workspace_id") or active_workspace_id()
+        if event_name == "runtime_status":
+            data = {"playback_phase": self._playback_phase, **data}
         item = {
             "event": event_name,
             "data": {**data, "workspace_id": workspace_id},

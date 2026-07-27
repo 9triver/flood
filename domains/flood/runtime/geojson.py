@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from .common import MAPPABLE_OBJECTS, rel
+from .repository import object_library_path
 from .workspace import SHARED_CACHE_DIR, active_workspace_id, workspace_dir
 
 
@@ -24,7 +25,7 @@ def export_objects_geojson(resolver, object_type: str,
     key = export_key(object_type, filters)
     suffix = f"_s{simplify_tolerance:g}" if simplify_tolerance else ""
     target = cache_dir / f"{key}{suffix}.geojson"
-    if target.exists() and not force:
+    if not force and _cache_is_current(target, object_type):
         return geojson_result(object_type, filters, target, cached=True)
 
     if object_type == "ForecastCell":
@@ -53,6 +54,13 @@ def export_objects_geojson(resolver, object_type: str,
     }
     target.write_text(json.dumps(collection, ensure_ascii=False), encoding="utf-8")
     return geojson_result(object_type, filters, target, cached=False)
+
+
+def _cache_is_current(target, object_type: str) -> bool:
+    if not target.exists():
+        return False
+    source = object_library_path(object_type)
+    return not source.exists() or target.stat().st_mtime_ns >= source.stat().st_mtime_ns
 
 
 def geojson_result(object_type: str, filters: dict, target, cached: bool) -> dict:

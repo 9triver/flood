@@ -397,6 +397,19 @@ class EventRuntimeModuleBoundaryTest(unittest.TestCase):
         self.assertEqual({"_omitted_items": 15}, payload["items"][-1])
         self.assertGreater(payload["metadata"]["_omitted_fields"], 0)
 
+    def test_impact_tool_summary_prefers_absolute_forecast_time(self):
+        detail = summarize_event_tool_result("analyze_inundation_impacts", {
+            "status": "completed",
+            "forecast_id": "v003",
+            "time_h": 1.5,
+            "analysis_time_at": "2026-07-03T21:30:00+08:00",
+            "total_impacts": 0,
+            "summary": {},
+            "impacts": [],
+        })
+
+        self.assertIn("2026-07-03T21:30:00+08:00（预测 +1.50 h）", detail)
+
 
 if __name__ == "__main__":
     unittest.main()

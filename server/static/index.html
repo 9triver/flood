@@ -12,52 +12,8 @@
       <main class="map-stage">
         <div class="map-toolbar">
           <div class="map-toolbar-left">
-            <div class="playback-source-control" id="playbackSourceControl">
-              <button class="tool-button playback-toggle" id="playbackToggleBtn" title="启动边界流量过程回放" aria-pressed="false">
-                <i data-lucide="play"></i>
-                <span class="playback-toggle-copy">
-                  <span>开始演进</span>
-                  <small id="playbackSourceLabel">内置演进数据</small>
-                </span>
-              </button>
-              <button class="icon-button playback-source-picker" id="playbackSourcePickerBtn" title="选择演进数据" aria-label="选择演进数据" aria-haspopup="menu" aria-expanded="false">
-                <i data-lucide="chevron-down"></i>
-              </button>
-              <div class="playback-source-menu" id="playbackSourceMenu" role="menu" aria-label="演进数据" hidden>
-                <header>
-                  <strong>演进数据</strong>
-                  <small>选择后开始一轮新演进</small>
-                </header>
-                <div class="playback-source-list" id="playbackSourceList"></div>
-                <div class="playback-source-status" id="playbackSourceStatus" hidden></div>
-                <button class="playback-source-upload" id="playbackSourceUploadBtn" type="button">
-                  <i data-lucide="upload"></i>
-                  <span>上传新文件</span>
-                </button>
-              </div>
-              <input id="playbackSourceFileInput" type="file" accept=".csv,text/csv" hidden>
-            </div>
-            <button class="icon-button playback-restart" id="playbackRestartBtn" title="重新开始演进" aria-label="重新开始演进" hidden>
-              <i data-lucide="rotate-ccw"></i>
-            </button>
-            <button class="icon-button playback-step" id="playbackStepBtn" title="向前步进一个预测时刻" aria-label="向前步进一个预测时刻" hidden>
-              <i data-lucide="skip-forward"></i>
-            </button>
-            <label class="playback-speed" title="演进速率">
-              <i data-lucide="gauge"></i>
-              <select id="playbackSpeedSelect" aria-label="演进速率">
-                <option value="1">1×</option>
-                <option value="2">2×</option>
-                <option value="5">5×</option>
-                <option value="10">10×</option>
-                <option value="20" selected>20×</option>
-              </select>
-            </label>
             <button class="icon-button" id="layerPanelBtn" title="图层" aria-label="图层" aria-expanded="false">
               <i data-lucide="layers"></i>
-            </button>
-            <button class="icon-button" id="telemetryPanelBtn" title="态势工作台" aria-label="态势工作台" aria-expanded="false">
-              <i data-lucide="activity"></i>
             </button>
             <button class="icon-button" id="fitAllBtn" title="缩放到流域" aria-label="缩放到流域">
               <i data-lucide="scan"></i>
@@ -188,6 +144,49 @@
             <div class="situation-heading">
               <strong>态势工作台</strong>
               <span id="situationSummary">等待演进数据</span>
+            </div>
+            <div class="situation-playback-controls" aria-label="演进控制">
+              <div class="playback-source-control" id="playbackSourceControl">
+                <button class="tool-button playback-toggle" id="playbackToggleBtn" title="启动边界流量过程回放" aria-pressed="false">
+                  <i data-lucide="play"></i>
+                  <span class="playback-toggle-copy">
+                    <span>开始演进</span>
+                    <small id="playbackSourceLabel">内置演进数据</small>
+                  </span>
+                </button>
+                <button class="icon-button playback-source-picker" id="playbackSourcePickerBtn" title="选择演进数据" aria-label="选择演进数据" aria-haspopup="menu" aria-expanded="false">
+                  <i data-lucide="chevron-down"></i>
+                </button>
+                <div class="playback-source-menu" id="playbackSourceMenu" role="menu" aria-label="演进数据" hidden>
+                  <header>
+                    <strong>演进数据</strong>
+                    <small>选择后开始一轮新演进</small>
+                  </header>
+                  <div class="playback-source-list" id="playbackSourceList"></div>
+                  <div class="playback-source-status" id="playbackSourceStatus" hidden></div>
+                  <button class="playback-source-upload" id="playbackSourceUploadBtn" type="button">
+                    <i data-lucide="upload"></i>
+                    <span>上传新文件</span>
+                  </button>
+                </div>
+                <input id="playbackSourceFileInput" type="file" accept=".csv,text/csv" hidden>
+              </div>
+              <label class="playback-speed" title="演进速率">
+                <i data-lucide="gauge"></i>
+                <select id="playbackSpeedSelect" aria-label="演进速率">
+                  <option value="1">1×</option>
+                  <option value="2">2×</option>
+                  <option value="5">5×</option>
+                  <option value="10">10×</option>
+                  <option value="20" selected>20×</option>
+                </select>
+              </label>
+              <button class="icon-button playback-step" id="playbackStepBtn" title="向前步进一个预测时刻" aria-label="向前步进一个预测时刻" hidden>
+                <i data-lucide="skip-forward"></i>
+              </button>
+              <button class="icon-button playback-restart" id="playbackRestartBtn" title="重新开始演进" aria-label="重新开始演进" hidden>
+                <i data-lucide="rotate-ccw"></i>
+              </button>
             </div>
             <div class="hydro-timeline is-hidden" id="hydroTimeline" aria-label="预测淹没时间轴">
               <button class="icon-button" id="hydroPlayBtn" type="button" title="播放预测过程" aria-label="播放预测过程">
