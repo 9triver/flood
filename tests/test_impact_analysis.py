@@ -6,9 +6,11 @@ from unittest.mock import patch
 
 from domains.flood.runtime.impact_analysis import (
     affected_object_ids,
+    analyze_bridge_objects,
     analyze_inundation_impacts,
     analyze_linear_objects,
     analyze_point_objects,
+    mark_bridge_approach_impacts,
     propagate_bridge_impacts,
 )
 
@@ -25,6 +27,28 @@ class StaticResolver:
             row for row in rows
             if all(row.get(key) == value for key, value in filters.items())
         ]
+
+
+def flood_cell(cell_id, lon, lat, depth):
+    offset = 0.0001
+    return {
+        "forecast_cell_id": f"cell-{cell_id}",
+        "mesh_cell_id": f"mesh-{cell_id}",
+        "centroid_lon": lon,
+        "centroid_lat": lat,
+        "depth_m": depth,
+        "velocity_mps": 0.4,
+        "risk_level": "medium",
+        "geometry": json.dumps({
+            "type": "Polygon",
+            "coordinates": [[
+                [lon - offset, lat - offset],
+                [lon + offset, lat - offset],
+                [lon, lat + offset],
+                [lon - offset, lat - offset],
+            ]],
+        }),
+    }
 
 
 class ImpactAnalysisTest(unittest.TestCase):
@@ -137,6 +161,118 @@ class ImpactAnalysisTest(unittest.TestCase):
         result = affected_object_ids(["Road"], impacts)
 
         self.assertEqual(len(result["Road"]), 25)
+
+    def test_bridge_uses_polygon_influence_zone_and_is_not_directly_inundated(self):
+        resolver = StaticResolver({
+            "Bridge": [{
+                "bridge_id": "bridge-1",
+                "name": "测试桥梁",
+                "longitude": 111.3,
+                "latitude": 24.4,
+            }],
+            "River": [{
+                "geometry": json.dumps({
+                    "type": "LineString",
+                    "coordinates": [[111.299, 24.4], [111.301, 24.4]],
+                }),
+            }],
+        })
+        cells = [
+            flood_cell("north", 111.3, 24.4003, 0.4),
+            flood_cell("south", 111.3, 24.3997, 0.8),
+        ]
+
+        impacts = analyze_bridge_objects(resolver, cells, 0.15, 80)
+
+        self.assertEqual(len(impacts), 1)
+        impact = impacts[0]
+        self.assertFalse(impact["directly_inundated"])
+        self.assertEqual(impact["basis"], "bridge_approach_inundated")
+        self.assertEqual(impact["passability_status"], "likely_impassable")
+        self.assertEqual(impact["affected_side_count"], 2)
+        self.assertEqual(impact["nearby_max_depth_m"], 0.8)
+        self.assertEqual(impact["depth_basis"], "nearby_floodplain_forecast")
+
+    def test_bridge_single_bank_impact_requires_inspection(self):
+        resolver = StaticResolver({
+            "Bridge": [{
+                "bridge_id": "bridge-1",
+                "name": "测试桥梁",
+                "longitude": 111.3,
+                "latitude": 24.4,
+            }],
+            "River": [{
+                "geometry": json.dumps({
+                    "type": "LineString",
+                    "coordinates": [[111.299, 24.4], [111.301, 24.4]],
+                }),
+            }],
+        })
+
+        impacts = analyze_bridge_objects(
+            resolver,
+            [flood_cell("north", 111.3, 24.4003, 0.4)],
+            0.15,
+            80,
+        )
+
+        self.assertEqual(impacts[0]["basis"], "bridge_influence_zone")
+        self.assertEqual(impacts[0]["passability_status"], "inspection_required")
+        self.assertEqual(impacts[0]["affected_side_count"], 1)
+
+    def test_bridge_distance_uses_cell_polygon_instead_of_centroid(self):
+        resolver = StaticResolver({
+            "Bridge": [{
+                "bridge_id": "bridge-1",
+                "name": "测试桥梁",
+                "longitude": 111.3,
+                "latitude": 24.4,
+            }],
+        })
+        cell = flood_cell("east", 111.301, 24.4, 0.5)
+        cell["geometry"] = json.dumps({
+            "type": "Polygon",
+            "coordinates": [[
+                [111.3006, 24.3999],
+                [111.3014, 24.3999],
+                [111.3014, 24.4001],
+                [111.3006, 24.3999],
+            ]],
+        })
+
+        impacts = analyze_bridge_objects(resolver, [cell], 0.15, 80)
+
+        self.assertEqual(len(impacts), 1)
+        self.assertLess(impacts[0]["distance_m"], 80)
+
+    def test_linked_road_impact_marks_bridge_approach_impassable(self):
+        resolver = StaticResolver({
+            "BridgeRoadLink": [{
+                "bridge_id": "bridge-1",
+                "road_id": "road-1",
+                "validation_status": "accepted",
+            }],
+        })
+        bridge = {
+            "object_type": "Bridge",
+            "object_id": "bridge-1",
+            "longitude": 111.3,
+            "latitude": 24.4,
+            "passability_status": "inspection_required",
+        }
+        road = {
+            "object_type": "Road",
+            "object_id": "road-1",
+            "longitude": 111.3001,
+            "latitude": 24.4,
+            "directly_inundated": True,
+        }
+
+        mark_bridge_approach_impacts(resolver, [bridge], [road], 80)
+
+        self.assertEqual(bridge["basis"], "bridge_approach_inundated")
+        self.assertEqual(bridge["passability_status"], "likely_impassable")
+        self.assertEqual(bridge["related_road_ids"], ["road-1"])
 
     def test_bridge_impact_propagates_to_linked_road(self):
         resolver = StaticResolver({

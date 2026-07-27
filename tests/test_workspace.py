@@ -56,13 +56,17 @@ class WorkspaceTest(unittest.TestCase):
             with patch("domains.flood.runtime.workspace.WORKSPACES", manager):
                 with workspace_scope(first):
                     route_planning.save_planned_route({
-                        "route_id": "route-first",
-                        "start_object_type": "Transfer",
+                        "evacuation_route_id": "route-first",
+                        "start_object_type": "EvacuationUnit",
                         "start_object_id": "40",
+                        "origin_unit_id": "40",
                     })
                     self.assertEqual(
                         ["route-first"],
-                        [row["route_id"] for row in route_planning.read_planned_routes()],
+                        [
+                            row["evacuation_route_id"]
+                            for row in route_planning.read_planned_routes()
+                        ],
                     )
 
                 second = manager.create()["workspace_id"]
@@ -72,7 +76,10 @@ class WorkspaceTest(unittest.TestCase):
                 with workspace_scope(first):
                     self.assertEqual(
                         ["route-first"],
-                        [row["route_id"] for row in route_planning.read_planned_routes()],
+                        [
+                            row["evacuation_route_id"]
+                            for row in route_planning.read_planned_routes()
+                        ],
                     )
 
     def test_hydrodynamic_results_are_isolated_by_workspace(self):

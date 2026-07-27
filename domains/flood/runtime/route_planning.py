@@ -42,9 +42,9 @@ class RoutingEngineError(RuntimeError):
 
 def plan_evacuation_route(
     resolver,
-    start_object_type: str = "Transfer",
+    start_object_type: str = "EvacuationUnit",
     start_object_id: str = "",
-    destination_place_id: str = "",
+    destination_site_id: str = "",
     start_lon: float | str | None = None,
     start_lat: float | str | None = None,
     destination_lon: float | str | None = None,
@@ -60,9 +60,15 @@ def plan_evacuation_route(
     start_row, start, start_name = resolve_start(
         resolver, start_object_type, start_object_id, start_lon, start_lat,
     )
+    resolved_destination_site_id = (
+        str(destination_site_id or "")
+        or default_destination_site_id(
+            resolver, start_object_type, start_object_id,
+        )
+    )
     destination_row, destination, destination_name = resolve_destination(
         resolver,
-        destination_place_id or str((start_row or {}).get("place_id") or ""),
+        resolved_destination_site_id,
         destination_lon,
         destination_lat,
     )
@@ -108,7 +114,7 @@ def plan_evacuation_route(
             "error": "未配置 AMAP_WEB_SERVICE_KEY。",
             "routing_engine": "AMap",
             "start": endpoint_summary(start, start_object_type, start_object_id, start_name),
-            "destination": endpoint_summary(destination, "Place", destination_place_id, destination_name),
+            "destination": endpoint_summary(destination, "EvacuationSite", resolved_destination_site_id, destination_name),
             "flood_avoidance": flood_areas["summary"],
             **time_fields,
         }
@@ -134,7 +140,7 @@ def plan_evacuation_route(
             "error": str(exc),
             "routing_engine": "AMap",
             "start": endpoint_summary(start, start_object_type, start_object_id, start_name),
-            "destination": endpoint_summary(destination, "Place", destination_place_id, destination_name),
+            "destination": endpoint_summary(destination, "EvacuationSite", resolved_destination_site_id, destination_name),
             "flood_avoidance": flood_areas["summary"],
             **time_fields,
         }
@@ -151,7 +157,10 @@ def plan_evacuation_route(
         start_object_type=start_object_type,
         start_object_id=start_object_id,
         start_name=start_name,
-        destination_place_id=str((destination_row or {}).get("place_id") or destination_place_id),
+        destination_site_id=str(
+            (destination_row or {}).get("evacuation_site_id")
+            or resolved_destination_site_id
+        ),
         destination_name=destination_name,
         forecast_id=forecast_key,
         time_h=analysis_time_h,
@@ -167,8 +176,10 @@ def plan_evacuation_route(
         "status": "completed",
         "route": route,
         "map_display": {
-            "object_type": "Route",
-            "filters": {"route_id": route["route_id"]},
+            "object_type": "EvacuationRoute",
+            "filters": {
+                "evacuation_route_id": route["evacuation_route_id"],
+            },
             "fit": True,
         },
         "flood_avoidance": flood_areas["summary"],
@@ -184,19 +195,38 @@ def resolve_start(resolver, object_type: str, object_id: str,
         return None, direct, "指定起点"
     if not object_id:
         return None, None, ""
-    row = resolver.query_by_id(object_type or "Transfer", object_id)
+    row = resolver.query_by_id(object_type or "EvacuationUnit", object_id)
     return row, safe_row_point(row), object_name(row, object_id)
 
 
-def resolve_destination(resolver, place_id: str, lon: Any,
+def default_destination_site_id(
+    resolver,
+    start_object_type: str,
+    start_object_id: str,
+) -> str:
+    if start_object_type != "EvacuationUnit" or not start_object_id:
+        return ""
+    routes = resolver.query(
+        "EvacuationRoute",
+        {"origin_unit_id": start_object_id},
+    )
+    routes.sort(key=lambda row: str(row.get("generated_at") or ""), reverse=True)
+    return next((
+        str(row.get("destination_site_id") or "")
+        for row in routes
+        if row.get("destination_site_id")
+    ), "")
+
+
+def resolve_destination(resolver, site_id: str, lon: Any,
                         lat: Any) -> tuple[dict[str, Any] | None, tuple[float, float] | None, str]:
     direct = coerce_point(lon, lat)
     if direct:
         return None, direct, "指定终点"
-    if not place_id:
+    if not site_id:
         return None, None, ""
-    row = resolver.query_by_id("Place", place_id)
-    return row, safe_row_point(row), object_name(row, place_id)
+    row = resolver.query_by_id("EvacuationSite", site_id)
+    return row, safe_row_point(row), object_name(row, site_id)
 
 
 def safe_row_point(row: dict[str, Any] | None) -> tuple[float, float] | None:
@@ -641,7 +671,7 @@ def distance_m(first: tuple[float, float], second: tuple[float, float]) -> float
 def make_route_record(*, path: dict[str, Any], start: tuple[float, float],
                       destination: tuple[float, float], start_object_type: str,
                       start_object_id: str, start_name: str,
-                      destination_place_id: str, destination_name: str,
+                      destination_site_id: str, destination_name: str,
                       forecast_id: str, time_h: float | None,
                       blocked_depth_m: float, profile: str,
                       flood_summary: dict[str, Any],
@@ -666,14 +696,19 @@ def make_route_record(*, path: dict[str, Any], start: tuple[float, float],
         if name and name not in road_names:
             road_names.append(name)
     return {
-        "route_id": route_id,
+        "evacuation_route_id": route_id,
         "name": f"{start_name or '起点'} 至 {destination_name or '终点'}避洪路线",
+        "source_name": "",
+        "name_source": "generated_by_routing_engine",
         "route_type": "transfer",
         "status": "planned",
         "road_detail": " -> ".join(road_names[:12]),
+        "origin_unit_id": (
+            start_object_id if start_object_type == "EvacuationUnit" else ""
+        ),
+        "destination_site_id": destination_site_id,
         "start_object_type": start_object_type,
         "start_object_id": start_object_id,
-        "place_id": destination_place_id,
         "start_lon": start[0],
         "start_lat": start[1],
         "destination_lon": destination[0],
@@ -724,7 +759,8 @@ def save_planned_route(route: dict[str, Any]) -> None:
         slot = route_slot(route)
         rows = [
             row for row in rows
-            if row.get("route_id") != route.get("route_id") and route_slot(row) != slot
+            if row.get("evacuation_route_id") != route.get("evacuation_route_id")
+            and route_slot(row) != slot
         ]
         rows.append(route)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -736,8 +772,10 @@ def save_planned_route(route: dict[str, Any]) -> None:
 
 
 def clear_route_geojson_cache() -> None:
-    for path in (workspace_dir() / "cache" / "geojson").glob("route*.geojson"):
-        path.unlink(missing_ok=True)
+    cache_dir = workspace_dir() / "cache" / "geojson"
+    for pattern in ("evacuationroute*.geojson", "route*.geojson"):
+        for path in cache_dir.glob(pattern):
+            path.unlink(missing_ok=True)
 
 
 def read_planned_routes() -> list[dict[str, Any]]:
@@ -745,10 +783,30 @@ def read_planned_routes() -> list[dict[str, Any]]:
     if not target.exists():
         return []
     return [
-        json.loads(line)
+        normalize_planned_route(json.loads(line))
         for line in target.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+
+
+def normalize_planned_route(route: dict[str, Any]) -> dict[str, Any]:
+    """Read older workspace routes through the current object contract."""
+    normalized = dict(route)
+    aliases = {
+        "route_id": "evacuation_route_id",
+        "transfer_id": "origin_unit_id",
+        "place_id": "destination_site_id",
+    }
+    for legacy_field, canonical_field in aliases.items():
+        if not normalized.get(canonical_field) and normalized.get(legacy_field):
+            normalized[canonical_field] = normalized[legacy_field]
+        normalized.pop(legacy_field, None)
+    if (
+        not normalized.get("origin_unit_id")
+        and normalized.get("start_object_type") == "EvacuationUnit"
+    ):
+        normalized["origin_unit_id"] = normalized.get("start_object_id", "")
+    return normalized
 
 
 def route_slot(route: dict[str, Any]) -> str:
@@ -756,7 +814,7 @@ def route_slot(route: dict[str, Any]) -> str:
     object_id = str(route.get("start_object_id") or "")
     if object_type and object_id:
         return f"{object_type}:{object_id}"
-    return str(route.get("route_id") or "")
+    return str(route.get("evacuation_route_id") or "")
 
 
 def routing_setting(name: str, default: str) -> str:

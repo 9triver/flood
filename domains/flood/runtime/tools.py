@@ -11,7 +11,7 @@ def list_mappable_objects(resolver, object_type: str = "") -> list[dict]:
         spec = MAPPABLE_OBJECTS.get(item)
         if not spec:
             continue
-        if item == "HydrodynamicCell":
+        if item == "HydrodynamicGridCell":
             stats = hydrodynamic_grid_stats()
             count = stats.get("feature_count", 0)
             geometry_type = stats.get("geometry_type", "Polygon")

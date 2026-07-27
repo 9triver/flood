@@ -28,12 +28,11 @@ OBJECT_TYPES = [
     "HydraulicStructure",
     "Road",
     "BridgeRoadLink",
-    "Place",
-    "Transfer",
-    "Route",
-    "Risk",
-    "HydroStation",
-    "Hydrology",
+    "EvacuationSite",
+    "EvacuationUnit",
+    "EvacuationRoute",
+    "DangerArea",
+    "HydrometeorologicalStation",
 ]
 
 

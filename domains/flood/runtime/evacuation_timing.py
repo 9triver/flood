@@ -26,9 +26,9 @@ DEFAULT_WALK_SPEED_MPS = 1.0
 
 def analyze_latest_evacuation_time(
     resolver,
-    transfer_id: str = "",
-    transfer_name: str = "",
-    route_id: str = "",
+    evacuation_unit_id: str = "",
+    evacuation_unit_name: str = "",
+    evacuation_route_id: str = "",
     forecast_id: str = "latest",
     blocked_depth_m: float = DEFAULT_BLOCKED_DEPTH_M,
     clearance_duration_min: float | str | None = None,
@@ -40,14 +40,18 @@ def analyze_latest_evacuation_time(
     confirmed passable, rather than interpolating a threshold crossing between
     two model slices.  This keeps the result deterministic and conservative.
     """
-    transfer, transfer_error = resolve_transfer(
-        resolver, transfer_id=transfer_id, transfer_name=transfer_name,
+    evacuation_unit, unit_error = resolve_evacuation_unit(
+        resolver,
+        evacuation_unit_id=evacuation_unit_id,
+        evacuation_unit_name=evacuation_unit_name,
     )
-    if transfer_error:
-        return transfer_error
+    if unit_error:
+        return unit_error
 
     route, route_error = resolve_route(
-        resolver, transfer, route_id=route_id,
+        resolver,
+        evacuation_unit,
+        evacuation_route_id=evacuation_route_id,
     )
     if route_error:
         return route_error
@@ -57,8 +61,8 @@ def analyze_latest_evacuation_time(
         return error_result(
             "invalid_route_geometry",
             "关联转移路线缺少可分析的线几何。",
-            transfer=transfer_summary(transfer),
-            route=route_summary(route),
+            evacuation_unit=evacuation_unit_summary(evacuation_unit),
+            evacuation_route=evacuation_route_summary(route),
         )
 
     series_path = forecast_series_path(forecast_id)
@@ -67,8 +71,8 @@ def analyze_latest_evacuation_time(
         return error_result(
             "no_forecast_series",
             "当前演进工作空间没有可用的多时刻水深预测序列。",
-            transfer=transfer_summary(transfer),
-            route=route_summary(route),
+            evacuation_unit=evacuation_unit_summary(evacuation_unit),
+            evacuation_route=evacuation_route_summary(route),
             forecast_id=normalize_result_forecast_id(forecast_id),
         )
 
@@ -78,16 +82,16 @@ def analyze_latest_evacuation_time(
         return error_result(
             "invalid_forecast_series",
             f"无法读取多时刻水深预测序列：{exc}",
-            transfer=transfer_summary(transfer),
-            route=route_summary(route),
+            evacuation_unit=evacuation_unit_summary(evacuation_unit),
+            evacuation_route=evacuation_route_summary(route),
             forecast_id=normalize_result_forecast_id(forecast_id),
         )
     if series.ndim != 2 or series.shape[0] == 0 or series.shape[1] == 0:
         return error_result(
             "invalid_forecast_series",
             "多时刻水深预测序列维度无效。",
-            transfer=transfer_summary(transfer),
-            route=route_summary(route),
+            evacuation_unit=evacuation_unit_summary(evacuation_unit),
+            evacuation_route=evacuation_route_summary(route),
             forecast_id=normalize_result_forecast_id(forecast_id),
         )
 
@@ -100,24 +104,24 @@ def analyze_latest_evacuation_time(
         return error_result(
             "no_forecast_time_steps",
             "预测序列中没有0至24小时的有效时间切片。",
-            transfer=transfer_summary(transfer),
-            route=route_summary(route),
+            evacuation_unit=evacuation_unit_summary(evacuation_unit),
+            evacuation_route=evacuation_route_summary(route),
             forecast_id=normalize_result_forecast_id(forecast_id),
         )
     if selected_steps[-1][1] < DEFAULT_HORIZON_H:
         return error_result(
             "incomplete_forecast_horizon",
             "当前多时刻水深序列不足24小时，不能据此形成24小时最晚转移时间结论。",
-            transfer=transfer_summary(transfer),
-            route=route_summary(route),
+            evacuation_unit=evacuation_unit_summary(evacuation_unit),
+            evacuation_route=evacuation_route_summary(route),
             forecast_id=normalize_result_forecast_id(forecast_id),
             available_horizon_h=selected_steps[-1][1],
             required_horizon_h=DEFAULT_HORIZON_H,
         )
 
-    destination = resolve_destination(resolver, transfer, route)
+    destination = resolve_destination(resolver, route)
     components = analysis_component_points(
-        transfer, route_points, destination,
+        evacuation_unit, route_points, destination,
     )
     component_cells = match_component_mesh_cells(
         components,
@@ -140,8 +144,8 @@ def analyze_latest_evacuation_time(
         return error_result(
             "no_matching_mesh_cells",
             "转移起点、路线和安置点附近没有匹配到水动力网格。",
-            transfer=transfer_summary(transfer),
-            route=route_summary(route),
+            evacuation_unit=evacuation_unit_summary(evacuation_unit),
+            evacuation_route=evacuation_route_summary(route),
             forecast_id=normalize_result_forecast_id(forecast_id),
         )
 
@@ -199,13 +203,13 @@ def analyze_latest_evacuation_time(
             "last_time_h": timeline[-1]["time_h"],
             "time_step_count": len(timeline),
         },
-        "transfer": transfer_summary(transfer),
-        "route": {
-            **route_summary(route),
+        "evacuation_unit": evacuation_unit_summary(evacuation_unit),
+        "evacuation_route": {
+            **evacuation_route_summary(route),
             "length_m": round(route_length_m(route_points), 1),
             "matched_mesh_cell_count": len(component_cells.get("route", [])),
         },
-        "destination": place_summary(destination),
+        "destination_site": evacuation_site_summary(destination),
         "parameters": {
             "blocked_depth_m": threshold,
             "clearance_duration_min": round(duration["minutes"], 2),
@@ -239,78 +243,98 @@ def analyze_latest_evacuation_time(
     }
 
 
-def resolve_transfer(resolver, *, transfer_id: str,
-                     transfer_name: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    if transfer_id:
-        row = resolver.query_by_id("Transfer", transfer_id)
+def resolve_evacuation_unit(
+    resolver,
+    *,
+    evacuation_unit_id: str,
+    evacuation_unit_name: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    if evacuation_unit_id:
+        row = resolver.query_by_id("EvacuationUnit", evacuation_unit_id)
         if row:
             return row, None
         return None, error_result(
-            "transfer_not_found", f"未找到转移安排 {transfer_id}。",
-            transfer_id=str(transfer_id),
+            "evacuation_unit_not_found",
+            f"未找到转移单元 {evacuation_unit_id}。",
+            evacuation_unit_id=str(evacuation_unit_id),
         )
 
-    name = str(transfer_name or "").strip()
+    name = str(evacuation_unit_name or "").strip()
     if not name:
         return None, error_result(
-            "transfer_required", "必须提供 transfer_id 或 transfer_name。",
+            "evacuation_unit_required",
+            "必须提供 evacuation_unit_id 或 evacuation_unit_name。",
         )
-    rows = resolver.query("Transfer")
-    exact = [row for row in rows if str(row.get("name") or "").strip() == name]
+    rows = resolver.query("EvacuationUnit")
+    exact = [
+        row for row in rows
+        if name in {
+            str(row.get("name") or "").strip(),
+            str(row.get("source_name") or "").strip(),
+        }
+    ]
     matches = exact or [
         row for row in rows
         if name in str(row.get("name") or "")
         or str(row.get("name") or "") in name
+        or name in str(row.get("source_name") or "")
     ]
     if len(matches) == 1:
         return matches[0], None
     if not matches:
         return None, error_result(
-            "transfer_not_found", f"未找到名称为{name}的转移安排。",
-            transfer_name=name,
+            "evacuation_unit_not_found",
+            f"未找到名称为{name}的转移单元。",
+            evacuation_unit_name=name,
         )
     return None, error_result(
-        "ambiguous_transfer",
-        f"名称{name}匹配到多个转移安排，请改用 transfer_id。",
-        transfer_name=name,
-        candidates=[transfer_summary(row) for row in matches[:10]],
+        "ambiguous_evacuation_unit",
+        f"名称{name}匹配到多个转移单元，请改用 evacuation_unit_id。",
+        evacuation_unit_name=name,
+        candidates=[evacuation_unit_summary(row) for row in matches[:10]],
     )
 
 
-def resolve_route(resolver, transfer: dict[str, Any], *,
-                  route_id: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    selected_id = str(route_id or transfer.get("route_id") or "")
+def resolve_route(
+    resolver,
+    evacuation_unit: dict[str, Any],
+    *,
+    evacuation_route_id: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    selected_id = str(evacuation_route_id or "")
     if selected_id:
-        row = resolver.query_by_id("Route", selected_id)
+        row = resolver.query_by_id("EvacuationRoute", selected_id)
         if row:
             return row, None
         return None, error_result(
             "route_not_found",
-            f"未找到转移安排关联的路线 {selected_id}。",
-            transfer=transfer_summary(transfer),
-            route_id=selected_id,
+            f"未找到转移单元关联的路线 {selected_id}。",
+            evacuation_unit=evacuation_unit_summary(evacuation_unit),
+            evacuation_route_id=selected_id,
         )
 
-    transfer_id = str(transfer.get("transfer_id") or "")
+    unit_id = str(evacuation_unit.get("evacuation_unit_id") or "")
     rows = [
-        row for row in resolver.query("Route")
-        if str(row.get("transfer_id") or row.get("start_object_id") or "")
-        == transfer_id
+        row for row in resolver.query("EvacuationRoute")
+        if str(row.get("origin_unit_id") or "") == unit_id
+        or (
+            row.get("start_object_type") == "EvacuationUnit"
+            and str(row.get("start_object_id") or "") == unit_id
+        )
     ]
     if rows:
         rows.sort(key=lambda row: str(row.get("generated_at") or ""), reverse=True)
         return rows[0], None
     return None, error_result(
         "route_required",
-        "该转移安排没有关联的预定转移路线。",
-        transfer=transfer_summary(transfer),
+        "该转移单元没有关联的预定转移路线。",
+        evacuation_unit=evacuation_unit_summary(evacuation_unit),
     )
 
 
-def resolve_destination(resolver, transfer: dict[str, Any],
-                        route: dict[str, Any]) -> dict[str, Any] | None:
-    place_id = str(route.get("place_id") or transfer.get("place_id") or "")
-    return resolver.query_by_id("Place", place_id) if place_id else None
+def resolve_destination(resolver, route: dict[str, Any]) -> dict[str, Any] | None:
+    site_id = str(route.get("destination_site_id") or "")
+    return resolver.query_by_id("EvacuationSite", site_id) if site_id else None
 
 
 def geometry_points(row: dict[str, Any]) -> list[tuple[float, float]]:
@@ -518,7 +542,7 @@ def build_deadline(
 
 def resolve_forecast_context(resolver) -> dict[str, Any]:
     try:
-        rows = resolver.query("ForecastRun", order_by="-forecast_sequence", limit=1)
+        rows = resolver.query("FloodForecast", order_by="-forecast_sequence", limit=1)
     except (FileNotFoundError, TypeError, ValueError):
         rows = []
     run = rows[-1] if rows else {}
@@ -625,35 +649,37 @@ def normalize_result_forecast_id(forecast_id: str) -> str:
     return LATEST_FORECAST_ID if forecast_id in ("", "latest") else str(forecast_id)
 
 
-def transfer_summary(row: dict[str, Any] | None) -> dict[str, Any] | None:
+def evacuation_unit_summary(row: dict[str, Any] | None) -> dict[str, Any] | None:
     if not row:
         return None
     return {
-        "transfer_id": str(row.get("transfer_id") or ""),
+        "evacuation_unit_id": str(row.get("evacuation_unit_id") or ""),
         "name": str(row.get("name") or ""),
+        "source_name": str(row.get("source_name") or ""),
         "population": int(row.get("population") or 0),
-        "planned_arrive_time_window": row.get("arrive_time_window"),
+        "planned_flood_arrival_window": row.get("flood_arrival_window"),
     }
 
 
-def route_summary(row: dict[str, Any] | None) -> dict[str, Any] | None:
+def evacuation_route_summary(row: dict[str, Any] | None) -> dict[str, Any] | None:
     if not row:
         return None
     return {
-        "route_id": str(row.get("route_id") or ""),
+        "evacuation_route_id": str(row.get("evacuation_route_id") or ""),
         "name": str(row.get("name") or ""),
         "route_type": str(row.get("route_type") or ""),
-        "place_id": str(row.get("place_id") or ""),
+        "origin_unit_id": str(row.get("origin_unit_id") or ""),
+        "destination_site_id": str(row.get("destination_site_id") or ""),
     }
 
 
-def place_summary(row: dict[str, Any] | None) -> dict[str, Any] | None:
+def evacuation_site_summary(row: dict[str, Any] | None) -> dict[str, Any] | None:
     if not row:
         return None
     return {
-        "place_id": str(row.get("place_id") or ""),
+        "evacuation_site_id": str(row.get("evacuation_site_id") or ""),
         "name": str(row.get("name") or ""),
-        "place_type": str(row.get("place_type") or ""),
+        "site_type": str(row.get("site_type") or ""),
     }
 
 

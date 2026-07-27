@@ -92,11 +92,11 @@ class MapActionBuilderTest(unittest.TestCase):
 
         result = json.loads(self.builder.show_objects({
             "objects": [{
-                "object_type": "HydrodynamicCell",
+                "object_type": "HydrodynamicGridCell",
                 "filters": {"forecast_id": "latest"},
                 "refresh": True,
             }],
-        }, {"HydrodynamicCell"}))
+        }, {"HydrodynamicGridCell"}))
 
         self.assertEqual(
             ["show_hydrodynamic_mesh", "apply_hydrodynamic_result"],
@@ -130,7 +130,7 @@ class MapActionBuilderTest(unittest.TestCase):
     def test_event_marker_requires_coordinates(self):
         result = json.loads(self.builder.show_event_marker(
             {"event": {"event_type": "TestEvent"}},
-            {"HydroStation"},
+            {"HydrometeorologicalStation"},
         ))
 
         self.assertEqual(

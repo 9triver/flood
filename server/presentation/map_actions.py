@@ -326,7 +326,7 @@ def default_context(actions: list[MapAction]) -> str:
         return "淹没结果 · 珊瑚河流域"
     if "show_hydrodynamic_mesh" in action_types:
         return "水动力网格 · 珊瑚河流域"
-    if "ForecastCell" in types:
+    if "InundationForecastCell" in types:
         return "实时预测 · 珊瑚河流域"
     if types & {"Reservoir", "Sluice", "HydraulicStructure"}:
         return "水利工程设施 · 珊瑚河流域"

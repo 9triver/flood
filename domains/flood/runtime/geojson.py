@@ -28,7 +28,7 @@ def export_objects_geojson(resolver, object_type: str,
     if not force and _cache_is_current(target, object_type):
         return geojson_result(object_type, filters, target, cached=True)
 
-    if object_type == "ForecastCell":
+    if object_type == "InundationForecastCell":
         if not filters.get("forecast_id"):
             filters["forecast_id"] = "latest"
         rows = resolver.query(object_type, filters=filters)
@@ -40,9 +40,9 @@ def export_objects_geojson(resolver, object_type: str,
         target.write_text(json.dumps(collection, ensure_ascii=False), encoding="utf-8")
         return geojson_result(object_type, filters, target, cached=False)
 
-    if object_type == "HydrodynamicCell":
+    if object_type == "HydrodynamicGridCell":
         return {
-            "error": "HydrodynamicCell is rendered through /api/hydrodynamic-grid/tile for performance.",
+            "error": "HydrodynamicGridCell is rendered through /api/hydrodynamic-grid/tile for performance.",
             "filters": filters,
         }
 
@@ -91,10 +91,10 @@ def feature_from_row(row: dict) -> dict:
 
 
 def export_key(object_type: str, filters: dict[str, Any]) -> str:
-    if object_type == "ForecastCell":
+    if object_type == "InundationForecastCell":
         forecast_id = filters.get("forecast_id") or "latest"
         return f"{object_type.lower()}_{forecast_id}"
-    if object_type == "HydrodynamicCell":
+    if object_type == "HydrodynamicGridCell":
         return object_type.lower()
     if not filters:
         return object_type.lower()

@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import json
+import math
 from typing import Any
 
 from .common import id_field
 from .forecast import (
     LATEST_FORECAST_ID,
+    build_cell_spatial_index,
     compact_cell_index,
+    distance_m,
+    iter_coords,
+    nearby_cells,
     nearest_cell,
+    point_segment_distance_m,
     query_forecast_cells,
     risk_level,
     row_point,
@@ -15,16 +22,21 @@ from .forecast import (
 from .hydrodynamic_grid import forecast_time_context
 
 
-POINT_TARGET_TYPES = ("Facility", "Bridge", "Transfer", "Place")
-LINE_TARGET_TYPES = ("Road", "Route")
-TARGET_TYPES = POINT_TARGET_TYPES + LINE_TARGET_TYPES
+POINT_TARGET_TYPES = ("Facility", "EvacuationUnit", "EvacuationSite")
+LINE_TARGET_TYPES = ("Road", "EvacuationRoute")
+TARGET_TYPES = ("Facility", "Bridge", "EvacuationUnit", "EvacuationSite", *LINE_TARGET_TYPES)
+BRIDGE_INFLUENCE_RADIUS_M = 80.0
 
 
-def analyze_inundation_impacts(resolver, forecast_id: str = "latest",
-                               target_type: str = "all",
-                               min_depth_m: float = 0.15,
-                               max_distance_m: float = 10.0,
-                               time_h: float | None = None) -> dict[str, Any]:
+def analyze_inundation_impacts(
+    resolver,
+    forecast_id: str = "latest",
+    target_type: str = "all",
+    min_depth_m: float = 0.15,
+    max_distance_m: float = 10.0,
+    time_h: float | None = None,
+    bridge_influence_radius_m: float = BRIDGE_INFLUENCE_RADIUS_M,
+) -> dict[str, Any]:
     forecast_key = LATEST_FORECAST_ID if forecast_id in ("", "latest") else forecast_id
     analysis_time_h = coerce_time_h(time_h)
     target_types = resolve_target_types(target_type)
@@ -63,16 +75,32 @@ def analyze_inundation_impacts(resolver, forecast_id: str = "latest",
             **time_fields,
         }
 
-    cell_index = compact_cell_index(cells, min_depth=float(min_depth_m or 0))
+    minimum_depth = float(min_depth_m or 0)
+    cell_index = compact_cell_index(cells, min_depth=minimum_depth)
+    bridge_cell_index = None
+    if "Bridge" in target_types or "Road" in target_types:
+        bridge_cell_index = build_cell_spatial_index([
+            row for row in cells
+            if float(row.get("depth_m") or 0) >= minimum_depth
+            and row.get("centroid_lon") is not None
+            and row.get("centroid_lat") is not None
+        ])
     resolved_forecast_id = str(cells[0].get("forecast_id") or forecast_key)
     impacts: list[dict[str, Any]] = []
     for object_type in target_types:
-        if object_type in POINT_TARGET_TYPES:
+        if object_type == "Bridge":
+            impacts.extend(analyze_bridge_objects(
+                resolver,
+                bridge_cell_index,
+                min_depth_m=minimum_depth,
+                influence_radius_m=float(bridge_influence_radius_m or 0),
+            ))
+        elif object_type in POINT_TARGET_TYPES:
             impacts.extend(analyze_point_objects(
                 resolver,
                 object_type,
                 cell_index,
-                min_depth_m=float(min_depth_m or 0),
+                min_depth_m=minimum_depth,
                 max_distance_m=float(max_distance_m or 0),
             ))
         else:
@@ -80,7 +108,7 @@ def analyze_inundation_impacts(resolver, forecast_id: str = "latest",
                 resolver,
                 object_type,
                 cell_index,
-                min_depth_m=float(min_depth_m or 0),
+                min_depth_m=minimum_depth,
                 max_distance_m=float(max_distance_m or 0),
             ))
 
@@ -90,13 +118,18 @@ def analyze_inundation_impacts(resolver, forecast_id: str = "latest",
             if row.get("object_type") == "Bridge"
         ]
         if "Bridge" not in target_types:
-            bridge_impacts = analyze_point_objects(
+            bridge_impacts = analyze_bridge_objects(
                 resolver,
-                "Bridge",
-                cell_index,
-                min_depth_m=float(min_depth_m or 0),
-                max_distance_m=float(max_distance_m or 0),
+                bridge_cell_index,
+                min_depth_m=minimum_depth,
+                influence_radius_m=float(bridge_influence_radius_m or 0),
             )
+        mark_bridge_approach_impacts(
+            resolver,
+            bridge_impacts,
+            impacts,
+            influence_radius_m=float(bridge_influence_radius_m or 0),
+        )
         impacts.extend(propagate_bridge_impacts(resolver, bridge_impacts, impacts))
 
     impacts = sorted(
@@ -119,6 +152,7 @@ def analyze_inundation_impacts(resolver, forecast_id: str = "latest",
         "parameters": {
             "min_depth_m": float(min_depth_m or 0),
             "max_distance_m": float(max_distance_m or 0),
+            "bridge_influence_radius_m": float(bridge_influence_radius_m or 0),
             "time_h": analysis_time_h,
         },
         "summary": summary,
@@ -163,19 +197,20 @@ def analysis_basis(time_h: float | None, analysis_time_at: str | None = None,
     prefix = (
         (
             f"使用水动力模型 {analysis_time_at}（预测 +{time_h:.3f} h）的 "
-            "ForecastCell 预测淹没网格"
+            "InundationForecastCell 预测淹没网格"
         )
         if time_h is not None and analysis_time_at
-        else f"使用水动力模型预测 +{time_h:.3f} h 时刻的 ForecastCell 预测淹没网格"
+        else f"使用水动力模型预测 +{time_h:.3f} h 时刻的 InundationForecastCell 预测淹没网格"
         if time_h is not None
-        else "使用最新 ForecastCell 最大水深包络预测淹没网格"
+        else "使用最新 InundationForecastCell 最大水深包络预测淹没网格"
     )
     if empty:
         return f"{prefix}执行叠加分析；未找到满足水深阈值的预测淹没单元。"
     return (
         f"{prefix}执行确定性空间邻近分析；"
-        "点对象按对象坐标匹配最近淹没网格，线对象按几何采样点匹配最深命中网格；"
-        "已校核的 BridgeRoadLink 用于把桥梁影响传播到关联道路，并标记为需检查通行。"
+        "普通点对象按对象坐标匹配最近淹没网格，桥梁按完整网格多边形执行桥头影响区分析，"
+        "线对象按几何采样点匹配最深命中网格；"
+        "已校核的 BridgeRoadLink 用于把桥梁影响传播到关联道路，并标注通行状态。"
     )
 
 
@@ -186,13 +221,144 @@ def resolve_target_types(target_type: str) -> list[str]:
     aliases = {
         "facility": "Facility",
         "bridge": "Bridge",
-        "transfer": "Transfer",
-        "place": "Place",
+        "transfer": "EvacuationUnit",
+        "place": "EvacuationSite",
         "road": "Road",
-        "route": "Route",
+        "route": "EvacuationRoute",
     }
     canonical = aliases.get(value.lower(), value)
     return [canonical] if canonical in TARGET_TYPES else []
+
+
+def analyze_bridge_objects(
+    resolver,
+    cell_index: Any,
+    min_depth_m: float,
+    influence_radius_m: float = BRIDGE_INFLUENCE_RADIUS_M,
+) -> list[dict[str, Any]]:
+    impacts = []
+    river_points = river_geometry_points(resolver)
+    for row in resolver.query("Bridge"):
+        point = safe_row_point(row)
+        if not point:
+            continue
+        matched = [
+            cell for cell in nearby_cells(
+                point,
+                cell_index,
+                max_distance_m=influence_radius_m,
+            )
+            if float(cell.get("depth_m") or 0) >= min_depth_m
+        ]
+        if not matched:
+            continue
+
+        deepest = max(matched, key=lambda cell: float(cell.get("depth_m") or 0))
+        nearest_distance = min(
+            float(cell.get("_distance_m") or 0) for cell in matched
+        )
+        affected_sides = affected_river_sides(point, matched, river_points)
+        approaches_inundated = len(affected_sides) >= 2
+        basis = (
+            "bridge_approach_inundated"
+            if approaches_inundated
+            else "bridge_influence_zone"
+        )
+        impact = make_impact(
+            "Bridge",
+            row,
+            "bridge_id",
+            deepest,
+            basis,
+            point,
+        )
+        impact.update({
+            "directly_inundated": False,
+            "impact_status": basis,
+            "passability_status": (
+                "likely_impassable" if approaches_inundated else "inspection_required"
+            ),
+            "data_quality": "insufficient_bridge_elevation",
+            "depth_basis": "nearby_floodplain_forecast",
+            "distance_m": round(nearest_distance, 1),
+            "max_depth_cell_distance_m": round(
+                float(deepest.get("_distance_m") or 0),
+                1,
+            ),
+            "nearby_max_depth_m": round(float(deepest.get("depth_m") or 0), 3),
+            "nearby_max_velocity_mps": round(
+                float(deepest.get("velocity_mps") or 0),
+                3,
+            ),
+            "nearby_cell_count": len(matched),
+            "bridge_influence_radius_m": round(float(influence_radius_m), 1),
+            "affected_side_count": len(affected_sides),
+            "affected_bank_sides": affected_sides,
+        })
+        impacts.append(impact)
+    return impacts
+
+
+def river_geometry_points(resolver) -> list[tuple[float, float]]:
+    rows = resolver.query("River")[:1]
+    if not rows:
+        return []
+    geometry = rows[0].get("geometry") or {}
+    if isinstance(geometry, str):
+        try:
+            geometry = json.loads(geometry)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(geometry, dict):
+        return []
+    return iter_coords(geometry.get("coordinates") or [])
+
+
+def affected_river_sides(
+    point: tuple[float, float],
+    cells: list[dict[str, Any]],
+    river_points: list[tuple[float, float]],
+) -> list[str]:
+    tangent = nearest_river_tangent(point, river_points)
+    if not tangent:
+        return []
+    tx, ty = tangent
+    cos_lat = math.cos(math.radians(point[1]))
+    sides = set()
+    for cell in cells:
+        try:
+            rx = (float(cell["centroid_lon"]) - point[0]) * cos_lat
+            ry = float(cell["centroid_lat"]) - point[1]
+        except (KeyError, TypeError, ValueError):
+            continue
+        cross = tx * ry - ty * rx
+        if cross > 1e-12:
+            sides.add("left")
+        elif cross < -1e-12:
+            sides.add("right")
+    return [side for side in ("left", "right") if side in sides]
+
+
+def nearest_river_tangent(
+    point: tuple[float, float],
+    river_points: list[tuple[float, float]],
+) -> tuple[float, float] | None:
+    if len(river_points) < 2:
+        return None
+    best_distance = float("inf")
+    best_tangent = None
+    cos_lat = math.cos(math.radians(point[1]))
+    for start, end in zip(river_points, river_points[1:]):
+        segment_distance, _ = point_segment_distance_m(point, start, end)
+        if segment_distance >= best_distance:
+            continue
+        tx = (end[0] - start[0]) * cos_lat
+        ty = end[1] - start[1]
+        if tx == 0 and ty == 0:
+            continue
+        best_distance = segment_distance
+        best_tangent = (tx, ty)
+    return best_tangent
 
 
 def analyze_point_objects(resolver, object_type: str, cell_index: Any,
@@ -283,6 +449,46 @@ def make_impact(object_type: str, row: dict[str, Any], object_id_field: str,
     return impact
 
 
+def mark_bridge_approach_impacts(resolver,
+                                 bridge_impacts: list[dict[str, Any]],
+                                 existing_impacts: list[dict[str, Any]],
+                                 influence_radius_m: float) -> None:
+    bridge_by_id = {
+        str(row.get("object_id") or ""): row
+        for row in bridge_impacts
+        if row.get("object_id")
+    }
+    road_impacts = {
+        str(row.get("object_id") or ""): row
+        for row in existing_impacts
+        if row.get("object_type") == "Road"
+        and row.get("object_id")
+        and row.get("directly_inundated") is not False
+    }
+    if not bridge_by_id or not road_impacts:
+        return
+
+    for link in resolver.query("BridgeRoadLink"):
+        if link.get("validation_status") != "accepted":
+            continue
+        bridge = bridge_by_id.get(str(link.get("bridge_id") or ""))
+        road = road_impacts.get(str(link.get("road_id") or ""))
+        if not bridge or not road:
+            continue
+        try:
+            bridge_point = (float(bridge["longitude"]), float(bridge["latitude"]))
+            road_impact_point = (float(road["longitude"]), float(road["latitude"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if distance_m(bridge_point, road_impact_point) > influence_radius_m:
+            continue
+        bridge["impact_status"] = "bridge_approach_inundated"
+        bridge["basis"] = "bridge_approach_inundated"
+        bridge["passability_status"] = "likely_impassable"
+        bridge["approach_road_inundated"] = True
+        append_unique(bridge, "related_road_ids", str(road.get("object_id") or ""))
+
+
 def propagate_bridge_impacts(resolver, bridge_impacts: list[dict[str, Any]],
                              existing_impacts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     bridge_by_id = {
@@ -319,6 +525,9 @@ def propagate_bridge_impacts(resolver, bridge_impacts: list[dict[str, Any]],
             append_unique(existing, "related_bridge_ids", bridge_id)
             append_unique(existing, "related_bridge_names", str(bridge_impact.get("name") or bridge_id))
             existing["bridge_dependency"] = True
+            bridge_status = str(bridge_impact.get("passability_status") or "")
+            if bridge_status == "likely_impassable":
+                existing["passability_status"] = bridge_status
             continue
 
         impact = {
@@ -339,8 +548,11 @@ def propagate_bridge_impacts(resolver, bridge_impacts: list[dict[str, Any]],
             "related_bridge_ids": [bridge_id],
             "related_bridge_names": [str(bridge_impact.get("name") or bridge_id)],
             "bridge_road_link_id": link.get("bridge_road_link_id") or "",
-            "passability_status": "inspection_required",
+            "passability_status": (
+                bridge_impact.get("passability_status") or "inspection_required"
+            ),
             "data_quality": "insufficient_bridge_elevation",
+            "depth_basis": bridge_impact.get("depth_basis") or "nearby_floodplain_forecast",
         }
         propagated.append(impact)
         existing_roads[road_id] = impact

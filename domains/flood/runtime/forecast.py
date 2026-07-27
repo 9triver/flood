@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .cnn_v2 import GRID_PATH, run_cnn_v2_forecast
-from .common import apply_filters, apply_order, apply_window, rel
+from .common import apply_filters, apply_order, apply_window, id_field, rel
 from .hydrodynamic_grid import MESH_DB_PATH, coerce_optional_float, forecast_depth_entry
 from .boundary_flow import read_latest_forecast_input
 from .workspace import WORKSPACES, active_workspace_id, workspace_dir
@@ -91,19 +91,24 @@ def run_emergency_cycle(resolver, force_forecast: bool = False,
             return cached
 
     cells = query_forecast_cells(resolver, {"forecast_id": LATEST_FORECAST_ID})
-    transfer_impacts = impacted_transfer_units(resolver, cells)
+    evacuation_unit_impacts = impacted_evacuation_units(resolver, cells)
     road_impacts = impacted_linear_objects(resolver, cells, "Road", max_items=8)
-    route_impacts = impacted_linear_objects(resolver, cells, "Route", max_items=6)
-    warning = warning_from_forecast(forecast, transfer_impacts, road_impacts)
-    recommendations = emergency_recommendations(warning, transfer_impacts, road_impacts, route_impacts)
+    route_impacts = impacted_linear_objects(resolver, cells, "EvacuationRoute", max_items=6)
+    warning = warning_from_forecast(
+        forecast, evacuation_unit_impacts, road_impacts,
+    )
+    recommendations = emergency_recommendations(
+        warning, evacuation_unit_impacts, road_impacts, route_impacts,
+    )
     result = {
+        "schema_version": FORECAST_SCHEMA_VERSION,
         "cycle_id": f"cycle_{LATEST_FORECAST_ID}",
         "status": "completed",
         "stage": "observe_forecast_warn_dispatch",
         "observations": hydrology_inputs_from_forecast(forecast),
         "forecast": forecast,
         "warning": warning,
-        "transfer_impacts": transfer_impacts,
+        "evacuation_unit_impacts": evacuation_unit_impacts,
         "road_impacts": road_impacts,
         "route_impacts": route_impacts,
         "recommendations": recommendations,
@@ -637,11 +642,13 @@ def risk_level(depth_m: float, velocity_mps: float) -> str:
 
 
 def warning_from_forecast(forecast: dict[str, Any],
-                          transfer_impacts: list[dict[str, Any]],
+                          evacuation_unit_impacts: list[dict[str, Any]],
                           road_impacts: list[dict[str, Any]]) -> dict[str, Any]:
     max_depth = float(forecast.get("max_depth_m") or 0)
     area = float(forecast.get("inundated_area_km2") or 0)
-    affected_population = sum(int(row.get("population") or 0) for row in transfer_impacts)
+    affected_population = sum(
+        int(row.get("population") or 0) for row in evacuation_unit_impacts
+    )
     if max_depth >= 1.8 or affected_population >= 200 or len(road_impacts) >= 5:
         level = "red"
     elif max_depth >= 1.2 or affected_population >= 50 or area >= 1.5:
@@ -656,7 +663,7 @@ def warning_from_forecast(forecast: dict[str, Any],
         "title": f"珊瑚河洪水{level_name(level)}预警",
         "basis": (
             f"预测淹没面积 {area:.2f} km²，最大水深 {max_depth:.2f} m，"
-            f"需关注转移对象 {len(transfer_impacts)} 个、道路对象 {len(road_impacts)} 个。"
+            f"需关注转移单元 {len(evacuation_unit_impacts)} 个、道路对象 {len(road_impacts)} 个。"
         ),
         "affected_population": affected_population,
         "requires_human_approval": level in {"orange", "red"},
@@ -664,18 +671,18 @@ def warning_from_forecast(forecast: dict[str, Any],
 
 
 def emergency_recommendations(warning: dict[str, Any],
-                              transfer_impacts: list[dict[str, Any]],
+                              evacuation_unit_impacts: list[dict[str, Any]],
                               road_impacts: list[dict[str, Any]],
                               route_impacts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     recommendations = []
-    for index, item in enumerate(transfer_impacts[:8], 1):
+    for index, item in enumerate(evacuation_unit_impacts[:8], 1):
         recommendations.append({
-            "recommendation_id": f"rec_transfer_{index}",
+            "recommendation_id": f"rec_evacuation_unit_{index}",
             "action_type": "evacuate",
             "priority": "immediate" if warning["level"] in {"orange", "red"} else "within_3h",
-            "target_type": "Transfer",
-            "target_id": item["transfer_id"],
-            "message": f"组织 {item['town_name']}{item['name']} 转移 {item['population']} 人至 {item.get('place_name') or item.get('place_id') or '就近安置点'}。",
+            "target_type": "EvacuationUnit",
+            "target_id": item["evacuation_unit_id"],
+            "message": f"组织 {item['town_name']}{item['name']} 转移 {item['population']} 人至 {item.get('destination_site_name') or item.get('destination_site_id') or '就近安置点'}。",
             "basis": f"预测最近淹没单元水深 {item['depth_m']:.2f} m，到达时间 {item['arrival_time_h']:.2f} h。",
             "requires_human_approval": True,
         })
@@ -695,7 +702,7 @@ def emergency_recommendations(warning: dict[str, Any],
             "recommendation_id": "rec_route_review",
             "action_type": "detour",
             "priority": "within_1h",
-            "target_type": "Route",
+            "target_type": "EvacuationRoute",
             "target_id": ",".join(item["object_id"] for item in route_impacts[:5]),
             "message": "复核受预测淹没影响的转移路线，必要时启用备用绕行。",
             "basis": f"发现 {len(route_impacts)} 条转移路线邻近预测淹没单元。",
@@ -704,25 +711,41 @@ def emergency_recommendations(warning: dict[str, Any],
     return recommendations
 
 
-def impacted_transfer_units(resolver, cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def impacted_evacuation_units(
+    resolver,
+    cells: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     cell_index = compact_cell_index(cells, min_depth=0.25)
-    places = {row.get("place_id"): row for row in resolver.query("Place")}
+    sites = {
+        row.get("evacuation_site_id"): row
+        for row in resolver.query("EvacuationSite")
+    }
+    destination_by_unit = {
+        row.get("origin_unit_id"): row.get("destination_site_id")
+        for row in resolver.query("EvacuationRoute")
+        if row.get("origin_unit_id") and row.get("destination_site_id")
+    }
     impacts = []
-    for transfer in resolver.query("Transfer"):
-        point = row_point(transfer)
+    for unit in resolver.query("EvacuationUnit"):
+        point = row_point(unit)
         if not point:
             continue
         cell = nearest_cell(point, cell_index, max_distance_m=140)
         if not cell:
             continue
-        place = places.get(transfer.get("place_id"))
+        destination_site_id = destination_by_unit.get(
+            unit.get("evacuation_unit_id"), "",
+        )
+        destination_site = sites.get(destination_site_id)
         impacts.append({
-            "transfer_id": transfer.get("transfer_id", ""),
-            "name": transfer.get("name", ""),
-            "town_name": transfer.get("town_name", ""),
-            "population": int(transfer.get("population") or 0),
-            "place_id": transfer.get("place_id", ""),
-            "place_name": place.get("name") if place else "",
+            "evacuation_unit_id": unit.get("evacuation_unit_id", ""),
+            "name": unit.get("name", ""),
+            "town_name": unit.get("town_name", ""),
+            "population": int(unit.get("population") or 0),
+            "destination_site_id": destination_site_id,
+            "destination_site_name": (
+                destination_site.get("name") if destination_site else ""
+            ),
             "depth_m": float(cell.get("depth_m") or 0),
             "velocity_mps": float(cell.get("velocity_mps") or 0),
             "arrival_time_h": float(cell.get("arrival_time_h") or 0),
@@ -735,7 +758,7 @@ def impacted_linear_objects(resolver, cells: list[dict[str, Any]],
                             object_type: str, max_items: int) -> list[dict[str, Any]]:
     cell_index = compact_cell_index(cells, min_depth=0.35)
     impacts = []
-    id_name = {"Road": "road_id", "Route": "route_id"}.get(object_type, "id")
+    id_name = id_field(object_type)
     for row in resolver.query(object_type):
         points = sampled_geometry_points(row, max_points=16)
         if not points:
@@ -781,6 +804,81 @@ def nearest_cell(point: tuple[float, float],
     if not best:
         return None
     return {**best, "_distance_m": best_distance}
+
+
+def nearby_cells(point: tuple[float, float],
+                 cells: Any,
+                 max_distance_m: float) -> list[dict[str, Any]]:
+    matched = []
+    for cell in candidate_cells(point, cells, max_distance_m):
+        distance = cell_geometry_distance_m(point, cell)
+        if distance <= max_distance_m:
+            matched.append({**cell, "_distance_m": distance})
+    return sorted(matched, key=lambda row: float(row["_distance_m"]))
+
+
+def cell_geometry_distance_m(point: tuple[float, float],
+                             cell: dict[str, Any]) -> float:
+    geometry = cell.get("geometry") or {}
+    if isinstance(geometry, str):
+        try:
+            geometry = json.loads(geometry)
+        except json.JSONDecodeError:
+            geometry = {}
+    if isinstance(geometry, dict):
+        rings = polygon_rings(geometry)
+        if any(point_in_ring(point, ring) for ring in rings):
+            return 0.0
+        distances = [
+            point_segment_distance_m(point, start, end)[0]
+            for ring in rings
+            for start, end in closed_segments(ring)
+        ]
+        if distances:
+            return min(distances)
+    return distance_m(
+        point,
+        (float(cell["centroid_lon"]), float(cell["centroid_lat"])),
+    )
+
+
+def polygon_rings(geometry: dict[str, Any]) -> list[list[tuple[float, float]]]:
+    geometry_type = geometry.get("type")
+    coordinates = geometry.get("coordinates") or []
+    if geometry_type == "Polygon":
+        values = coordinates
+    elif geometry_type == "MultiPolygon":
+        values = [ring for polygon in coordinates for ring in polygon]
+    else:
+        return []
+    return [
+        [(float(point[0]), float(point[1])) for point in ring]
+        for ring in values
+        if isinstance(ring, list) and len(ring) >= 3
+    ]
+
+
+def point_in_ring(point: tuple[float, float],
+                  ring: list[tuple[float, float]]) -> bool:
+    x, y = point
+    inside = False
+    for start, end in closed_segments(ring):
+        x1, y1 = start
+        x2, y2 = end
+        if (y1 > y) == (y2 > y):
+            continue
+        crossing_x = x1 + (y - y1) * (x2 - x1) / (y2 - y1)
+        if x < crossing_x:
+            inside = not inside
+    return inside
+
+
+def closed_segments(
+    ring: list[tuple[float, float]],
+) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+    if ring[0] == ring[-1]:
+        return list(zip(ring, ring[1:]))
+    return list(zip(ring, [*ring[1:], ring[0]]))
 
 
 def build_cell_spatial_index(cells: list[dict[str, Any]]) -> dict[str, Any]:
@@ -985,7 +1083,8 @@ def read_cached_emergency_cycle(forecast: dict[str, Any]) -> dict[str, Any] | No
         return None
     cached_forecast = cached.get("forecast") or {}
     if (
-        cached_forecast.get("forecast_id") == forecast.get("forecast_id")
+        cached.get("schema_version") == FORECAST_SCHEMA_VERSION
+        and cached_forecast.get("forecast_id") == forecast.get("forecast_id")
         and cached_forecast.get("generated_at") == forecast.get("generated_at")
     ):
         cached.pop("mappable", None)
@@ -1010,5 +1109,6 @@ def clear_cached_geojson() -> None:
     cache_dir = workspace_dir(create=True) / "cache" / "geojson"
     if not cache_dir.exists():
         return
-    for path in cache_dir.glob("forecastcell*.geojson"):
-        path.unlink()
+    for pattern in ("inundationforecastcell*.geojson", "forecastcell*.geojson"):
+        for path in cache_dir.glob(pattern):
+            path.unlink()

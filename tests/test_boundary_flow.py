@@ -469,7 +469,7 @@ class InundationMapEventTest(unittest.TestCase):
         self.assertIn("forecast_cell_count>0", prompt)
         self.assertIn("必须调用一次 ui_set_inundation_alert", prompt)
         self.assertIn("不执行对象级影响分析", prompt)
-        self.assertIn('"object_type": "HydrodynamicCell"', prompt)
+        self.assertIn('"object_type": "HydrodynamicGridCell"', prompt)
         self.assertIn("只有用户在普通对话中明确请求时才可展示", prompt)
 
     def test_only_hydrodynamic_actions_reach_automatic_frontend_stream(self):
@@ -480,9 +480,9 @@ class InundationMapEventTest(unittest.TestCase):
                 {"type": "show_hydrodynamic_mesh"},
                 {"type": "apply_hydrodynamic_result", "filters": {"forecast_id": "latest"}},
                 {"type": "set_watershed_inundation_alert", "active": True},
-                {"type": "load_object", "object_type": "Route"},
+                {"type": "load_object", "object_type": "EvacuationRoute"},
                 {"type": "clear_highlights"},
-                {"type": "highlight_objects", "object_type": "Route"},
+                {"type": "highlight_objects", "object_type": "EvacuationRoute"},
             ],
             "result_cards": [{"title": "受影响路线"}],
         }

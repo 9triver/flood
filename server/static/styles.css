@@ -1771,9 +1771,9 @@ h2 {
 .object-symbol-bridge { --object-symbol-color: #374151; }
 .object-symbol-road { --object-symbol-color: #5f6772; }
 .object-symbol-place { --object-symbol-color: #15803d; }
-.object-symbol-transfer { --object-symbol-color: #b45309; }
+.object-symbol-evacuation-unit { --object-symbol-color: #b45309; }
 .object-symbol-route { --object-symbol-color: #d44a3a; }
-.object-symbol-risk { --object-symbol-color: #dc2626; }
+.object-symbol-danger-area { --object-symbol-color: #dc2626; }
 .object-symbol-station { --object-symbol-color: #0369a1; }
 .object-symbol-default { --object-symbol-color: #475569; }
 

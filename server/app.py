@@ -17,6 +17,9 @@ sys.path.insert(0, str(PROJECT_DIR))
 sys.path.insert(0, str(PROJECT_DIR / "agent"))
 
 from oag.runtime.events import event_to_dict  # noqa: E402
+from domains.flood.runtime.impact_analysis import (  # noqa: E402
+    BRIDGE_INFLUENCE_RADIUS_M,
+)
 from server.agent_runs import AgentRunManager  # noqa: E402
 from server.directives import DirectiveStore  # noqa: E402
 from server.events import EventRuntime  # noqa: E402
@@ -262,6 +265,12 @@ class Handler(BaseHTTPRequestHandler):
             min_depth_m=_coerce_float((params.get("min_depth_m") or ["0.15"])[0], 0.15),
             max_distance_m=_coerce_float((params.get("max_distance_m") or ["10"])[0], 10.0),
             time_h=_coerce_optional_float((params.get("time_h") or [""])[0]),
+            bridge_influence_radius_m=_coerce_float(
+                (params.get("bridge_influence_radius_m") or [
+                    str(BRIDGE_INFLUENCE_RADIUS_M)
+                ])[0],
+                BRIDGE_INFLUENCE_RADIUS_M,
+            ),
         )
         return self._json(result)
 

@@ -83,7 +83,7 @@ def _impact_result_summary(result: dict[str, Any]) -> str:
     if not isinstance(summary, dict):
         return "\n".join(lines)
     rows = []
-    for object_type in ("Facility", "Bridge", "Road", "Route", "Transfer", "Place"):
+    for object_type in ("Facility", "Bridge", "Road", "EvacuationRoute", "EvacuationUnit", "EvacuationSite"):
         item = summary.get(object_type) or {}
         count = int(item.get("count") or 0)
         if not count:
@@ -94,10 +94,11 @@ def _impact_result_summary(result: dict[str, Any]) -> str:
             f"中风险 {int(item.get('medium') or 0)}",
             f"低风险 {int(item.get('low') or 0)}",
         ]
+        depth_label = "邻近洪泛区最大水深" if object_type == "Bridge" else "最大水深"
         rows.append(
             f"  - {_IMPACT_LABELS[object_type]}：{count} 个（"
             + "，".join(risk_parts)
-            + f"；最大水深 {format_float(item.get('max_depth_m'), 3)} m）"
+            + f"；{depth_label} {format_float(item.get('max_depth_m'), 3)} m）"
         )
     if rows:
         lines.append("- 分类汇总：")
@@ -254,7 +255,7 @@ def impact_event_detail(event: dict[str, Any]) -> str:
     payload = event.get("payload") or {}
     summary = payload.get("summary") or {}
     parts = []
-    for key in ("Facility", "Bridge", "Road", "Route", "Transfer", "Place"):
+    for key in ("Facility", "Bridge", "Road", "EvacuationRoute", "EvacuationUnit", "EvacuationSite"):
         item = summary.get(key) or {}
         count = int(item.get("count") or 0)
         if count:
@@ -273,7 +274,7 @@ _IMPACT_LABELS = {
     "Facility": "设施",
     "Bridge": "桥梁",
     "Road": "道路",
-    "Route": "路线",
-    "Transfer": "转移单元",
-    "Place": "安置点",
+    "EvacuationRoute": "路线",
+    "EvacuationUnit": "转移单元",
+    "EvacuationSite": "安置点",
 }

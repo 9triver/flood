@@ -12,7 +12,7 @@ under `local/runtime/flood/workspaces/`. Shared rebuildable caches belong under
 under `local/source_data/`.
 
 Each successful forecast is archived in its workspace as `forecasts/vNNN`, while
-`forecasts/latest` remains the compatibility path used by the live map. `ForecastCell`
+`forecasts/latest` remains the compatibility path used by the live map. `InundationForecastCell`
 geometries are derived from the shared mesh on demand and are not persisted. Successful
 CNN temporary input/output directories are removed; failed runs keep them for diagnosis.
 Evolution workspaces are retained by default. Set `FLOOD_WORKSPACE_RETENTION_COUNT` to

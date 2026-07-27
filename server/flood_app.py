@@ -12,6 +12,9 @@ sys.path.insert(0, str(PROJECT_DIR))
 sys.path.insert(0, str(PROJECT_DIR / "agent"))
 
 from oag.ontology.loader import load_domain  # noqa: E402
+from domains.flood.runtime.impact_analysis import (  # noqa: E402
+    BRIDGE_INFLUENCE_RADIUS_M,
+)
 
 from server.chat.agent_factory import (  # noqa: E402
     FloodAgentFactory,
@@ -104,6 +107,7 @@ class FloodApp:
         min_depth_m: float = 0.15,
         max_distance_m: float = 10.0,
         time_h: float | None = None,
+        bridge_influence_radius_m: float = BRIDGE_INFLUENCE_RADIUS_M,
     ) -> dict[str, Any]:
         return self._domain_service.analyze_inundation_impacts(
             forecast_id,
@@ -111,6 +115,7 @@ class FloodApp:
             min_depth_m,
             max_distance_m,
             time_h,
+            bridge_influence_radius_m,
         )
 
     def get_object(self, object_type: str, object_id: str) -> dict[str, Any]:

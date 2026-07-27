@@ -28,12 +28,11 @@ OBJECT_LIBRARY_FILES = {
     "HydraulicStructure": "hydraulic_structure.jsonl",
     "Road": "road.jsonl",
     "BridgeRoadLink": "bridge_road_link.jsonl",
-    "Place": "place.jsonl",
-    "Transfer": "transfer.jsonl",
-    "Route": "route.jsonl",
-    "Risk": "risk.jsonl",
-    "HydroStation": "hydro_station.jsonl",
-    "Hydrology": "hydrology.jsonl",
+    "EvacuationSite": "evacuation_site.jsonl",
+    "EvacuationUnit": "evacuation_unit.jsonl",
+    "EvacuationRoute": "evacuation_route.jsonl",
+    "DangerArea": "danger_area.jsonl",
+    "HydrometeorologicalStation": "hydrometeorological_station.jsonl",
 }
 
 MAPPABLE_OBJECTS = {
@@ -48,12 +47,12 @@ MAPPABLE_OBJECTS = {
         "style": {"type": "fill", "color": "#111827", "weight": 1, "fillColor": "#9bc4df", "fillOpacity": 0.1},
     },
     "County": {
-        "label": "县级边界",
+        "label": "县级行政区",
         "role": "base",
         "style": {"type": "line", "color": "#64748b", "weight": 1},
     },
     "Town": {
-        "label": "乡镇边界",
+        "label": "乡镇",
         "role": "base",
         "style": {"type": "fill", "color": "#475569", "weight": 1, "fillColor": "#facc15", "fillOpacity": 0.08},
     },
@@ -83,37 +82,37 @@ MAPPABLE_OBJECTS = {
         "style": {"type": "circle", "color": "#dc2626", "radius": 5, "stroke": "#ffffff"},
     },
     "HydraulicStructure": {
-        "label": "水利工程设施",
+        "label": "其他水利工程",
         "role": "asset",
         "style": {"type": "circle", "color": "#0f766e", "radius": 5, "stroke": "#ffffff"},
     },
-    "Place": {
+    "EvacuationSite": {
         "label": "安置地点",
         "role": "evacuation",
         "style": {"type": "circle", "color": "#16a34a", "radius": 5, "stroke": "#ffffff"},
     },
-    "Transfer": {
-        "label": "转移安排",
+    "EvacuationUnit": {
+        "label": "转移单元",
         "role": "evacuation",
         "style": {"type": "circle", "color": "#f97316", "radius": 5, "stroke": "#ffffff"},
     },
-    "Route": {
-        "label": "路线",
+    "EvacuationRoute": {
+        "label": "转移路线",
         "role": "evacuation",
         "style": {"type": "line", "color": "#ef4444", "weight": 3},
     },
-    "Risk": {
+    "DangerArea": {
         "label": "危险区",
         "role": "risk",
         "style": {"type": "circle", "color": "#b91c1c", "radius": 5, "stroke": "#ffffff"},
     },
-    "HydroStation": {
-        "label": "水文测站",
+    "HydrometeorologicalStation": {
+        "label": "水文气象测站",
         "role": "hydrology",
         "style": {"type": "circle", "color": "#0284c7", "radius": 5, "stroke": "#ffffff"},
     },
-    "HydrodynamicCell": {
-        "label": "水动力模型网格",
+    "HydrodynamicGridCell": {
+        "label": "水动力网格单元",
         "role": "forecast",
         "style": {"type": "fill", "fillColor": "#dc2626", "fillOpacity": 0.42, "color": "#991b1b", "weight": 0.35},
     },
@@ -183,16 +182,15 @@ def id_field(object_type: str) -> str:
         "Bridge": "bridge_id",
         "BridgeRoadLink": "bridge_road_link_id",
         "Facility": "facility_id",
-        "Place": "place_id",
-        "Transfer": "transfer_id",
-        "Route": "route_id",
-        "Risk": "risk_id",
-        "HydroStation": "station_id",
-        "ForecastRun": "forecast_id",
-        "ForecastCell": "forecast_cell_id",
-        "HydrodynamicCell": "hydrodynamic_cell_id",
+        "EvacuationSite": "evacuation_site_id",
+        "EvacuationUnit": "evacuation_unit_id",
+        "EvacuationRoute": "evacuation_route_id",
+        "DangerArea": "danger_area_id",
+        "HydrometeorologicalStation": "station_id",
+        "FloodForecast": "forecast_id",
+        "InundationForecastCell": "forecast_cell_id",
+        "HydrodynamicGridCell": "hydrodynamic_cell_id",
         "EmergencyDirective": "directive_id",
-        "Hydrology": "hydrology_id",
     }.get(object_type, f"{object_type.lower()}_id")
 
 

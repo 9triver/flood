@@ -18,6 +18,21 @@ class EmptyResolver:
         return None
 
 
+class EvacuationResolver(EmptyResolver):
+    def query(self, object_type, filters=None):
+        if object_type != "EvacuationRoute":
+            return []
+        rows = [{
+            "evacuation_route_id": "route-40",
+            "origin_unit_id": "40",
+            "destination_site_id": "shelter-232",
+        }]
+        return [
+            row for row in rows
+            if not filters or all(row.get(key) == value for key, value in filters.items())
+        ]
+
+
 class AMapHandler(BaseHTTPRequestHandler):
     path_requested = ""
 
@@ -96,6 +111,25 @@ def amap_v5_path(polyline, *, distance, duration, road_name):
 
 
 class RoutePlanningTests(unittest.TestCase):
+    def test_default_destination_is_resolved_through_evacuation_route(self):
+        site_id = route_planning.default_destination_site_id(
+            EvacuationResolver(), "EvacuationUnit", "40",
+        )
+
+        self.assertEqual("shelter-232", site_id)
+
+    def test_legacy_workspace_route_is_normalized_on_read(self):
+        route = route_planning.normalize_planned_route({
+            "route_id": "route-40",
+            "transfer_id": "40",
+            "place_id": "shelter-232",
+        })
+
+        self.assertEqual("route-40", route["evacuation_route_id"])
+        self.assertEqual("40", route["origin_unit_id"])
+        self.assertEqual("shelter-232", route["destination_site_id"])
+        self.assertTrue({"route_id", "transfer_id", "place_id"}.isdisjoint(route))
+
     def test_flood_cells_are_aggregated_to_bounded_polygon_areas(self):
         cells = [
             {
@@ -159,6 +193,7 @@ class RoutePlanningTests(unittest.TestCase):
                     )
 
                 self.assertEqual("completed", result["status"])
+                self.assertTrue(result["route"]["evacuation_route_id"].startswith("planned_"))
                 self.assertEqual("AMap", result["route"]["routing_engine"])
                 self.assertEqual(976.0, result["route"]["length_m"])
                 geometry = json.loads(result["route"]["geometry"])

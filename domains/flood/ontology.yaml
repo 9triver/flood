@@ -12,15 +12,15 @@ interaction_policies:
       - "用户明确要求显示、打开、绘制、加载、叠加、缩放、聚焦或清空地图对象时，必须调用对应 ui_* 工具执行前端动作，不要只用文字说明。"
       - "用户只要求清除、隐藏淹没范围、预测淹没结果或水动力结果时，调用 ui_clear_map 并传 target=inundation；这只移除淹没结果，不改变地图视野。"
       - "基于预测淹没范围判断设施、道路、桥梁、转移路线或安置点是否受影响时，必须调用 analyze_inundation_impacts，不得自行猜测对象级受淹结论。"
-      - "用户根据多时刻淹水预测询问最晚转移时间、转移截止时间或安全转移窗口时，必须调用 analyze_latest_evacuation_time；不得把 Transfer.arrive_time_window 当作预测分析结论，也不要自行逐格查询 ForecastCell 推算。"
+      - "用户根据多时刻淹水预测询问最晚转移时间、转移截止时间或安全转移窗口时，必须调用 analyze_latest_evacuation_time；不得把 EvacuationUnit.flood_arrival_window 当作预测分析结论，也不要自行逐格查询 InundationForecastCell 推算。"
       - "已有水动力时间轴时直接分析已有预测；只有用户明确要求运行、重算或更新预测时才调用 run_flood_forecast。"
       - "前端上下文 hydrodynamic_timeline.mode=time_slice 且用户询问当前时刻、当前画面或该时刻影响时，把 current_hydrodynamic_time_h 作为 analyze_inundation_impacts.time_h；用户询问总体或最大影响时不传 time_h。"
       - "预测结果中的 time_h、arrival_time_h 以及名称以 _time_h 结尾的预测时间均是相对 valid_from 的小时偏移，不是钟表时间。面向用户说明何时发生时，优先使用工具返回的 analysis_time_at、valid_at、first_unsafe_at、latest_departure_at 等实际时刻，并可把预测 +Nh 作为辅助信息；不得把 generated_at 当作预测基准时刻。"
-      - "用户要求运行预测、实时预测或未来淹没时，先调用 run_flood_forecast，再用 HydrodynamicCell 和 forecast_id=latest 展示预测淹没结果。"
+      - "用户要求运行预测、实时预测或未来淹没时，先调用 run_flood_forecast，再用 HydrodynamicGridCell 和 forecast_id=latest 展示预测淹没结果。"
       - "用户要求自主观测、持续预测、自动告警、闭环调度或避洪转移调度时，调用 run_emergency_cycle，再按结果展示相关领域对象。"
       - "不要把 severity_index 或综合指标映射为 5/10/20/50/100 年一遇设计方案；防洪响应预案必须通过已实现工具或人工审批。"
       - "用户要求规划导航、避洪路线或绕开淹没区域前往安置点时调用 plan_evacuation_route；同一起终点每个用户请求最多调用一次，no_safe_route 或 retryable=false 后不得自行改变交通方式、预测时刻或避洪参数重试。"
-      - "路线规划成功后使用结果中的 route_id 展示本次生成的 Route；一次展示多个对象时放入同一次 ui_show_objects 调用。"
+      - "路线规划成功后使用结果中的 evacuation_route_id 展示本次生成的 EvacuationRoute；一次展示多个对象时放入同一次 ui_show_objects 调用。"
       - "用户要求把当前或刚才的建议作为应急指令初稿、新建应急指令或准备发出指令时，调用 ui_open_emergency_directive_editor；根据对话上下文生成简洁标题、明确接收对象、优先级和可编辑正文。该工具只打开草稿编辑器，必须由用户在前端修改并确认后才会发出。"
     intents:
       count:
@@ -155,7 +155,7 @@ event_policies:
       mode: when_relevant
       tool: ui_show_objects
       objects:
-        - object_type: HydrodynamicCell
+        - object_type: HydrodynamicGridCell
           filters: {forecast_id: latest}
           label: "预测淹没结果"
           fit: false
@@ -223,6 +223,8 @@ objects:
       boundary_id: {type: str, required: true, description: "水动力边界对象编号"}
       river_id: {type: str, description: "所属河流编号"}
       name: {type: str, description: "边界或断面名称"}
+      source_name: {type: str, description: "原始数据中的边界或断面名称"}
+      name_source: {type: str, description: "规范显示名的生成或校正方式"}
       boundary_group: {type: str, description: "边界分组: upstream/interval1/interval2/tonggu/waterlevel"}
       boundary_type: {type: str, description: "原始边界类型或水动力输入类型"}
       boundary_role: {type: str, description: "业务角色: upstream_inflow/lateral_inflow/tributary_inflow/downstream_water_level"}
@@ -233,7 +235,7 @@ objects:
   County:
     kind: entity
     countable: true
-    display_name: "县级边界"
+    display_name: "县级行政区"
     aliases:
       - {terms: ["县级边界", "行政边界", "县"]}
     data_source: external_api
@@ -253,7 +255,7 @@ objects:
   Town:
     kind: entity
     countable: true
-    display_name: "乡镇边界"
+    display_name: "乡镇"
     aliases:
       - {terms: ["乡镇", "乡镇边界", "镇界"]}
     data_source: external_api
@@ -322,18 +324,22 @@ objects:
     properties:
       sluice_id: {type: str, required: true, description: "水闸编号"}
       name: {type: str, description: "水闸名称"}
+      source_name: {type: str, description: "原始台账中的水闸名称"}
+      name_source: {type: str, description: "规范显示名的生成或校正方式"}
       river_id: {type: str, description: "所在河流编号"}
       county_id: {type: str, description: "所在县编码"}
       town_name: {type: str, description: "所在乡镇"}
       sluice_type: {type: str, description: "水闸类型，如分洪闸、节制闸"}
       gate_count: {type: int, description: "闸孔数"}
       design_discharge_m3s: {type: float, description: "设计过闸流量或分泄流量"}
+      source_record_ids: {type: str, description: "合并前的源记录ID，以逗号分隔"}
+      source_record_count: {type: int, description: "合并到该水闸实体的源记录数"}
       longitude: {type: float, description: "经度"}
       latitude: {type: float, description: "纬度"}
 
   HydraulicStructure:
     kind: entity
-    display_name: "水利工程设施"
+    display_name: "其他水利工程"
     aliases:
       - {terms: ["水利设施", "水利工程", "水利工程设施"]}
     data_source: external_api
@@ -347,14 +353,20 @@ objects:
     properties:
       structure_id: {type: str, required: true, description: "水利工程设施ID"}
       name: {type: str, description: "设施名称"}
+      source_name: {type: str, description: "原始台账中的设施名称"}
+      name_source: {type: str, description: "规范显示名的生成或校正方式"}
       structure_type: {type: str, description: "设施类型: levee/pump_station/spillway/other"}
       river_id: {type: str, description: "所在河流编号，若可识别"}
       river_name: {type: str, description: "所在河流名称，若可识别"}
+      town_id: {type: str, description: "工程代表点所在乡镇编码，由空间匹配得到"}
+      town_name: {type: str, description: "工程代表点所在乡镇名称，由空间匹配得到"}
       county_id: {type: str, description: "所属县编码，若可识别"}
       location: {type: str, description: "位置描述"}
       length_m: {type: float, description: "长度，适用于堤防等线状工程"}
       elevation_m: {type: float, description: "高程，若可得"}
       flow_m3s: {type: float, description: "流量，适用于泵站/泄洪设施"}
+      source_record_ids: {type: str, description: "合并前的源记录定位符，以逗号分隔"}
+      source_record_count: {type: int, description: "合并到该工程实体的源记录数"}
       longitude: {type: float, description: "经度，点状设施或代表点"}
       latitude: {type: float, description: "纬度，点状设施或代表点"}
 
@@ -376,7 +388,10 @@ objects:
     properties:
       road_id: {type: str, required: true, description: "道路或路段稳定ID"}
       name: {type: str, description: "道路名称"}
+      source_name: {type: str, description: "原始路网中的道路名称"}
+      name_source: {type: str, description: "规范显示名的生成或校正方式"}
       ref: {type: str, description: "道路编号，如 G65、G78、G241"}
+      county_id: {type: str, description: "道路代表点所在县编码；边界附近道路允许按500米容差归属最近县"}
       road_class: {type: str, description: "道路等级或 fclass"}
       one_way: {type: str, description: "单向/双向标记"}
       bridge_flag: {type: bool, description: "该路段是否标记为桥上路段"}
@@ -400,6 +415,8 @@ objects:
     properties:
       bridge_id: {type: str, required: true, description: "桥梁稳定ID"}
       name: {type: str, description: "桥梁名称"}
+      source_name: {type: str, description: "原始台账中的桥梁名称"}
+      name_source: {type: str, description: "规范显示名的生成或校正方式"}
       river_id: {type: str, description: "所在河流编号"}
       length_m: {type: float, description: "桥长"}
       width_m: {type: float, description: "桥宽"}
@@ -412,6 +429,9 @@ objects:
 
   BridgeRoadLink:
     kind: relation
+    display_name: "桥梁道路关联"
+    aliases:
+      - {terms: ["桥梁道路关联", "桥路关联"]}
     data_source: external_api
     mutability: read_only
     source:
@@ -454,15 +474,19 @@ objects:
     properties:
       facility_id: {type: str, required: true, description: "设施ID"}
       name: {type: str, description: "设施名称"}
+      source_name: {type: str, description: "原始数据中的设施名称"}
+      name_source: {type: str, description: "规范显示名的生成或校正方式"}
+      duplicate_source_name_count: {type: int, description: "原始同名记录数；大于1时显示名已消歧"}
       facility_type: {type: str, description: "设施类型: hospital/school/government/other"}
       subtype: {type: str, description: "细分类型，如卫生院、小学、政府机构"}
       address: {type: str, description: "地址"}
+      town_id: {type: str, description: "设施所在乡镇编码，由设施点与乡镇边界空间匹配得到"}
       town_name: {type: str, description: "所在乡镇，若可推断"}
       county_id: {type: str, description: "所属县编码"}
       longitude: {type: float, description: "经度"}
       latitude: {type: float, description: "纬度"}
 
-  Place:
+  EvacuationSite:
     kind: entity
     countable: true
     display_name: "安置地点"
@@ -473,13 +497,15 @@ objects:
     source:
       type: resolver
       resolver: flood_repository
-      id_field: place_id
+      id_field: evacuation_site_id
     summary: "安置或应急地点"
-    description: "安置点、就地安置点、集合点、物资点等统一为 Place，通过 place_type 区分。"
+    description: "安置点、就地安置点、集合点、物资点等统一为 EvacuationSite，通过 site_type 区分。"
     properties:
-      place_id: {type: str, required: true, description: "地点ID"}
-      name: {type: str, description: "地点名称"}
-      place_type: {type: str, description: "地点类型: shelter/in_place/assembly/warehouse/medical"}
+      evacuation_site_id: {type: str, required: true, description: "安置地点稳定ID"}
+      name: {type: str, description: "规范显示名"}
+      source_name: {type: str, description: "原始数据中的名称"}
+      name_source: {type: str, description: "规范显示名的生成或校正方式"}
+      site_type: {type: str, description: "地点类型: shelter/in_place/assembly/warehouse/medical"}
       town_id: {type: str, description: "所属乡镇编码"}
       town_name: {type: str, description: "所属乡镇名称"}
       county_id: {type: str, description: "所属县编码"}
@@ -488,36 +514,36 @@ objects:
       longitude: {type: float, description: "经度"}
       latitude: {type: float, description: "纬度"}
 
-  Transfer:
+  EvacuationUnit:
     kind: entity
     countable: true
-    display_name: "转移安排"
+    display_name: "转移单元"
     aliases:
-      - {terms: ["转移对象", "转移安排", "转移单元"]}
+      - {terms: ["转移对象", "转移安排", "转移单元", "需转移村庄"]}
     data_source: external_api
     mutability: read_only
     source:
       type: resolver
       resolver: flood_repository
-      id_field: transfer_id
-    summary: "避洪转移安排"
-    description: "转移对象、转移人口、所属乡镇和预估受影响/到达时间的业务表达。"
+      id_field: evacuation_unit_id
+    summary: "需要组织转移的人口单元"
+    description: "EvacuationUnit 表达转移路线的起点及其人口、属地和预案洪水到达窗口；路线与安置地点通过 EvacuationRoute 关联。"
     properties:
-      transfer_id: {type: str, required: true, description: "转移安排ID"}
-      name: {type: str, description: "转移对象名称，如村名"}
+      evacuation_unit_id: {type: str, required: true, description: "转移单元稳定ID"}
+      name: {type: str, description: "规范显示名，如新民村转移单元"}
+      source_name: {type: str, description: "原始数据中的村庄或转移对象名称"}
+      name_source: {type: str, description: "规范显示名的生成或校正方式"}
       population: {type: int, description: "转移人口数"}
       town_id: {type: str, description: "所属乡镇编码"}
       town_name: {type: str, description: "所属乡镇名称"}
       county_id: {type: str, description: "所属县编码"}
-      arrive_time_window: {type: str, description: "洪水到达或转移窗口，如 0-12、12-24"}
-      route_id: {type: str, description: "推荐转移路线ID"}
-      place_id: {type: str, description: "目标安置地点ID"}
+      flood_arrival_window: {type: str, description: "预案中的洪水到达窗口，如 0-12、12-24；不是预测分析结论"}
       longitude: {type: float, description: "经度"}
       latitude: {type: float, description: "纬度"}
 
-  Route:
+  EvacuationRoute:
     kind: entity
-    display_name: "路线"
+    display_name: "转移路线"
     aliases:
       - {terms: ["路线", "路径", "转移路线", "绕行路线"]}
     data_source: external_api
@@ -525,16 +551,18 @@ objects:
     source:
       type: resolver
       resolver: flood_repository
-      id_field: route_id
-    summary: "路线"
-    description: "转移路线、救援路线、绕行路线统一为 Route，通过 route_type 区分。"
+      id_field: evacuation_route_id
+    summary: "连接转移单元与安置地点的路线"
+    description: "EvacuationRoute 表达从 EvacuationUnit 到 EvacuationSite 的预定或动态规划路线，通过 route_type 区分转移、救援、绕行和保障路线。"
     properties:
-      route_id: {type: str, required: true, description: "路线ID"}
-      name: {type: str, description: "路线名称"}
+      evacuation_route_id: {type: str, required: true, description: "转移路线稳定ID"}
+      name: {type: str, description: "规范显示名"}
+      source_name: {type: str, description: "原始数据中的路线名称"}
+      name_source: {type: str, description: "规范显示名的生成或校正方式"}
       route_type: {type: str, description: "路线类型: transfer/rescue/detour/supply"}
       road_detail: {type: str, description: "路线道路描述"}
-      transfer_id: {type: str, description: "关联转移安排ID，若为转移路线"}
-      place_id: {type: str, description: "目标地点ID"}
+      origin_unit_id: {type: str, description: "起点转移单元ID；非转移单元起点的动态路线可为空"}
+      destination_site_id: {type: str, description: "终点安置地点ID"}
       population: {type: int, description: "服务或转移人口"}
       length_m: {type: float, description: "路线长度，米"}
       duration_s: {type: float, description: "预计通行时间，秒"}
@@ -555,9 +583,9 @@ objects:
       start_object_id: {type: str, description: "起点对象ID"}
       instructions: {type: json, description: "路线逐步导航信息 JSON 数组，每步包含 text、street_name、distance、time"}
 
-  ForecastRun:
+  FloodForecast:
     kind: entity
-    display_name: "洪水预测运行"
+    display_name: "洪水预测"
     aliases:
       - {terms: ["预测运行", "洪水预测"]}
     data_source: external_api
@@ -566,8 +594,8 @@ objects:
       type: resolver
       resolver: flood_repository
       id_field: forecast_id
-    summary: "洪水预测运行"
-    description: "ForecastRun 表示一次水文-水动力联动预测运行，记录水文边界、模型名称、生成时间和预测淹没统计；模型原始输出保存在所属演进工作空间。"
+    summary: "一次洪水预测及其结果摘要"
+    description: "FloodForecast 表示一次水文-水动力联动预测运行，记录水文边界、模型名称、生成时间和预测淹没统计；模型原始输出保存在所属演进工作空间。"
     properties:
       forecast_id: {type: str, required: true, description: "预测运行ID，如 v001；latest 仅作为查询当前最新预测的别名"}
       forecast_version: {type: str, description: "当前演进内的预测版本，如 v001"}
@@ -618,17 +646,17 @@ objects:
       forecast_version: {type: str, description: "发出指令时所依据的预测版本"}
       issued_at: {type: str, description: "用户确认发出时间"}
 
-  ForecastCell:
+  InundationForecastCell:
     kind: entity
-    display_name: "预测淹没单元"
+    display_name: "淹没预测单元"
     data_source: external_api
     mutability: read_only
     source:
       type: resolver
       resolver: flood_repository
       id_field: forecast_cell_id
-    summary: "预测淹没单元"
-    description: "ForecastCell 由静态水动力网格和所属工作空间内指定时刻的模型水深结果按需派生，承载预测水深、流速、到达时间和退水时间，不单独持久化网格几何副本。"
+    summary: "指定洪水预测下的淹没网格结果"
+    description: "InundationForecastCell 由静态水动力网格和所属工作空间内指定时刻的模型水深结果按需派生，承载预测水深、流速、到达时间和退水时间，不单独持久化网格几何副本。"
     properties:
       forecast_cell_id: {type: str, required: true, description: "预测计算单元ID"}
       forecast_id: {type: str, description: "所属预测运行ID"}
@@ -648,9 +676,9 @@ objects:
       risk_level: {type: str, description: "由水深和流速派生的风险等级"}
       area_m2: {type: float, description: "单元面积，平方米"}
 
-  HydrodynamicCell:
+  HydrodynamicGridCell:
     kind: entity
-    display_name: "水动力模型网格"
+    display_name: "水动力网格单元"
     aliases:
       - {terms: ["水动力网格", "模型网格", "GT.txt 网格", "预测淹没结果"]}
     data_source: external_api
@@ -660,36 +688,16 @@ objects:
       resolver: flood_repository
       id_field: hydrodynamic_cell_id
     summary: "水动力模型网格单元"
-    description: "HydrodynamicCell 是水动力模型的静态三角网格计算单元，可承载某次预测对应的最大水深结果。"
+    description: "HydrodynamicGridCell 是水动力模型的静态三角网格计算单元，可承载某次预测对应的最大水深结果。"
     properties:
       hydrodynamic_cell_id: {type: str, required: true, description: "水动力网格单元ID"}
       cell_id: {type: int, description: "模型原始 cell 编号"}
       depth_m: {type: float, description: "模型输出最大水深，米；0 表示无水"}
       is_flooded: {type: bool, description: "是否有水深"}
 
-  Hydrology:
+  HydrometeorologicalStation:
     kind: entity
-    display_name: "水文成果"
-    data_source: external_api
-    mutability: read_only
-    source:
-      type: resolver
-      resolver: flood_repository
-      id_field: hydrology_id
-    summary: "水文成果"
-    description: "设计暴雨、设计洪水、洪峰流量和泄量等成果。"
-    properties:
-      hydrology_id: {type: str, required: true, description: "水文成果ID"}
-      river_id: {type: str, description: "对应河流编号"}
-      design_frequency_year: {type: int, description: "设计频率，年"}
-      duration_h: {type: float, description: "设计暴雨历时，小时"}
-      design_rainfall_mm: {type: float, description: "设计暴雨，毫米"}
-      peak_inflow_m3s: {type: float, description: "入库洪峰流量"}
-      max_discharge_m3s: {type: float, description: "最大泄量"}
-
-  HydroStation:
-    kind: entity
-    display_name: "水文测站"
+    display_name: "水文气象测站"
     aliases:
       - {terms: ["水文站", "测站", "雨量站", "水位站", "气象站"]}
     data_source: mixed
@@ -714,25 +722,25 @@ objects:
       observation_items: {type: str, description: "观测项目，如 rainfall,water_level,outflow"}
       record_period: {type: str, description: "资料系列或可用时段说明"}
 
-  Risk:
+  DangerArea:
     kind: entity
     display_name: "危险区"
     aliases:
       - {terms: ["危险区", "风险点", "风险区"]}
-    data_source: mixed
-    mutability: append_only
+    data_source: external_api
+    mutability: read_only
     source:
       type: resolver
       resolver: flood_repository
-      id_field: risk_id
-    summary: "风险或危险区对象"
-    description: "统一表达道路、桥梁、设施、路线、乡镇、安置地点等目标对象的风险，也可承接本地危险区台账中的空间点对象。"
+      id_field: danger_area_id
+    summary: "静态危险区台账对象"
+    description: "表达本地危险区台账中的静态空间点。预测淹没影响由 analyze_inundation_impacts 动态计算，不写入 DangerArea 对象库。"
     properties:
-      risk_id: {type: str, required: true, description: "风险评估ID"}
-      target_type: {type: str, description: "目标对象类型: Road/Bridge/Facility/Route/Town/Place/Transfer"}
-      target_id: {type: str, description: "目标对象ID"}
-      name: {type: str, description: "风险点或危险区名称"}
-      risk_type: {type: str, description: "风险类型: danger_area/inundation/interruption/overtopping/scour/isolation/evacuation_blocked/capacity_shortage"}
+      danger_area_id: {type: str, required: true, description: "危险区稳定ID"}
+      name: {type: str, description: "规范显示名"}
+      source_name: {type: str, description: "原始台账中的自然村名称"}
+      name_source: {type: str, description: "规范显示名的生成或校正方式"}
+      danger_area_type: {type: str, description: "危险区类型，当前为 flood_danger_area"}
       risk_level: {type: str, description: "风险等级: low/medium/high/critical/unknown"}
       city: {type: str, description: "所在市"}
       county_name: {type: str, description: "所在县区"}
@@ -741,13 +749,8 @@ objects:
       natural_village: {type: str, description: "自然村或自然屯"}
       longitude: {type: float, description: "经度"}
       latitude: {type: float, description: "纬度"}
-      max_depth_m: {type: float, description: "最大淹没水深"}
-      max_velocity_mps: {type: float, description: "最大流速"}
-      first_arrival_time_h: {type: float, description: "最早受影响时间"}
-      affected_length_m: {type: float, description: "受影响长度，适用于道路或路线"}
-      affected_population: {type: int, description: "受影响人口"}
       evidence: {type: str, description: "风险判断依据"}
-      data_quality: {type: str, description: "证据质量: model_overlay/table_record/manual/insufficient"}
+      data_quality: {type: str, description: "证据质量，当前为 table_record"}
       recommended_action: {type: str, description: "建议动作摘要"}
 
 links:
@@ -801,7 +804,7 @@ links:
 
   river_hydro_stations:
     source: River
-    target: HydroStation
+    target: HydrometeorologicalStation
     join: {source_key: river_id, target_key: river_id}
     description: "河流关联的水文、雨量和气象测站"
     link_type: observes
@@ -839,102 +842,82 @@ links:
     link_type: relates
     cardinality: n..1
 
-  transfer_route:
-    source: Transfer
-    target: Route
-    join: {source_key: route_id, target_key: route_id}
-    description: "转移安排使用的路线"
+  evacuation_unit_routes:
+    source: EvacuationUnit
+    target: EvacuationRoute
+    join: {source_key: evacuation_unit_id, target_key: origin_unit_id}
+    description: "转移单元可使用的一条或多条预定、备选或动态规划路线"
+    link_type: enables
+    cardinality: 1..n
+
+  evacuation_route_destination:
+    source: EvacuationRoute
+    target: EvacuationSite
+    join: {source_key: destination_site_id, target_key: evacuation_site_id}
+    description: "转移路线通向的安置地点"
     link_type: enables
     cardinality: n..1
 
-  transfer_place:
-    source: Transfer
-    target: Place
-    join: {source_key: place_id, target_key: place_id}
-    description: "转移安排对应的安置地点"
-    link_type: enables
-    cardinality: n..1
-
-  route_place:
-    source: Route
-    target: Place
-    join: {source_key: place_id, target_key: place_id}
-    description: "路线通向的目标地点"
-    link_type: enables
-    cardinality: n..1
-
-rules:
-  road_passability_by_depth:
-    description: "按水深判断道路通行风险的基础阈值。阈值应结合本地标准和车辆类型校核。"
-    rule_type: threshold
-    applies_to: [Risk]
-    result_field: risk_level
-    source: "原型规则: depth>=0.5m critical, depth>=0.3m high, depth>=0.15m medium"
-    conditions:
-      - {field: max_depth_m, operator: gte, value: 0.5, result: critical}
-      - {field: max_depth_m, operator: gte, value: 0.3, result: high}
-      - {field: max_depth_m, operator: gte, value: 0.15, result: medium}
-
-  evacuation_route_blocked:
-    description: "转移路线存在较深积水或高流速时判为转移受阻。"
-    rule_type: threshold
-    applies_to: [Risk]
-    result_field: risk_level
-    source: "原型规则: transfer route depth>=0.3m 或 velocity>=1.0m/s 为 high/critical"
-    conditions:
-      - {field: max_depth_m, operator: gte, value: 0.5, result: critical}
-      - {field: max_velocity_mps, operator: gte, value: 1.0, result: high}
-      - {field: max_depth_m, operator: gte, value: 0.3, result: high}
+rules: {}
 
 functions:
   run_flood_forecast:
     summary: "运行或读取最新洪水预测"
-    description: "读取领域策略生成的最新版本化四边界流量输入快照，调用 CNN_V2 水动力模型生成水动力网格 max_depth 预测结果和 ForecastRun 汇总。普通边界观测不会直接改变该快照；该函数也不把 severity 或综合指标映射为 5/10/20/50/100 年一遇设计方案。"
-    usage_prompt: "当用户要求运行预测、查看实时预测或显示未来淹没，或者当前事件策略要求执行预测时调用。该函数只返回 ForecastRun 汇总；如需在 GIS 展示预测淹没范围，在本函数返回后调用 ui_show_objects，object_type=HydrodynamicCell，filters={\"forecast_id\":\"latest\"}，label=预测淹没结果，fit=false，refresh=true。"
+    description: "读取领域策略生成的最新版本化四边界流量输入快照，调用 CNN_V2 水动力模型生成水动力网格 max_depth 预测结果和 FloodForecast 汇总。普通边界观测不会直接改变该快照；该函数也不把 severity 或综合指标映射为 5/10/20/50/100 年一遇设计方案。"
+    usage_prompt: "当用户要求运行预测、查看实时预测或显示未来淹没，或者当前事件策略要求执行预测时调用。该函数只返回 FloodForecast 汇总；如需在 GIS 展示预测淹没范围，在本函数返回后调用 ui_show_objects，object_type=HydrodynamicGridCell，filters={\"forecast_id\":\"latest\"}，label=预测淹没结果，fit=false，refresh=true。"
     function_type: lookup
-    involves_objects: [ForecastRun, ForecastCell, HydrodynamicCell, River, Reservoir]
+    involves_objects: [FloodForecast, InundationForecastCell, HydrodynamicGridCell, River, Reservoir]
     params:
       forecast_id: {type: str, description: "预测运行ID；latest 表示最新预测", default: "latest"}
       force: {type: bool, description: "是否强制重新运行简化模型", default: false}
 
   run_emergency_cycle:
     summary: "运行水文观测-预测-告警-调度闭环原型"
-    description: "使用最新边界流量预测输入和水动力结果，生成预警级别、受影响转移对象、道路/路线关注对象和调度建议。预测结果直接来自 ForecastCell，不通过设计频率映射。"
-    usage_prompt: "当用户要求自主观测、持续预测、自动告警、闭环调度、避洪转移调度或应急循环时调用。该函数只返回预测、预警、受影响对象和调度建议事实；如需 GIS 展示，LLM 应在本函数返回后调用 ui_show_objects 展示 HydrodynamicCell、Risk、Transfer、Place、Route 等领域对象。涉及发布预警、封路、转移等执行动作时必须说明需要人工审批。"
+    description: "使用最新边界流量预测输入和水动力结果，生成预警级别、受影响转移对象、道路/路线关注对象和调度建议。预测结果直接来自 InundationForecastCell，不通过设计频率映射。"
+    usage_prompt: "当用户要求自主观测、持续预测、自动告警、闭环调度、避洪转移调度或应急循环时调用。该函数只返回预测、预警、受影响对象和调度建议事实；如需 GIS 展示，LLM 应在本函数返回后调用 ui_show_objects 展示 HydrodynamicGridCell、EvacuationUnit、EvacuationSite、EvacuationRoute 等领域对象。涉及发布预警、封路、转移等执行动作时必须说明需要人工审批。"
     function_type: lookup
-    involves_objects: [ForecastRun, ForecastCell, Risk, Road, Route, Transfer, Place]
+    involves_objects: [FloodForecast, InundationForecastCell, Road, EvacuationRoute, EvacuationUnit, EvacuationSite]
     params:
       force_forecast: {type: bool, description: "是否强制重新运行预测模型", default: false}
 
   analyze_inundation_impacts:
     summary: "根据预测淹没范围分析受影响对象"
-    description: "读取最新或指定 ForecastCell 预测淹没网格，可按指定 time_h 分析某个预测时刻，也可默认使用最大水深包络；对道路、桥梁、重要设施、转移单元、安置地点和转移路线执行确定性空间邻近分析，返回受影响对象清单、风险等级和按类型汇总。"
-    usage_prompt: "本函数是对象级受淹判定的确定性空间分析入口，forecast_id 默认 latest，target_type 默认 all；只能根据返回结果说明哪些对象受影响，不得自行猜测。当前端上下文包含 current_hydrodynamic_time_h，或用户明确询问某个时间点、当前时间轴位置的影响时，必须把该值作为 time_h 传入；用户询问总体或最大影响时不传 time_h，默认使用最大水深包络。time_h 是相对 valid_from 的偏移量，回答用户时应以结果的 analysis_time_at 实际时刻为主，并把预测 +Nh 作为辅助信息。已有水动力时间轴时直接分析已有预测，除非用户明确要求重算，否则不要先调用 run_flood_forecast。只有用户明确请求在地图展示影响对象时，才把 affected_object_ids 中各对象类型对应的对象项与 HydrodynamicCell 放入同一次 ui_show_objects 调用，并设置 highlight=true、show_only_object_ids=true；自动事件的展示范围由 event_policies 决定。需要缩窄范围时 target_type 可传 Road、Bridge、Facility、Route、Transfer、Place 或 all；min_depth_m 默认 0.15，max_distance_m 默认 10。"
+    description: "读取最新或指定 InundationForecastCell 预测淹没网格，可按指定 time_h 分析某个预测时刻，也可默认使用最大水深包络；普通点和线对象执行空间邻近分析，桥梁针对河槽无网格的特点执行独立的桥头影响区分析，返回受影响对象清单、风险等级和按类型汇总。"
+    usage_prompt: >-
+      本函数是对象级受淹判定的确定性空间分析入口，forecast_id 默认 latest，target_type 默认 all；只能根据返回结果说明哪些对象受影响，不得自行猜测。
+      当前端上下文包含 current_hydrodynamic_time_h，或用户明确询问某个时间点、当前时间轴位置的影响时，必须把该值作为 time_h 传入；用户询问总体或最大影响时不传 time_h，默认使用最大水深包络。
+      time_h 是相对 valid_from 的偏移量，回答用户时应以结果的 analysis_time_at 实际时刻为主，并把预测 +Nh 作为辅助信息。
+      已有水动力时间轴时直接分析已有预测，除非用户明确要求重算，否则不要先调用 run_flood_forecast。
+      桥梁默认检查80米桥头影响区内的完整湿网格多边形。桥梁结果中的 depth_m 和 nearby_max_depth_m 是邻近洪泛区最大水深，不是桥面水深；directly_inundated=false 表示模型未直接覆盖桥面。
+      passability_status=inspection_required 表示周边或单侧桥头受淹、需要现场核查；likely_impassable 表示两侧桥头受淹或已校核的关联道路在桥头附近受淹。缺少桥面高程时，不得声称桥梁本体已经淹没。
+      只有用户明确请求在地图展示影响对象时，才把 affected_object_ids 中各对象类型对应的对象项与 HydrodynamicGridCell 放入同一次 ui_show_objects 调用，并设置 highlight=true、show_only_object_ids=true；自动事件的展示范围由 event_policies 决定。
+      需要缩窄范围时 target_type 可传 Road、Bridge、Facility、EvacuationRoute、EvacuationUnit、EvacuationSite 或 all；min_depth_m 默认0.15，普通对象 max_distance_m 默认10，桥梁 bridge_influence_radius_m 默认80。除非用户明确要求敏感性分析，否则保持默认桥梁影响半径。
     function_type: lookup
-    involves_objects: [ForecastRun, ForecastCell, Road, Bridge, BridgeRoadLink, Facility, Route, Transfer, Place, Risk]
+    involves_objects: [FloodForecast, InundationForecastCell, Road, Bridge, BridgeRoadLink, Facility, EvacuationRoute, EvacuationUnit, EvacuationSite]
     params:
       forecast_id: {type: str, description: "预测运行ID；latest 表示最新预测", default: "latest"}
-      target_type: {type: str, description: "分析目标类型: Road/Bridge/Facility/Route/Transfer/Place/all", default: "all"}
+      target_type: {type: str, description: "分析目标类型: Road/Bridge/Facility/EvacuationRoute/EvacuationUnit/EvacuationSite/all", default: "all"}
       min_depth_m: {type: float, description: "纳入影响判定的最低预测水深，单位 m", default: 0.15}
-      max_distance_m: {type: float, description: "对象或采样点到预测淹没网格中心的最大匹配距离，单位 m", default: 10}
+      max_distance_m: {type: float, description: "普通点对象或线采样点到预测淹没网格中心的最大匹配距离，单位 m；不用于桥梁", default: 10}
       time_h: {type: float, description: "可选预测时刻，单位小时；不传表示使用最大水深包络", default: ""}
+      bridge_influence_radius_m: {type: float, description: "桥梁到预测湿网格多边形的桥头影响区半径，单位 m", default: 80}
 
   analyze_latest_evacuation_time:
     summary: "根据24小时淹水序列分析最晚安全转移时间"
     description: "读取当前演进工作空间的0至24小时水深时间序列，沿指定转移安排的起点、预定路线和安置点逐时检查禁行水深，返回首次不可通行时刻、最后一个确认安全时间切片，以及扣除路线通行或核定清空耗时后的理论最晚出发时刻。"
     usage_prompt: >-
       用户询问某个村、转移单元的最晚转移时间、转移截止时间或安全转移窗口时必须调用。
-      已知 transfer_id 时优先传 transfer_id，否则可直接传 transfer_name；除非用户明确指定另一条路线，否则不要传 route_id，函数会使用 Transfer 关联的预定路线。
+      已知 evacuation_unit_id 时优先传 evacuation_unit_id，否则可直接传 evacuation_unit_name；除非用户明确指定另一条路线，否则不要传 evacuation_route_id，函数会按 origin_unit_id 使用 EvacuationUnit 关联的预定路线。
       blocked_depth_m 默认0.3米；已有经核定的全体人员集结、分批运输和路线清空总耗时时传 clearance_duration_min，否则函数只按路线已有通行时间或1米/秒步行速度估算单程通行时间。
       只能根据返回的 deadline 回答：deadline_status=safe_through_horizon 表示24小时内没有由预测形成的截止时间，不得把24小时末端说成最晚转移时间；route_becomes_unsafe 时应同时说明首次不可通行时刻和最后确认安全时刻。
       回答时间时优先使用 first_unsafe_at、last_confirmed_safe_at、latest_safe_completion_at 和 latest_departure_at 等实际时刻，*_time_h 只作为相对 valid_from 的预测偏移量补充说明。
-      Transfer.arrive_time_window 只作为既有计划字段展示，不是本函数的预测判定依据；不要再逐格 query ForecastCell 自行推算。
+      EvacuationUnit.flood_arrival_window 只作为既有预案字段展示，不是本函数的预测判定依据；不要再逐格 query InundationForecastCell 自行推算。
     function_type: lookup
-    involves_objects: [Transfer, Route, Place, ForecastRun, ForecastCell]
+    involves_objects: [EvacuationUnit, EvacuationRoute, EvacuationSite, FloodForecast, InundationForecastCell]
     params:
-      transfer_id: {type: str, description: "转移安排ID；与 transfer_name 至少提供一项", default: ""}
-      transfer_name: {type: str, description: "转移对象名称，如新民村；已知 transfer_id 时可不传", default: ""}
-      route_id: {type: str, description: "可选路线ID；不传时使用 Transfer 关联的预定路线", default: ""}
+      evacuation_unit_id: {type: str, description: "转移单元ID；与 evacuation_unit_name 至少提供一项", default: ""}
+      evacuation_unit_name: {type: str, description: "转移单元或其原始村名，如新民村；已知 evacuation_unit_id 时可不传", default: ""}
+      evacuation_route_id: {type: str, description: "可选转移路线ID；不传时按 origin_unit_id 查找该转移单元的路线", default: ""}
       forecast_id: {type: str, description: "预测运行ID；latest 表示当前工作空间最新预测", default: "latest"}
       blocked_depth_m: {type: float, description: "路线禁行水深阈值，米", default: 0.3}
       clearance_duration_min: {type: float, description: "可选的核定转移准备、通行和路线清空总耗时，分钟", default: ""}
@@ -942,14 +925,14 @@ functions:
 
   plan_evacuation_route:
     summary: "按洪水预测约束规划避洪路线"
-    description: "使用高德 Web 服务规划起点至安置点的路线，并将 GCJ-02 路线转为 WGS84 Route 对象。步行规划请求最多三条候选路线，逐条排除穿过 blocked_depth_m 禁行 ForecastCell 的路线，再选择距离最短的安全路线。"
-    usage_prompt: "当用户要求路线规划、导航、绕开淹没区域前往安置点或为某个 Transfer 生成避洪路线时调用。优先使用 start_object_type + start_object_id 和 destination_place_id；只有没有领域对象时才传经纬度。如果前端处于水动力时间轴某一时刻，必须把 current_hydrodynamic_time_h 作为 time_h；回答时以结果的 analysis_time_at 实际时刻为主，time_h 只作为预测偏移量补充。驾车使用 profile=car 且默认禁行水深0.3米；步行使用 profile=foot 且默认禁行水深0.15米。avoid_flood 默认 true；函数会自行筛选高德候选路线。同一起终点在一个用户请求中最多调用一次本函数。若返回 no_safe_route 或 retryable=false，这是终止结果：立即向用户说明当前没有满足约束的安全路线，不得自行切换 profile、time_h、avoid_flood 或其他约束重试。成功后调用 ui_show_objects，object_type=Route，filters 使用结果 route.route_id，只显示本次动态路线。"
+    description: "使用高德 Web 服务规划起点至安置点的路线，并将 GCJ-02 路线转为 WGS84 EvacuationRoute 对象。步行规划请求最多三条候选路线，逐条排除穿过 blocked_depth_m 禁行 InundationForecastCell 的路线，再选择距离最短的安全路线。"
+    usage_prompt: "当用户要求路线规划、导航、绕开淹没区域前往安置点或为某个 EvacuationUnit 生成避洪路线时调用。优先使用 start_object_type + start_object_id 和 destination_site_id；只有没有领域对象时才传经纬度。如果未明确指定安置地点，函数会通过该转移单元已有路线的 destination_site_id 解析默认终点。如果前端处于水动力时间轴某一时刻，必须把 current_hydrodynamic_time_h 作为 time_h；回答时以结果的 analysis_time_at 实际时刻为主，time_h 只作为预测偏移量补充。驾车使用 profile=car 且默认禁行水深0.3米；步行使用 profile=foot 且默认禁行水深0.15米。avoid_flood 默认 true；函数会自行筛选高德候选路线。同一起终点在一个用户请求中最多调用一次本函数。若返回 no_safe_route 或 retryable=false，这是终止结果：立即向用户说明当前没有满足约束的安全路线，不得自行切换 profile、time_h、avoid_flood 或其他约束重试。成功后调用 ui_show_objects，object_type=EvacuationRoute，filters 使用结果 route.evacuation_route_id，只显示本次动态路线。"
     function_type: lookup
-    involves_objects: [Route, Transfer, Place, ForecastRun, ForecastCell]
+    involves_objects: [EvacuationRoute, EvacuationUnit, EvacuationSite, FloodForecast, InundationForecastCell]
     params:
-      start_object_type: {type: str, description: "起点领域对象类型，通常为 Transfer/Place/Facility", default: "Transfer"}
+      start_object_type: {type: str, description: "起点领域对象类型，通常为 EvacuationUnit/EvacuationSite/Facility", default: "EvacuationUnit"}
       start_object_id: {type: str, description: "起点领域对象ID", default: ""}
-      destination_place_id: {type: str, description: "目标安置点 Place ID；Transfer 已关联 place_id 时可省略", default: ""}
+      destination_site_id: {type: str, description: "目标安置地点 EvacuationSite ID；EvacuationUnit 已有路线关联终点时可省略", default: ""}
       start_lon: {type: float, description: "无起点对象时使用的起点经度", default: ""}
       start_lat: {type: float, description: "无起点对象时使用的起点纬度", default: ""}
       destination_lon: {type: float, description: "无安置点对象时使用的终点经度", default: ""}

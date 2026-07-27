@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -97,7 +98,9 @@ class FloodObjectBuilder:
             rows.append({
                 "boundary_id": f"section_{section_code or i}",
                 "river_id": "shanhu",
-                "name": flow_name,
+                "name": f"{str(flow_name).replace('_', '')}断面 {section_code or i}",
+                "source_name": flow_name,
+                "name_source": "generated_from_source_name_and_section_code",
                 "boundary_group": group,
                 "boundary_type": flow_type,
                 "boundary_role": _boundary_role(group, flow_type),
@@ -128,7 +131,9 @@ class FloodObjectBuilder:
                 rows.append({
                     "boundary_id": f"{source_layer}_{group}_{i}",
                     "river_id": "shanhu",
-                    "name": name,
+                    "name": f"{name}边界 {i}",
+                    "source_name": name,
+                    "name_source": "generated_from_source_name_and_record_index",
                     "boundary_group": group,
                     "boundary_type": type_desc,
                     "boundary_role": _boundary_role(group, type_desc),
@@ -142,6 +147,7 @@ class FloodObjectBuilder:
                     "data_path": rel(path),
                     **_geometry_fields(feature),
                 })
+        _disambiguate_duplicate_names(rows)
         return rows
 
     def _build_county(self) -> list[dict]:
@@ -194,54 +200,38 @@ class FloodObjectBuilder:
         return rows
 
     def _build_reservoir(self) -> list[dict]:
-        path = DATA_DIR / "3.水利工程/水库.shp"
-        osm_reservoirs = _load_osm_reservoir_candidates()
-        esa_water = _load_esa_water_candidates()
         hydrolakes = _load_hydrolakes_candidates()
-        rows = []
-        used_osm_ids: set[str] = set()
-        used_hylak_ids: set[int] = set()
-        for i, feature in enumerate(_features(path), 1):
-            row = _reservoir_record(i, feature, path)
-            match = _match_osm_reservoir(row, osm_reservoirs, used_osm_ids)
-            if match:
-                _apply_osm_reservoir(row, match)
-                used_osm_ids.add(match["osm_ref"])
-            esa_match = _match_esa_water_reservoir(row, esa_water)
-            if esa_match:
-                _apply_esa_water_reservoir(row, esa_match)
-            else:
-                hydro_match = _match_hydrolakes_reservoir(row, hydrolakes, used_hylak_ids)
-                if hydro_match:
-                    _apply_hydrolakes_reservoir(row, hydro_match)
-                    used_hylak_ids.add(hydro_match["hylak_id"])
-            rows.append(row)
-        if not any(row.get("name") == "龙潭水库" for row in rows):
-            longtan = next(
-                (
-                    item for item in hydrolakes
-                    if item["hylak_id"] == LONGTAN_HYDROLAKES_ID
-                    and item["hylak_id"] not in used_hylak_ids
-                ),
-                None,
+        longtan = next(
+            (
+                item for item in hydrolakes
+                if item["hylak_id"] == LONGTAN_HYDROLAKES_ID
+            ),
+            None,
+        )
+        if not longtan:
+            raise RuntimeError(
+                f"HydroLAKES source does not contain Longtan reservoir "
+                f"Hylak_id/{LONGTAN_HYDROLAKES_ID}"
             )
-            if longtan:
-                standard_map = _load_longtan_standard_map_candidate()
-                rows.insert(0, _longtan_reservoir_record(longtan, standard_map))
-        return rows
+        return [_longtan_reservoir_record(
+            longtan,
+            _load_longtan_standard_map_candidate(),
+        )]
 
     def _build_sluice(self) -> list[dict]:
         path = DATA_DIR / "3.水利工程/水闸.shp"
         osm_hydraulic = _load_osm_candidates("osm_hydraulic_structures_shanhu.json", _osm_hydraulic_kind)
-        rows = []
+        source_rows = [
+            _sluice_record(i, feature, path)
+            for i, feature in enumerate(_features(path), 1)
+        ]
+        rows = _deduplicate_sluices(source_rows)
         used_osm_ids: set[str] = set()
-        for i, feature in enumerate(_features(path), 1):
-            row = _sluice_record(i, feature, path)
+        for row in rows:
             match = _match_nearest_osm(row, osm_hydraulic, used_osm_ids, max_distance_m=350)
             if match:
                 _apply_osm_match(row, match, "local_inventory_with_osm_hydraulic_match")
                 used_osm_ids.add(match["osm_ref"])
-            rows.append(row)
         return rows
 
     def _build_bridge(self) -> list[dict]:
@@ -267,6 +257,7 @@ class FloodObjectBuilder:
             ("government", DATA_DIR / "4.重要设施/政府.shp"),
         ]
         osm_facilities = _load_osm_candidates("osm_facilities_shanhu.json", _osm_facility_kind)
+        towns = self.build("Town")
         rows = []
         used_osm_ids: set[str] = set()
         for facility_type, path in specs:
@@ -276,7 +267,13 @@ class FloodObjectBuilder:
                 if match:
                     _apply_osm_match(row, match, "local_inventory_with_osm_facility_match")
                     used_osm_ids.add(match["osm_ref"])
+                town = _spatial_owner(row, towns)
+                if town:
+                    row["town_id"] = town["town_id"]
+                    row["town_name"] = town["name"]
+                    row["county_id"] = town.get("county_id") or row.get("county_id", "")
                 rows.append(row)
+        _disambiguate_duplicate_names(rows)
         return rows
 
     def _build_hydraulicstructure(self) -> list[dict]:
@@ -296,6 +293,20 @@ class FloodObjectBuilder:
                     _apply_osm_match(row, match, "local_inventory_with_osm_hydraulic_match")
                     used_osm_ids.add(match["osm_ref"])
                 rows.append(row)
+        rows = _deduplicate_hydraulic_structures(rows)
+        towns = self.build("Town")
+        for row in rows:
+            town = _spatial_owner(row, towns, max_distance_m=1000)
+            row["town_id"] = town.get("town_id", "") if town else ""
+            row["town_name"] = town.get("name", "") if town else ""
+            row["county_id"] = (
+                town.get("county_id", "") if town else row.get("county_id", "")
+            )
+            if not row.get("source_name"):
+                location = row.get("town_name") or "珊瑚河流域"
+                code = str(row["structure_id"]).rsplit("_", 1)[-1].upper()
+                row["name"] = f"{location}{_structure_type_cn(row['structure_type'])} {code}"
+                row["name_source"] = "generated_from_town_and_geometry"
         return rows
 
     def _build_road(self) -> list[dict]:
@@ -322,6 +333,10 @@ class FloodObjectBuilder:
                 continue
             rows.append(_osm_bridge_road_record(candidate))
             road_ids.add(candidate["osm_id"])
+        counties = self.build("County")
+        for row in rows:
+            county = _spatial_owner(row, counties, max_distance_m=500)
+            row["county_id"] = county["county_id"] if county else ""
         return rows
 
     def _build_bridgeroadlink(self) -> list[dict]:
@@ -357,51 +372,53 @@ class FloodObjectBuilder:
             })
         return rows
 
-    def _build_place(self) -> list[dict]:
+    def _build_evacuationsite(self) -> list[dict]:
         rows = []
         shelter_path = DATA_DIR / "8.避洪转移/安置点.shp"
         inplace_path = DATA_DIR / "8.避洪转移/就地单元.shp"
         for i, feature in enumerate(_features(shelter_path), 1):
-            rows.append(_place_record("shelter", i, feature, shelter_path))
+            rows.append(_evacuation_site_record("shelter", i, feature, shelter_path))
         for i, feature in enumerate(_features(inplace_path), 1):
-            rows.append(_place_record("in_place", i, feature, inplace_path))
+            rows.append(_evacuation_site_record("in_place", i, feature, inplace_path))
+        _disambiguate_duplicate_names(rows)
         return rows
 
-    def _build_transfer(self) -> list[dict]:
+    def _build_evacuationunit(self) -> list[dict]:
         path = DATA_DIR / "8.避洪转移/转移单元.shp"
-        transfer_by_id = {}
-        for i, feature in enumerate(_features(path), 1):
-            row = _transfer_record(i, feature, path)
-            transfer_by_id[row["transfer_id"]] = row
-        for route in self.build("Route"):
-            transfer_id = route.get("transfer_id")
-            if transfer_id in transfer_by_id:
-                transfer_by_id[transfer_id]["route_id"] = route["route_id"]
-                transfer_by_id[transfer_id]["place_id"] = route.get("place_id", "")
-        return list(transfer_by_id.values())
+        rows = [
+            _evacuation_unit_record(i, feature, path)
+            for i, feature in enumerate(_features(path), 1)
+        ]
+        _disambiguate_duplicate_names(rows)
+        return rows
 
-    def _build_route(self) -> list[dict]:
+    def _build_evacuationroute(self) -> list[dict]:
         path = DATA_DIR / "8.避洪转移/转移路线.shp"
-        return [_route_record(i, feature, path) for i, feature in enumerate(_features(path), 1)]
+        rows = [
+            _evacuation_route_record(i, feature, path)
+            for i, feature in enumerate(_features(path), 1)
+        ]
+        _disambiguate_duplicate_names(rows)
+        return rows
 
-    def _build_risk(self) -> list[dict]:
+    def _build_dangerarea(self) -> list[dict]:
         path = DATA_DIR / "危险区-珊瑚河流域/危险区-珊瑚河流域.dbf"
         if not path.exists():
             return []
         rows = []
         for i, feature in enumerate(_features(path), 1):
             props = feature.get("properties") or {}
-            risk_id = _code(_first_non_empty(props, "序号")) or f"danger_area_{i}"
-            village_code = _code(_first_non_empty(props, "自然屯"))
-            village = _first_non_empty(props, "自然村") or f"危险区{i}"
+            source_id = _code(_first_non_empty(props, "序号")) or str(i)
+            source_name = _first_non_empty(props, "自然村") or ""
+            village = source_name or f"未命名危险区 {source_id}"
             lon, lat = _float(_first_non_empty(props, "经度")), _float(_first_non_empty(props, "纬度"))
             geometry = {"type": "Point", "coordinates": [lon, lat]} if lon and lat else {}
             rows.append({
-                "risk_id": f"danger_area_{risk_id}",
-                "target_type": "Settlement",
-                "target_id": village_code or risk_id,
-                "name": village,
-                "risk_type": "danger_area",
+                "danger_area_id": f"danger_area_{source_id}",
+                "name": f"{village}危险区" if source_name else village,
+                "source_name": source_name,
+                "name_source": "normalized_source_name" if source_name else "generated_from_source_id",
+                "danger_area_type": "flood_danger_area",
                 "risk_level": "unknown",
                 "city": _first_non_empty(props, "市") or "",
                 "county_name": _first_non_empty(props, "县_区") or "",
@@ -420,9 +437,10 @@ class FloodObjectBuilder:
                 "geometry": json.dumps(geometry, ensure_ascii=False) if geometry else "",
                 "data_path": rel(path),
             })
+        _disambiguate_duplicate_names(rows)
         return rows
 
-    def _build_hydrostation(self) -> list[dict]:
+    def _build_hydrometeorologicalstation(self) -> list[dict]:
         stations = [
             {
                 "station_id": "hydro_station_longtan",
@@ -495,38 +513,6 @@ class FloodObjectBuilder:
                 "geometry": json.dumps(geometry, ensure_ascii=False),
             })
         return stations
-
-    def _build_hydrology(self) -> list[dict]:
-        path = DATA_DIR / "9.水文计算结果/珊瑚河水文分析结果.xlsx"
-        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-        ws = wb[wb.sheetnames[0]]
-        rows = []
-        periods = [100, 50, 20, 10, 5]
-        for r in range(4, 7):
-            duration = _duration_hours(ws.cell(r, 1).value)
-            for idx, period in enumerate(periods, start=5):
-                rows.append({
-                    "hydrology_id": f"rain_{duration:g}h_{period}a",
-                    "river_id": "shanhu",
-                    "design_frequency_year": period,
-                    "duration_h": duration,
-                    "design_rainfall_mm": _float(ws.cell(r, idx).value),
-                    "source": "珊瑚河水文分析结果.xlsx: 设计暴雨",
-                })
-        peak_values = [ws.cell(12, col).value for col in range(3, 8)]
-        discharge_values = [ws.cell(13, col).value for col in range(3, 8)]
-        for period, peak, discharge in zip(periods, peak_values, discharge_values):
-            rows.append({
-                "hydrology_id": f"flood_peak_{period}a",
-                "river_id": "shanhu",
-                "design_frequency_year": period,
-                "peak_inflow_m3s": _float(peak),
-                "max_discharge_m3s": _float(discharge),
-                "source": "珊瑚河水文分析结果.xlsx: 设计洪水",
-            })
-        wb.close()
-        return rows
-
 
 def write_object_library(object_type: str, rows: list[dict]) -> Path:
     OBJECTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -1350,15 +1336,45 @@ def _row_point(row: dict) -> tuple[float, float] | None:
     )
 
 
+def _spatial_owner(row: dict, owners: list[dict],
+                   max_distance_m: float = 0) -> dict | None:
+    point = _row_point(row)
+    if not point:
+        return None
+    nearest_owner = None
+    nearest_distance = math.inf
+    for owner in owners:
+        geometry_text = owner.get("geometry") or ""
+        if not geometry_text:
+            continue
+        try:
+            geometry = json.loads(geometry_text)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        distance, inside = _distance_to_geometry(point, geometry)
+        if inside:
+            return owner
+        if distance < nearest_distance:
+            nearest_owner = owner
+            nearest_distance = distance
+    if nearest_owner and nearest_distance <= max_distance_m:
+        return nearest_owner
+    return None
+
+
 def _sluice_record(index: int, feature: dict, path: Path) -> dict:
     props = feature.get("properties") or {}
     lng, lat = _point_coords(feature)
     raw_sid = _first_non_empty(props, "CODE", "水闸编", "OBJECTID", "序号") or "sluice"
     sid = f"{_code(raw_sid) or raw_sid}_{index}"
     river_name = _first_non_empty(props, "RV_NAME", "所在河") or ""
+    source_name = _first_non_empty(props, "NAME", "水闸名") or ""
+    name = str(source_name).replace("-水闸工程（分洪闸）", "分洪闸")
     return {
         "sluice_id": str(sid),
-        "name": _first_non_empty(props, "NAME", "水闸名") or f"水闸{index}",
+        "name": name or f"未命名水闸 {sid}",
+        "source_name": source_name,
+        "name_source": "normalized_source_name" if source_name else "generated_from_source_id",
         "river_id": "shanhu" if river_name == "珊瑚河" else "",
         "county_id": _code(_first_non_empty(props, "行政区", "adcode")),
         "town_name": _first_non_empty(props, "乡（镇") or "",
@@ -1376,13 +1392,18 @@ def _sluice_record(index: int, feature: dict, path: Path) -> dict:
 def _bridge_record(index: int, feature: dict, path: Path) -> dict:
     props = feature.get("properties") or {}
     lng, lat = _point_coords(feature)
-    name = _first_non_empty(props, "NAME", "ennm", "名称_nam")
+    source_name = _first_non_empty(props, "NAME", "ennm", "名称_nam") or ""
     bridge_id = _first_non_empty(props, "CODE", "ennmcd", "Id") or f"bridge_{index}"
+    bridge_id = str(bridge_id) if str(bridge_id) != "0" else f"bridge_{index}"
+    generated_code = str(bridge_id).removeprefix("bridge_")
+    generated_code = f"B{int(generated_code):03d}" if generated_code.isdigit() else generated_code
     populated = [value for value in props.values() if value not in (None, "", 0, 0.0, [])]
     return {
-        "bridge_id": str(bridge_id) if str(bridge_id) != "0" else f"bridge_{index}",
-        "name": name or f"桥梁{index}",
-        "river_id": "shanhu" if _first_non_empty(props, "RV_NAME") == "珊瑚河" else "",
+        "bridge_id": bridge_id,
+        "name": source_name or f"珊瑚河桥梁 {generated_code}",
+        "source_name": source_name,
+        "name_source": "source" if source_name else "generated_from_stable_id",
+        "river_id": "shanhu",
         "length_m": _float(_first_non_empty(props, "LEN")),
         "width_m": _float(_first_non_empty(props, "WIDE")),
         "deck_elevation_m": _float(_first_non_empty(props, "EL", "B_EL")),
@@ -1393,6 +1414,30 @@ def _bridge_record(index: int, feature: dict, path: Path) -> dict:
         **_geometry_fields(feature),
         "data_path": rel(path),
     }
+
+
+def _deduplicate_hydraulic_structures(rows: list[dict]) -> list[dict]:
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for row in rows:
+        key = (
+            str(row.get("structure_type") or ""),
+            str(row.get("geometry") or ""),
+        )
+        groups.setdefault(key, []).append(row)
+
+    result = []
+    for duplicates in groups.values():
+        row = max(duplicates, key=lambda item: bool(item.get("source_name")))
+        source_record_ids = [
+            str(item.get("source_record_id") or "")
+            for item in duplicates
+            if item.get("source_record_id")
+        ]
+        row.pop("source_record_id", None)
+        row["source_record_ids"] = ",".join(source_record_ids)
+        row["source_record_count"] = len(duplicates)
+        result.append(row)
+    return result
 
 
 def _deduplicate_bridges(rows: list[dict]) -> list[dict]:
@@ -1414,13 +1459,37 @@ def _deduplicate_bridges(rows: list[dict]) -> list[dict]:
     return result
 
 
+def _deduplicate_sluices(rows: list[dict]) -> list[dict]:
+    canonical: dict[tuple[str, float, float], dict] = {}
+    source_ids: dict[tuple[str, float, float], list[str]] = {}
+    for row in rows:
+        key = (
+            str(row.get("name") or ""),
+            round(float(row.get("longitude") or 0), 7),
+            round(float(row.get("latitude") or 0), 7),
+        )
+        source_ids.setdefault(key, []).append(str(row.get("sluice_id") or ""))
+        canonical.setdefault(key, row)
+    result = []
+    for key, row in canonical.items():
+        ids = source_ids[key]
+        row["sluice_id"] = ids[0].rsplit("_", 1)[0]
+        row["source_record_ids"] = ",".join(ids)
+        row["source_record_count"] = len(ids)
+        result.append(row)
+    return result
+
+
 def _facility_record(facility_type: str, index: int, feature: dict, path: Path) -> dict:
     props = feature.get("properties") or {}
     lng, lat = _point_coords(feature)
     fid = _first_non_empty(props, "id", "OBJECTID") or f"{facility_type}_{index}"
+    source_name = _first_non_empty(props, "name") or ""
     return {
         "facility_id": str(fid),
-        "name": _first_non_empty(props, "name") or f"{_facility_type_cn(facility_type)}{index}",
+        "name": source_name or f"未命名{_facility_type_cn(facility_type)} {fid}",
+        "source_name": source_name,
+        "name_source": "source" if source_name else "generated_from_stable_id",
         "facility_type": facility_type,
         "subtype": _first_non_empty(props, "行业小", "行业中") or "",
         "address": _first_non_empty(props, "address") or "",
@@ -1438,18 +1507,26 @@ def _hydraulic_structure_record(structure_type: str, index: int,
                                 feature: dict, path: Path) -> dict:
     props = feature.get("properties") or {}
     lng, lat = _point_coords(feature)
-    raw_sid = _first_non_empty(props, "ID", "CODE", "ennmcd", "OBJECTID") or structure_type
-    sid = f"{_code(raw_sid) or raw_sid}_{index}"
+    raw_sid = _first_non_empty(props, "ID", "CODE", "ennmcd", "OBJECTID")
+    geometry_code = _geometry_fingerprint(feature)
+    sid_prefix = (_code(raw_sid) or structure_type) if raw_sid else structure_type
+    sid = f"{sid_prefix}_{geometry_code}"
     river_name = _first_non_empty(props, "RV_NAME", "LOC", "所在河") or ""
+    source_name = _first_non_empty(
+        props, "NAME", "ennm", "enname", "DKNM", "SPDKNM",
+    ) or ""
     return {
         "structure_id": str(sid),
-        "name": _first_non_empty(props, "NAME", "ennm", "enname") or f"{_structure_type_cn(structure_type)}{index}",
+        "name": source_name or f"未命名{_structure_type_cn(structure_type)} {sid}",
+        "source_name": source_name,
+        "name_source": "source" if source_name else "generated_from_stable_id",
+        "source_record_id": f"{path.stem}:{index}",
         "structure_type": structure_type,
         "river_id": "shanhu" if river_name == "珊瑚河" else "",
         "river_name": river_name,
         "county_id": _code(_first_non_empty(props, "adcode", "行政区")),
         "location": _first_non_empty(props, "LOC") or "",
-        "length_m": _float(_first_non_empty(props, "LEN", "Shape_Leng")),
+        "length_m": round(_geometry_line_length_m(feature.get("geometry") or {}), 2),
         "elevation_m": _float(_first_non_empty(props, "EL", "MAX_H")),
         "flow_m3s": _float(_first_non_empty(props, "FLOW", "D_MAXDIS")),
         "longitude": lng,
@@ -1463,15 +1540,20 @@ def _hydraulic_structure_record(structure_type: str, index: int,
 def _road_record(index: int, feature: dict, path: Path) -> dict:
     props = feature.get("properties") or {}
     road_id = _first_non_empty(props, "osm_id", "OBJECTID") or f"road_{index}"
+    source_name = _first_non_empty(props, "name") or ""
+    ref = _first_non_empty(props, "ref") or ""
+    road_class = _first_non_empty(props, "fclass") or ""
     return {
         "road_id": str(road_id),
-        "name": _first_non_empty(props, "name") or _first_non_empty(props, "ref") or f"道路{index}",
-        "ref": _first_non_empty(props, "ref") or "",
-        "road_class": _first_non_empty(props, "fclass") or "",
+        "name": source_name or ref or f"未命名{_road_class_cn(road_class)} {road_id}",
+        "source_name": source_name,
+        "name_source": "source" if source_name else "road_ref" if ref else "generated_from_stable_id",
+        "ref": ref,
+        "road_class": road_class,
         "one_way": _first_non_empty(props, "oneway") or "",
         "bridge_flag": str(_first_non_empty(props, "bridge") or "").upper() == "T",
         "tunnel_flag": str(_first_non_empty(props, "tunnel") or "").upper() == "T",
-        "length_m": _float(_first_non_empty(props, "Shape_Leng")),
+        "length_m": round(_geometry_line_length_m(feature.get("geometry") or {}), 2),
         **_osm_defaults(),
         **_geometry_fields(feature),
         "data_path": rel(path),
@@ -1482,10 +1564,14 @@ def _osm_bridge_road_record(candidate: dict) -> dict:
     tags = candidate.get("tags") or {}
     geometry = candidate.get("geometry") or {}
     coords = list(_iter_coords(geometry.get("coordinates") or []))
+    source_name = candidate.get("name") or ""
+    ref = tags.get("ref") or ""
     return {
         "road_id": candidate["osm_id"],
-        "name": candidate.get("name") or tags.get("ref") or f"OSM桥上路段 {candidate['osm_id']}",
-        "ref": tags.get("ref") or "",
+        "name": source_name or ref or f"未命名桥上道路 {candidate['osm_id']}",
+        "source_name": source_name,
+        "name_source": "source" if source_name else "road_ref" if ref else "generated_from_stable_id",
+        "ref": ref,
         "road_class": tags.get("highway") or "",
         "one_way": tags.get("oneway") or "",
         "bridge_flag": True,
@@ -1507,16 +1593,32 @@ def _osm_bridge_road_record(candidate: dict) -> dict:
     }
 
 
-def _place_record(place_type: str, index: int, feature: dict, path: Path) -> dict:
+def _evacuation_site_record(site_type: str, index: int,
+                            feature: dict, path: Path) -> dict:
     props = feature.get("properties") or {}
     lng, lat = _point_coords(feature)
-    raw_id = _first_non_empty(props, "ID", "OBJECTID") or f"{place_type}_{index}"
+    raw_id = _first_non_empty(props, "ID", "OBJECTID") or f"{site_type}_{index}"
+    site_id = f"{site_type}_{_code(raw_id) or raw_id}"
+    source_name = _first_non_empty(props, "Name") or ""
+    town_name = _first_non_empty(props, "OwnerTown") or ""
+    source_number = _trailing_number(source_name) or str(raw_id)
+    if site_type == "shelter" and source_name:
+        name = f"{source_name}安置点"
+        name_source = "normalized_source_name"
+    elif site_type == "in_place":
+        name = f"{town_name or '未归属乡镇'}就地安置点 {source_number}"
+        name_source = "generated_from_town_and_source_number"
+    else:
+        name = source_name or f"未命名安置地点 {site_id}"
+        name_source = "source" if source_name else "generated_from_stable_id"
     return {
-        "place_id": f"{place_type}_{_code(raw_id) or raw_id}",
-        "name": _first_non_empty(props, "Name") or f"{_place_type_cn(place_type)}{index}",
-        "place_type": place_type,
+        "evacuation_site_id": site_id,
+        "name": name,
+        "source_name": source_name,
+        "name_source": name_source,
+        "site_type": site_type,
         "town_id": _code(_first_non_empty(props, "OwnerTown_")),
-        "town_name": _first_non_empty(props, "OwnerTown") or "",
+        "town_name": town_name,
         "county_id": _code(_first_non_empty(props, "OwnerQX_Co")),
         "area_m2": _float(_first_non_empty(props, "Area")),
         "capacity_person": int(_float(_first_non_empty(props, "Vol", "Population"))),
@@ -1527,20 +1629,21 @@ def _place_record(place_type: str, index: int, feature: dict, path: Path) -> dic
     }
 
 
-def _transfer_record(index: int, feature: dict, path: Path) -> dict:
+def _evacuation_unit_record(index: int, feature: dict, path: Path) -> dict:
     props = feature.get("properties") or {}
     lng, lat = _point_coords(feature)
-    transfer_id = _code(_first_non_empty(props, "ID", "OBJECTID")) or f"transfer_{index}"
+    unit_id = _code(_first_non_empty(props, "ID", "OBJECTID")) or f"evacuation_unit_{index}"
+    source_name = _first_non_empty(props, "Name") or ""
     return {
-        "transfer_id": transfer_id,
-        "name": _first_non_empty(props, "Name") or f"转移{index}",
+        "evacuation_unit_id": unit_id,
+        "name": f"{source_name}转移单元" if source_name else f"未命名转移单元 {unit_id}",
+        "source_name": source_name,
+        "name_source": "normalized_source_name" if source_name else "generated_from_stable_id",
         "population": int(_float(_first_non_empty(props, "Population"))),
         "town_id": _code(_first_non_empty(props, "OwnerTown_")),
         "town_name": _first_non_empty(props, "OwnerTown") or "",
         "county_id": _code(_first_non_empty(props, "OwnerQX_Co")),
-        "arrive_time_window": _first_non_empty(props, "ArriveTime") or "",
-        "route_id": "",
-        "place_id": "",
+        "flood_arrival_window": _first_non_empty(props, "ArriveTime") or "",
         "longitude": lng,
         "latitude": lat,
         **_geometry_fields(feature),
@@ -1548,20 +1651,23 @@ def _transfer_record(index: int, feature: dict, path: Path) -> dict:
     }
 
 
-def _route_record(index: int, feature: dict, path: Path) -> dict:
+def _evacuation_route_record(index: int, feature: dict, path: Path) -> dict:
     props = feature.get("properties") or {}
-    route_id = _code(_first_non_empty(props, "ID", "OBJECTID")) or f"route_{index}"
-    transfer_id = _code(_first_non_empty(props, "waterID", "ID"))
+    route_id = _code(_first_non_empty(props, "ID", "OBJECTID")) or f"evacuation_route_{index}"
+    unit_id = _code(_first_non_empty(props, "waterID", "ID"))
     place_raw_id = _code(_first_non_empty(props, "safeID"))
+    source_name = _first_non_empty(props, "TransferNa") or ""
     return {
-        "route_id": route_id,
-        "name": _first_non_empty(props, "TransferNa") or f"路线{index}",
+        "evacuation_route_id": route_id,
+        "name": f"{source_name}转移路线" if source_name else f"未命名转移路线 {route_id}",
+        "source_name": source_name,
+        "name_source": "normalized_source_name" if source_name else "generated_from_stable_id",
         "route_type": "transfer",
         "road_detail": _first_non_empty(props, "RoadDetail") or "",
-        "transfer_id": transfer_id,
-        "place_id": f"shelter_{place_raw_id}" if place_raw_id else "",
+        "origin_unit_id": unit_id,
+        "destination_site_id": f"shelter_{place_raw_id}" if place_raw_id else "",
         "population": int(_float(_first_non_empty(props, "Population"))),
-        "length_m": _float(_first_non_empty(props, "Shape_Leng")),
+        "length_m": round(_geometry_line_length_m(feature.get("geometry") or {}), 2),
         **_geometry_fields(feature),
         "data_path": rel(path),
     }
@@ -1728,6 +1834,27 @@ def _distance_point_to_segment_m(point: tuple[float, float],
 
 def _line_length_m(coords: list[tuple[float, float]]) -> float:
     return sum(_distance_m(coords[index - 1], coords[index]) for index in range(1, len(coords)))
+
+
+def _geometry_line_length_m(geometry: dict) -> float:
+    geometry_type = geometry.get("type")
+    coordinates = geometry.get("coordinates") or []
+    if geometry_type == "LineString":
+        return _line_length_m([
+            (float(point[0]), float(point[1]))
+            for point in coordinates
+            if len(point) >= 2
+        ])
+    if geometry_type == "MultiLineString":
+        return sum(
+            _line_length_m([
+                (float(point[0]), float(point[1]))
+                for point in line
+                if len(point) >= 2
+            ])
+            for line in coordinates
+        )
+    return 0.0
 
 
 def _distance_m(start: tuple[float, float], end: tuple[float, float]) -> float:
@@ -1918,11 +2045,6 @@ def _float(value: Any) -> float:
     return float(value)
 
 
-def _duration_hours(value: Any) -> float:
-    match = re.search(r"(\d+(?:\.\d+)?)", str(value))
-    return float(match.group(1)) if match else 0
-
-
 def _dms_to_decimal(degrees: float, minutes: float = 0.0,
                     seconds: float = 0.0) -> float:
     return round(float(degrees) + float(minutes) / 60 + float(seconds) / 3600, 7)
@@ -1939,6 +2061,46 @@ def _slug_id(value: str) -> str:
         "清塘镇": "451122111",
     }
     return mapping.get(value, value)
+
+
+def _trailing_number(value: str) -> str:
+    match = re.search(r"(\d+)$", str(value or "").strip())
+    return match.group(1) if match else ""
+
+
+def _geometry_fingerprint(feature: dict, length: int = 8) -> str:
+    geometry = feature.get("geometry") or {}
+    serialized = json.dumps(
+        geometry,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha1(serialized.encode("utf-8")).hexdigest()[:length]
+
+
+def _disambiguate_duplicate_names(rows: list[dict]) -> None:
+    groups: dict[str, list[dict]] = {}
+    for row in rows:
+        groups.setdefault(str(row.get("name") or ""), []).append(row)
+    for duplicates in groups.values():
+        if len(duplicates) < 2:
+            continue
+        for row in duplicates:
+            identifier = next((
+                str(row.get(key) or "")
+                for key in (
+                    "facility_id", "boundary_id", "structure_id", "road_id",
+                    "bridge_id", "evacuation_site_id", "evacuation_unit_id",
+                    "evacuation_route_id", "danger_area_id",
+                )
+                if row.get(key)
+            ), "")
+            qualifier = str(row.get("address") or identifier).strip()
+            if qualifier:
+                row["name"] = f"{row['name']}（{qualifier}）"
+            row["duplicate_source_name_count"] = len(duplicates)
+            row["name_source"] = f"disambiguated_{row.get('name_source') or 'source'}"
 
 
 def _boundary_group_from_name(name: str, default: str) -> str:
@@ -1989,8 +2151,20 @@ def _facility_type_cn(value: str) -> str:
     return {"hospital": "医院", "school": "学校", "government": "政府"}.get(value, "设施")
 
 
-def _place_type_cn(value: str) -> str:
-    return {"shelter": "安置点", "in_place": "就地安置点"}.get(value, "地点")
+def _road_class_cn(value: str) -> str:
+    return {
+        "motorway": "高速公路",
+        "motorway_link": "高速连接线",
+        "trunk": "干线道路",
+        "secondary": "次干路",
+        "secondary_link": "次干路连接线",
+        "tertiary": "三级道路",
+        "residential": "居住区道路",
+        "service": "服务道路",
+        "track": "乡村道路",
+        "living_street": "生活道路",
+        "unclassified": "道路",
+    }.get(value, "道路")
 
 
 def _structure_type_cn(value: str) -> str:

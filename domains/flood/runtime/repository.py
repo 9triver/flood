@@ -33,15 +33,15 @@ class FloodRepository:
     def query(self, object_type: str, filters: dict[str, Any] | None = None,
               limit: int | None = None, order_by: str | None = None,
               offset: int | None = None) -> list[dict]:
-        if object_type == "ForecastRun":
+        if object_type == "FloodForecast":
             return query_forecast_runs(self, filters, limit, order_by, offset)
-        if object_type == "ForecastCell":
+        if object_type == "InundationForecastCell":
             return query_forecast_cells(self, filters, limit, order_by, offset)
-        if object_type == "HydrodynamicCell":
+        if object_type == "HydrodynamicGridCell":
             return query_hydrodynamic_cells(filters, limit, order_by, offset)
         if object_type == "EmergencyDirective":
             return query_emergency_directives(filters, limit, order_by, offset)
-        if object_type == "Route":
+        if object_type == "EvacuationRoute":
             rows = [dict(row) for row in self._rows(object_type)]
             rows.extend(read_planned_routes())
             rows = apply_filters(rows, filters)
@@ -53,11 +53,11 @@ class FloodRepository:
         return apply_window(rows, limit, offset)
 
     def count(self, object_type: str, filters: dict[str, Any] | None = None) -> int:
-        if object_type == "ForecastRun":
+        if object_type == "FloodForecast":
             return count_forecast_runs(self, filters)
-        if object_type == "ForecastCell":
+        if object_type == "InundationForecastCell":
             return count_forecast_cells(self, filters)
-        if object_type == "HydrodynamicCell":
+        if object_type == "HydrodynamicGridCell":
             return count_hydrodynamic_cells(filters)
         if object_type == "EmergencyDirective":
             return count_emergency_directives(filters)
@@ -75,9 +75,9 @@ class FloodRepository:
         searchable_types = object_types or [
             item for item in OBJECT_LIBRARY_FILES
             if item not in {
-                "ForecastRun",
-                "ForecastCell",
-                "HydrodynamicCell",
+                "FloodForecast",
+                "InundationForecastCell",
+                "HydrodynamicGridCell",
                 "EmergencyDirective",
             }
         ]
@@ -105,12 +105,8 @@ class FloodRepository:
         return rows
 
     @cached_property
-    def hydrology(self) -> list[dict]:
-        return self._rows("Hydrology")
-
-    @cached_property
     def hydro_stations(self) -> list[dict]:
-        return self._rows("HydroStation")
+        return self._rows("HydrometeorologicalStation")
 
     @cached_property
     def towns(self) -> list[dict]:

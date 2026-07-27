@@ -15,20 +15,20 @@ from domains.flood.runtime import evacuation_timing
 class FakeResolver:
     def __init__(self):
         self.transfer = {
-            "transfer_id": "40",
-            "name": "新民村",
+            "evacuation_unit_id": "40",
+            "name": "新民村转移单元",
+            "source_name": "新民村",
             "population": 391,
-            "arrive_time_window": "0-12",
-            "route_id": "40",
-            "place_id": "shelter_232",
+            "flood_arrival_window": "0-12",
             "longitude": 111.00000,
             "latitude": 24.00000,
         }
         self.route = {
-            "route_id": "40",
-            "name": "新民村",
+            "evacuation_route_id": "40",
+            "name": "新民村转移路线",
             "route_type": "transfer",
-            "place_id": "shelter_232",
+            "origin_unit_id": "40",
+            "destination_site_id": "shelter_232",
             "duration_s": 600,
             "geometry": json.dumps({
                 "type": "LineString",
@@ -36,9 +36,9 @@ class FakeResolver:
             }),
         }
         self.place = {
-            "place_id": "shelter_232",
+            "evacuation_site_id": "shelter_232",
             "name": "新民村安置点",
-            "place_type": "shelter",
+            "site_type": "shelter",
             "longitude": 111.00010,
             "latitude": 24.00000,
         }
@@ -55,15 +55,15 @@ class FakeResolver:
 
     def query_by_id(self, object_type, object_id):
         rows = {
-            "Transfer": self.transfer,
-            "Route": self.route,
-            "Place": self.place,
+            "EvacuationUnit": self.transfer,
+            "EvacuationRoute": self.route,
+            "EvacuationSite": self.place,
         }
         row = rows.get(object_type)
         id_fields = {
-            "Transfer": "transfer_id",
-            "Route": "route_id",
-            "Place": "place_id",
+            "EvacuationUnit": "evacuation_unit_id",
+            "EvacuationRoute": "evacuation_route_id",
+            "EvacuationSite": "evacuation_site_id",
         }
         if row and str(row[id_fields[object_type]]) == str(object_id):
             return dict(row)
@@ -71,10 +71,10 @@ class FakeResolver:
 
     def query(self, object_type, filters=None, limit=None, **_kwargs):
         rows = {
-            "Transfer": [self.transfer],
-            "Route": [self.route],
-            "Place": [self.place],
-            "ForecastRun": [self.forecast_run],
+            "EvacuationUnit": [self.transfer],
+            "EvacuationRoute": [self.route],
+            "EvacuationSite": [self.place],
+            "FloodForecast": [self.forecast_run],
         }.get(object_type, [])
         return [dict(row) for row in rows[:limit]] if limit else [dict(row) for row in rows]
 
@@ -118,7 +118,7 @@ class EvacuationTimingTests(unittest.TestCase):
         ):
             return evacuation_timing.analyze_latest_evacuation_time(
                 self.resolver,
-                transfer_name="新民村",
+                evacuation_unit_name="新民村",
                 **kwargs,
             )
 
@@ -173,7 +173,7 @@ class EvacuationTimingTests(unittest.TestCase):
             self.resolver,
         )
 
-        self.assertEqual("transfer_required", result["status"])
+        self.assertEqual("evacuation_unit_required", result["status"])
 
     def test_rejects_an_incomplete_24_hour_series(self):
         self.time_steps = [0.5, 1.0, 1.5, 2.0]

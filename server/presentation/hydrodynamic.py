@@ -35,17 +35,17 @@ def build_hydrodynamic_action_plan(
                     "refresh": refresh,
                 },
             ],
-            object_type="HydrodynamicCell",
+            object_type="HydrodynamicGridCell",
             filters=result_filters,
         )
-    if object_type == "HydrodynamicCell":
+    if object_type == "HydrodynamicGridCell":
         return HydrodynamicActionPlan(
             actions=[{
                 "type": "show_hydrodynamic_mesh",
                 "fit": fit,
                 "mesh_only": True,
             }],
-            object_type="HydrodynamicCell",
+            object_type="HydrodynamicGridCell",
             filters={"result": "mesh"},
         )
     return None
@@ -60,7 +60,7 @@ def count_hydrodynamic(object_type: str,
             or stats.get("feature_count")
             or 0
         )
-    if object_type == "HydrodynamicCell":
+    if object_type == "HydrodynamicGridCell":
         stats = hydrodynamic_grid_stats("mesh")
         return int(stats.get("feature_count") or 0)
     return None
@@ -68,9 +68,9 @@ def count_hydrodynamic(object_type: str,
 
 def default_hydrodynamic_label(object_type: str,
                                filters: dict[str, Any]) -> str | None:
-    if object_type not in {"ForecastCell", "HydrodynamicCell"}:
+    if object_type not in {"InundationForecastCell", "HydrodynamicGridCell"}:
         return None
-    if object_type == "ForecastCell" or filters.get("forecast_id") == "latest":
+    if object_type == "InundationForecastCell" or filters.get("forecast_id") == "latest":
         return "预测淹没结果"
     forecast_id = filters.get("forecast_id")
     if forecast_id and forecast_id != "latest":
@@ -84,14 +84,14 @@ def hydrodynamic_result_id(filters: dict[str, Any]) -> str:
 
 def is_hydrodynamic_result_request(object_type: str,
                                    filters: dict[str, Any]) -> bool:
-    return object_type == "ForecastCell" or (
-        object_type == "HydrodynamicCell"
+    return object_type == "InundationForecastCell" or (
+        object_type == "HydrodynamicGridCell"
         and bool(filters.get("forecast_id"))
     )
 
 
 def hydrodynamic_result_filters(object_type: str,
                                 filters: dict[str, Any]) -> dict[str, Any]:
-    if object_type == "ForecastCell" and not filters.get("forecast_id"):
+    if object_type == "InundationForecastCell" and not filters.get("forecast_id"):
         return {**filters, "forecast_id": "latest"}
     return dict(filters)

@@ -187,15 +187,15 @@ const OBJECT_CONFIG = {
   Reservoir: { label: "水库", color: "#0284c7", swatch: "fill" },
   Sluice: { label: "水闸", color: "#158a8a", swatch: "point" },
   Bridge: { label: "桥梁", color: "#202833", swatch: "point" },
-  HydraulicStructure: { label: "水利工程", color: "#0f766e", swatch: "line" },
+  HydraulicStructure: { label: "其他水利工程", color: "#0f766e", swatch: "line" },
   Facility: { label: "重要设施", color: "#d44a3a", swatch: "point" },
-  Place: { label: "安置地点", color: "#24895d", swatch: "point" },
-  Transfer: { label: "转移对象", color: "#c97a12", swatch: "point" },
-  Route: { label: "转移路线", color: "#d44a3a", swatch: "line" },
-  Risk: { label: "危险区", color: "#b91c1c", swatch: "point" },
-  HydroStation: { label: "水文测站", color: "#0284c7", swatch: "point" },
-  ForecastCell: { label: "预测淹没", color: "#dc2626", swatch: "fill" },
-  HydrodynamicCell: { label: "水动力网格", color: "#64748b", swatch: "fill" },
+  EvacuationSite: { label: "安置地点", color: "#24895d", swatch: "point" },
+  EvacuationUnit: { label: "转移单元", color: "#c97a12", swatch: "point" },
+  EvacuationRoute: { label: "转移路线", color: "#d44a3a", swatch: "line" },
+  DangerArea: { label: "危险区", color: "#b91c1c", swatch: "point" },
+  HydrometeorologicalStation: { label: "水文气象测站", color: "#0284c7", swatch: "point" },
+  InundationForecastCell: { label: "淹没预测单元", color: "#dc2626", swatch: "fill" },
+  HydrodynamicGridCell: { label: "水动力网格单元", color: "#64748b", swatch: "fill" },
   ForecastResult: { label: "预测淹没结果", color: "#dc2626", swatch: "fill" },
 };
 
@@ -210,13 +210,13 @@ const ID_FIELDS = {
   Bridge: "bridge_id",
   HydraulicStructure: "structure_id",
   Facility: "facility_id",
-  Place: "place_id",
-  Transfer: "transfer_id",
-  Route: "route_id",
-  Risk: "risk_id",
-  HydroStation: "station_id",
-  ForecastCell: "forecast_cell_id",
-  HydrodynamicCell: "hydrodynamic_cell_id",
+  EvacuationSite: "evacuation_site_id",
+  EvacuationUnit: "evacuation_unit_id",
+  EvacuationRoute: "evacuation_route_id",
+  DangerArea: "danger_area_id",
+  HydrometeorologicalStation: "station_id",
+  InundationForecastCell: "forecast_cell_id",
+  HydrodynamicGridCell: "hydrodynamic_cell_id",
 };
 
 const MAP_NON_SELECTABLE_OBJECTS = new Set(["Watershed", "County", "Town"]);
@@ -225,14 +225,14 @@ const ICON_OBJECT_TYPES = new Set([
   "Sluice",
   "Bridge",
   "Facility",
-  "Place",
-  "Transfer",
-  "Risk",
-  "HydroStation",
+  "EvacuationSite",
+  "EvacuationUnit",
+  "DangerArea",
+  "HydrometeorologicalStation",
 ]);
 const MAP_CONTEXT_BASE_OBJECT_TYPES = new Set(["River", "Watershed"]);
 const MAP_CONTEXT_HYDRODYNAMIC_TYPES = new Set([
-  "HydrodynamicCell",
+  "HydrodynamicGridCell",
   "HydrodynamicResult",
 ]);
 
@@ -624,7 +624,7 @@ function deriveMapContentContext() {
 
   if (visibleTypes.has("HydrodynamicResult")) {
     addLabel("预测淹没");
-  } else if (visibleTypes.has("HydrodynamicCell")) {
+  } else if (visibleTypes.has("HydrodynamicGridCell")) {
     addLabel("水动力网格");
   }
   const hasVisibleEventMarker = Array.from(state.eventMarkers.values())
@@ -666,7 +666,7 @@ function updateMapContentContext() {
 
 function renderObjectList(items) {
   const list = document.getElementById("objectList");
-  const visible = ["River", "Watershed", "County", "Town", "HydrodynamicCell", "ForecastResult", "HydroStation", "Road", "Reservoir", "Sluice", "Bridge", "HydraulicStructure", "Risk", "Place", "Route"];
+  const visible = ["River", "Watershed", "County", "Town", "HydrodynamicGridCell", "ForecastResult", "HydrometeorologicalStation", "Road", "Reservoir", "Sluice", "Bridge", "HydraulicStructure", "DangerArea", "EvacuationSite", "EvacuationRoute"];
   list.innerHTML = "";
 
   visible.forEach((objectType) => {
@@ -1010,8 +1010,8 @@ function setAgentDrawerOpen(isOpen) {
 }
 
 async function toggleObject(objectType) {
-  if (objectType === "HydrodynamicCell") {
-    const key = layerKey("HydrodynamicCell", { result: "mesh" });
+  if (objectType === "HydrodynamicGridCell") {
+    const key = layerKey("HydrodynamicGridCell", { result: "mesh" });
     if (state.layerGroups.has(key)) {
       removeLayer(key);
       return;
@@ -1046,13 +1046,13 @@ async function toggleObject(objectType) {
 }
 
 function defaultObjectFilters(objectType) {
-  if (objectType === "ForecastCell") return { forecast_id: "latest" };
+  if (objectType === "InundationForecastCell") return { forecast_id: "latest" };
   if (objectType === "Reservoir") return { reservoir_id: "longtan" };
   return {};
 }
 
 async function loadObject(objectType, filters = {}, options = {}) {
-  if (objectType === "HydrodynamicCell") {
+  if (objectType === "HydrodynamicGridCell") {
     if (filters && Object.keys(filters).some((key) => ["forecast_id"].includes(key))) {
       throw new Error("Hydrodynamic results must use apply_hydrodynamic_result.");
     }
@@ -1113,7 +1113,7 @@ async function loadObject(objectType, filters = {}, options = {}) {
 }
 
 async function showHydrodynamicMesh(options = {}) {
-  const objectType = "HydrodynamicCell";
+  const objectType = "HydrodynamicGridCell";
   const resultFilters = { result: "mesh" };
   const key = layerKey(objectType, resultFilters);
   if (options.meshOnly) clearHydrodynamicResults();
@@ -1142,7 +1142,7 @@ async function showHydrodynamicMesh(options = {}) {
   state.layerGroups.set(key, layer);
   state.layerMeta.set(key, {
     objectType,
-    buttonType: "HydrodynamicCell",
+    buttonType: "HydrodynamicGridCell",
     filters: resultFilters,
     label: options.label || OBJECT_CONFIG[objectType].label,
   });
@@ -1448,7 +1448,7 @@ function removeLayer(key) {
   if (meta?.objectType === "HydrodynamicResult" && state.hydrodynamicTimeline.key === key) {
     hideHydrodynamicTimeline();
   }
-  if (meta && !["HydrodynamicCell", "HydrodynamicResult"].includes(meta.objectType)) unindexLayer(meta.objectType, layer);
+  if (meta && !["HydrodynamicGridCell", "HydrodynamicResult"].includes(meta.objectType)) unindexLayer(meta.objectType, layer);
   if (layer) state.map.removeLayer(layer);
   state.layerGroups.delete(key);
   state.layerMeta.delete(key);
@@ -2606,7 +2606,7 @@ function eventDetail(data) {
   }
   if (data.event_type === "ImpactAnalyzed") {
     const summary = payload.summary || {};
-    const labels = { Facility: "设施", Bridge: "桥梁", Road: "道路", Route: "路线", Transfer: "转移单元", Place: "安置点" };
+    const labels = { Facility: "设施", Bridge: "桥梁", Road: "道路", EvacuationRoute: "路线", EvacuationUnit: "转移单元", EvacuationSite: "安置点" };
     const parts = Object.keys(labels).map((key) => {
       const count = Number((summary[key] || {}).count || 0);
       return count ? `${labels[key]} ${count} 个` : "";
@@ -2699,12 +2699,12 @@ function fitFeatureLayer(layer) {
 }
 
 function featureStyle(objectType, feature) {
-  if (objectType === "ForecastCell") {
+  if (objectType === "InundationForecastCell") {
     const depth = Number(feature.properties?.depth_m || feature.properties?.YMSS || 0);
     const color = depth > 1.2 ? "#7f1d1d" : depth > 0.6 ? "#dc2626" : "#fecaca";
     return { color, weight: 0.5, fillColor: color, fillOpacity: 0.34 };
   }
-  if (objectType === "HydrodynamicCell") {
+  if (objectType === "HydrodynamicGridCell") {
     const depth = Number(feature.properties?.depth_m || 0);
     return hydrodynamicCellStyle(depth);
   }
@@ -2714,7 +2714,7 @@ function featureStyle(objectType, feature) {
   if (objectType === "County") return { color: "#7b8794", weight: 1.2, fillOpacity: 0 };
   if (objectType === "Town") return { color: "#7a6a22", weight: 1, fillColor: "#facc15", fillOpacity: 0.08 };
   if (objectType === "Road") return { color: "#5f6772", weight: 2, opacity: 0.82 };
-  if (objectType === "Route") return { color: "#d44a3a", weight: 3, opacity: 0.92 };
+  if (objectType === "EvacuationRoute") return { color: "#d44a3a", weight: 3, opacity: 0.92 };
   if (objectType === "HydraulicStructure") return { color: "#0f766e", weight: 2, opacity: 0.9 };
   return { color: OBJECT_CONFIG[objectType]?.color || "#334155", weight: 2 };
 }
@@ -2982,15 +2982,15 @@ function pointStyle(objectType, feature) {
     const type = feature.properties?.facility_type;
     color = type === "school" ? "#d44a3a" : type === "hospital" ? "#b91c1c" : "#7c3aed";
   }
-  if (objectType === "Place") color = "#24895d";
-  if (objectType === "Transfer") color = "#c97a12";
-  if (objectType === "Risk") color = "#b91c1c";
+  if (objectType === "EvacuationSite") color = "#24895d";
+  if (objectType === "EvacuationUnit") color = "#c97a12";
+  if (objectType === "DangerArea") color = "#b91c1c";
   return {
     radius: pointRadius(objectType),
     color: "#ffffff",
     weight: pointStrokeWeight(objectType),
     fillColor: color,
-    fillOpacity: objectType === "Risk" ? 0.78 : 0.88,
+    fillOpacity: objectType === "DangerArea" ? 0.78 : 0.88,
   };
 }
 
@@ -3034,36 +3034,36 @@ function objectIconInfo(objectType, feature) {
     Sluice: { key: "sluice", icon: "dam", label: "水闸" },
     Bridge: { key: "bridge", icon: "bridge", label: "桥梁" },
     Road: { key: "road", icon: "route", label: "道路" },
-    Place: { key: "place", icon: "house-heart", label: "安置地点" },
-    Transfer: { key: "transfer", icon: "users", label: "转移对象" },
-    Route: { key: "route", icon: "route", label: "转移路线" },
-    Risk: { key: "risk", icon: "triangle-alert", label: "危险区" },
-    HydroStation: { key: "station", icon: "radio-tower", label: "水文测站" },
+    EvacuationSite: { key: "place", icon: "house-heart", label: "安置地点" },
+    EvacuationUnit: { key: "evacuation-unit", icon: "users", label: "转移单元" },
+    EvacuationRoute: { key: "route", icon: "route", label: "转移路线" },
+    DangerArea: { key: "danger-area", icon: "triangle-alert", label: "危险区" },
+    HydrometeorologicalStation: { key: "station", icon: "radio-tower", label: "水文气象测站" },
   }[objectType] || { key: "default", icon: "map-pin", label: OBJECT_CONFIG[objectType]?.label || objectType };
 }
 
 function pointRadius(objectType) {
   return {
-    Risk: 2.2,
-    Place: 2.6,
-    Transfer: 3.0,
+    DangerArea: 2.2,
+    EvacuationSite: 2.6,
+    EvacuationUnit: 3.0,
     Bridge: 3.4,
     Sluice: 3.6,
     Reservoir: 3.8,
     Facility: 3.6,
-    HydroStation: 4.0,
+    HydrometeorologicalStation: 4.0,
   }[objectType] || 3.4;
 }
 
 function pointStrokeWeight(objectType) {
-  return ["Risk", "Place", "Transfer"].includes(objectType) ? 0.9 : 1.2;
+  return ["DangerArea", "EvacuationSite", "EvacuationUnit"].includes(objectType) ? 0.9 : 1.2;
 }
 
 function popupHtml(objectType, feature) {
   const props = feature.properties || {};
   const name = props.name || props[ID_FIELDS[objectType]] || OBJECT_CONFIG[objectType]?.label || objectType;
   const id = props[ID_FIELDS[objectType]] || "";
-  if (objectType === "Route") {
+  if (objectType === "EvacuationRoute") {
     const steps = parseRouteInstructions(props.instructions);
     return `
       <div class="popup-title">${escapeHtml(name)}</div>
@@ -3262,7 +3262,7 @@ function fitHighlighted() {
 }
 
 function detailHtml(objectType, props) {
-  if (objectType === "Route") return routeDetailHtml(props);
+  if (objectType === "EvacuationRoute") return routeDetailHtml(props);
   const keys = Object.keys(props).filter((key) => props[key] !== "" && props[key] !== null && key !== "geometry");
   const rows = keys.slice(0, 8).map((key) => `<div><strong>${escapeHtml(key)}</strong>: ${escapeHtml(String(props[key]))}</div>`);
   return `<div class="muted"><strong>${escapeHtml(OBJECT_CONFIG[objectType]?.label || objectType)}</strong>${rows.join("")}</div>`;
@@ -3271,7 +3271,7 @@ function detailHtml(objectType, props) {
 function routeDetailHtml(props) {
   const steps = parseRouteInstructions(props.instructions);
   const summaryRows = [
-    ["路线ID", props.route_id],
+    ["路线ID", props.evacuation_route_id],
     ["名称", props.name],
     ["方式", routeProfileLabel(props.profile)],
     ["距离", formatRouteDistance(props.length_m)],
@@ -3283,7 +3283,7 @@ function routeDetailHtml(props) {
     .join("");
   return `
     <div class="muted route-detail">
-      <strong>${escapeHtml(OBJECT_CONFIG.Route?.label || "路线")}</strong>
+      <strong>${escapeHtml(OBJECT_CONFIG.EvacuationRoute?.label || "路线")}</strong>
       ${summary}
       ${routeNavigationHtml(steps)}
     </div>
@@ -4280,6 +4280,7 @@ function registerImpactAnalysisResult(result, options = {}) {
     targetType: result.target_type || "all",
     minDepthM: Number(params.min_depth_m ?? 0.15),
     maxDistanceM: Number(params.max_distance_m ?? 10),
+    bridgeInfluenceRadiusM: Number(params.bridge_influence_radius_m ?? 80),
     lastResult: result,
   };
   if (options.render === false) return;
@@ -4312,6 +4313,9 @@ async function refreshImpactAnalysisForTimeline() {
     target_type: "all",
     min_depth_m: "0.15",
     max_distance_m: "10",
+    bridge_influence_radius_m: String(
+      state.impactAnalysis?.bridgeInfluenceRadiusM ?? 80,
+    ),
     time_h: String(timeline.current_hydrodynamic_time_h),
   });
   const seq = ++state.impactRefreshSeq;
@@ -4409,7 +4413,9 @@ function impactMarkerIcon(impact, selected = false) {
 }
 
 function impactTooltipHtml(impact) {
-  return `<strong>${escapeHtml(impact.name || impact.object_id)}</strong><br>${escapeHtml(impactTypeLabel(impact.object_type))} · 水深 ${formatImpactNumber(impact.depth_m, 2)} m`;
+  const depthLabel = impactDepthLabel(impact);
+  const status = impactPassabilityLabel(impact.passability_status);
+  return `<strong>${escapeHtml(impact.name || impact.object_id)}</strong><br>${escapeHtml(impactTypeLabel(impact.object_type))} · ${escapeHtml(depthLabel)} ${formatImpactNumber(impact.depth_m, 2)} m${status ? `<br>${escapeHtml(status)}` : ""}`;
 }
 
 function renderImpactList(result, impacts) {
@@ -4434,6 +4440,7 @@ function renderImpactList(result, impacts) {
     const iconInfo = objectIconInfo(impact.object_type, impact);
     const symbol = window.FloodMapSymbols?.render(iconInfo.icon) || "";
     const button = document.createElement("button");
+    const passability = impactPassabilityLabel(impact.passability_status);
     button.type = "button";
     button.className = "impact-list-item";
     button.classList.toggle("is-selected", key === state.selectedImpactKey);
@@ -4445,9 +4452,9 @@ function renderImpactList(result, impacts) {
       </span>
       <span class="impact-list-copy">
         <strong>${escapeHtml(impact.name || impact.object_id)}</strong>
-        <small>${escapeHtml(impactTypeLabel(impact.object_type))} · ${escapeHtml(String(impact.object_id))}</small>
+        <small>${escapeHtml(impactTypeLabel(impact.object_type))}${passability ? ` · ${escapeHtml(passability)}` : ""} · ${escapeHtml(String(impact.object_id))}</small>
       </span>
-      <span class="impact-list-depth">${formatImpactNumber(impact.depth_m, 2)}<small>m</small></span>
+      <span class="impact-list-depth" title="${escapeHtml(impactDepthLabel(impact))}">${formatImpactNumber(impact.depth_m, 2)}<small>m</small></span>
     `;
     button.addEventListener("click", () => void focusImpactObject(impact));
     list.appendChild(button);
@@ -4564,20 +4571,37 @@ function impactRiskLabel(level) {
   }[level] || "受影响";
 }
 
+function impactDepthLabel(impact) {
+  return impact?.object_type === "Bridge" && impact?.directly_inundated === false
+    ? "邻近洪泛区最大水深"
+    : "水深";
+}
+
+function impactPassabilityLabel(status) {
+  return {
+    inspection_required: "需现场核查",
+    likely_impassable: "可能无法通行",
+  }[status] || "";
+}
+
 function impactPopupHtml(impact) {
+  const depthLabel = impactDepthLabel(impact);
+  const passability = impactPassabilityLabel(impact.passability_status);
   return `
     <div class="popup-title">${escapeHtml(impact.name || impact.object_id)}</div>
     <div class="popup-meta">${escapeHtml(impactTypeLabel(impact.object_type))} ${escapeHtml(impact.object_id)}</div>
-    <div class="popup-depth">${formatImpactNumber(impact.depth_m, 2)} <span>m 水深</span></div>
-    <div class="popup-meta">${escapeHtml(impactRiskLabel(impact.risk_level))} · 流速 ${formatImpactNumber(impact.velocity_mps, 2)} m/s · 距网格 ${formatImpactNumber(impact.distance_m, 1)} m</div>
+    <div class="popup-depth">${formatImpactNumber(impact.depth_m, 2)} <span>m ${escapeHtml(depthLabel)}</span></div>
+    <div class="popup-meta">${escapeHtml(passability || impactRiskLabel(impact.risk_level))} · 流速 ${formatImpactNumber(impact.velocity_mps, 2)} m/s · 距网格 ${formatImpactNumber(impact.distance_m, 1)} m</div>
   `;
 }
 
 function impactDetailHtml(impact, props) {
+  const depthLabel = impactDepthLabel(impact);
+  const passability = impactPassabilityLabel(impact.passability_status);
   return `
     <div class="impact-selected-summary">
-      <strong>${escapeHtml(impactRiskLabel(impact.risk_level))}</strong>
-      <span>水深 ${formatImpactNumber(impact.depth_m, 2)} m</span>
+      <strong>${escapeHtml(passability || impactRiskLabel(impact.risk_level))}</strong>
+      <span>${escapeHtml(depthLabel)} ${formatImpactNumber(impact.depth_m, 2)} m</span>
       <span>流速 ${formatImpactNumber(impact.velocity_mps, 2)} m/s</span>
     </div>
     ${detailHtml(impact.object_type, props)}

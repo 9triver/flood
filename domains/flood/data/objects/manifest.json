@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-27T04:23:10.151306+00:00",
+  "generated_at": "2026-07-27T06:27:15.743574+00:00",
   "notes": [],
   "object_types": {
     "Bridge": {
@@ -14,37 +14,41 @@
       "count": 3,
       "path": "domains/flood/data/objects/county.jsonl"
     },
+    "DangerArea": {
+      "count": 24,
+      "path": "domains/flood/data/objects/danger_area.jsonl"
+    },
+    "EvacuationRoute": {
+      "count": 10,
+      "path": "domains/flood/data/objects/evacuation_route.jsonl"
+    },
+    "EvacuationSite": {
+      "count": 719,
+      "path": "domains/flood/data/objects/evacuation_site.jsonl"
+    },
+    "EvacuationUnit": {
+      "count": 10,
+      "path": "domains/flood/data/objects/evacuation_unit.jsonl"
+    },
     "Facility": {
       "count": 106,
       "path": "domains/flood/data/objects/facility.jsonl"
     },
     "HydraulicStructure": {
-      "count": 40,
+      "count": 20,
       "path": "domains/flood/data/objects/hydraulic_structure.jsonl"
-    },
-    "HydroStation": {
-      "count": 4,
-      "path": "domains/flood/data/objects/hydro_station.jsonl"
     },
     "HydrodynamicBoundary": {
       "count": 286,
       "path": "domains/flood/data/objects/hydrodynamic_boundary.jsonl"
     },
-    "Hydrology": {
-      "count": 20,
-      "path": "domains/flood/data/objects/hydrology.jsonl"
-    },
-    "Place": {
-      "count": 719,
-      "path": "domains/flood/data/objects/place.jsonl"
+    "HydrometeorologicalStation": {
+      "count": 4,
+      "path": "domains/flood/data/objects/hydrometeorological_station.jsonl"
     },
     "Reservoir": {
-      "count": 18,
+      "count": 1,
       "path": "domains/flood/data/objects/reservoir.jsonl"
-    },
-    "Risk": {
-      "count": 24,
-      "path": "domains/flood/data/objects/risk.jsonl"
     },
     "River": {
       "count": 1,
@@ -54,21 +58,13 @@
       "count": 426,
       "path": "domains/flood/data/objects/road.jsonl"
     },
-    "Route": {
-      "count": 10,
-      "path": "domains/flood/data/objects/route.jsonl"
-    },
     "Sluice": {
-      "count": 3,
+      "count": 1,
       "path": "domains/flood/data/objects/sluice.jsonl"
     },
     "Town": {
       "count": 7,
       "path": "domains/flood/data/objects/town.jsonl"
-    },
-    "Transfer": {
-      "count": 10,
-      "path": "domains/flood/data/objects/transfer.jsonl"
     },
     "Watershed": {
       "count": 1,

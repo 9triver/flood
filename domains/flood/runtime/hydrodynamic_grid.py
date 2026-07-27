@@ -51,7 +51,7 @@ class HydrodynamicMeshStore:
             mesh = {row["key"]: row["value"] for row in conn.execute("select key, value from mesh_meta")}
             forecast = forecast_stats(forecast_id)
             return {
-                "object_type": "HydrodynamicCell",
+                "object_type": "HydrodynamicGridCell",
                 "label": "水动力模型网格",
                 "feature_count": int(mesh.get("feature_count", 0)),
                 "geometry_type": "Polygon",

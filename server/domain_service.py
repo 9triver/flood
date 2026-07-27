@@ -9,7 +9,10 @@ from domains.flood.runtime.hydrodynamic_grid import (
     hydrodynamic_grid_stats,
     hydrodynamic_grid_tile,
 )
-from domains.flood.runtime.impact_analysis import analyze_inundation_impacts
+from domains.flood.runtime.impact_analysis import (
+    BRIDGE_INFLUENCE_RADIUS_M,
+    analyze_inundation_impacts,
+)
 from domains.flood.runtime.tools import list_mappable_objects
 from domains.flood.runtime.workspace import active_workspace_id
 
@@ -27,14 +30,14 @@ ID_FIELDS = {
     "Bridge": "bridge_id",
     "BridgeRoadLink": "bridge_road_link_id",
     "Facility": "facility_id",
-    "Place": "place_id",
-    "Transfer": "transfer_id",
-    "Route": "route_id",
-    "Risk": "risk_id",
-    "HydroStation": "station_id",
-    "ForecastRun": "forecast_id",
-    "ForecastCell": "forecast_cell_id",
-    "HydrodynamicCell": "hydrodynamic_cell_id",
+    "EvacuationSite": "evacuation_site_id",
+    "EvacuationUnit": "evacuation_unit_id",
+    "EvacuationRoute": "evacuation_route_id",
+    "DangerArea": "danger_area_id",
+    "HydrometeorologicalStation": "station_id",
+    "FloodForecast": "forecast_id",
+    "InundationForecastCell": "forecast_cell_id",
+    "HydrodynamicGridCell": "hydrodynamic_cell_id",
     "EmergencyDirective": "directive_id",
 }
 
@@ -121,6 +124,7 @@ class FloodDomainService:
         min_depth_m: float = 0.15,
         max_distance_m: float = 10.0,
         time_h: float | None = None,
+        bridge_influence_radius_m: float = BRIDGE_INFLUENCE_RADIUS_M,
     ) -> dict[str, Any]:
         return analyze_inundation_impacts(
             self.resolver,
@@ -129,6 +133,7 @@ class FloodDomainService:
             min_depth_m=min_depth_m,
             max_distance_m=max_distance_m,
             time_h=time_h,
+            bridge_influence_radius_m=bridge_influence_radius_m,
         )
 
     def get_object(self, object_type: str, object_id: str) -> dict[str, Any]:
