@@ -403,7 +403,9 @@ def generate_forecast(resolver) -> dict[str, Any]:
         }
         return run
 
-    depths = read_hydrodynamic_depth_csv(hydrodynamic_forecast_depth_path())
+    depths = cnn_result.pop("_positive_depths", None)
+    if not isinstance(depths, dict):
+        depths = read_hydrodynamic_depth_csv(hydrodynamic_forecast_depth_path())
     cell_summary = forecast_cell_summary_from_hydrodynamic_mesh(depths)
     run = {
         "schema_version": FORECAST_SCHEMA_VERSION,

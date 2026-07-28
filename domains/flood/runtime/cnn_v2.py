@@ -1,22 +1,30 @@
 from __future__ import annotations
 
+import atexit
 import csv
 import json
 import os
+import queue
 import subprocess
 import shutil
 import sys
+import threading
+import time
+import uuid
+from collections import deque
 from pathlib import Path
 from typing import Any
 
-from .common import DOMAIN_DIR, PROJECT_DIR, rel
-from .workspace import workspace_dir
+from .common import DOMAIN_DIR, rel
+from .workspace import SHARED_CACHE_DIR, workspace_dir
 
 
 MODEL_DIR = DOMAIN_DIR / "model" / "cnn_v2"
 MODEL_SCRIPT = MODEL_DIR / "CNN_V2.py"
+WORKER_SCRIPT = MODEL_DIR / "CNN_V2_worker.py"
 GRID_PATH = MODEL_DIR / "GT.txt"
 WEIGHT_PATH = MODEL_DIR / "weights" / "FLOOD_CNN.pth"
+GRID_CACHE_PATH = SHARED_CACHE_DIR / "cnn_v2" / "grid.npz"
 
 BOUNDARY_FILES = (
     ("interval1", "00_interval1.csv"),
@@ -27,10 +35,240 @@ BOUNDARY_FILES = (
 CNN_DEVICE_CHOICES = {"cpu", "cuda", "auto"}
 
 
+class CnnWorkerError(RuntimeError):
+    pass
+
+
+class CnnWorkerTimeoutError(CnnWorkerError):
+    pass
+
+
+class _CnnWorker:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._process: subprocess.Popen[str] | None = None
+        self._responses: queue.Queue[dict[str, Any]] = queue.Queue()
+        self._stderr: deque[str] = deque(maxlen=200)
+        self._stderr_lock = threading.Lock()
+        self._configuration: tuple[Any, ...] | None = None
+        self._device = ""
+        self._reader_threads: list[threading.Thread] = []
+
+    def run(self, *, test_dir: Path, output_dir: Path,
+            requested_device: str, timeout: int,
+            env: dict[str, str]) -> dict[str, Any]:
+        started = time.perf_counter()
+        configuration = self._worker_configuration(requested_device)
+        if not self._lock.acquire(timeout=max(0.1, float(timeout))):
+            raise CnnWorkerTimeoutError("timed out waiting for the CNN worker")
+        queue_ms = (time.perf_counter() - started) * 1000
+        try:
+            reused = self._is_running(configuration)
+            startup_ms = 0.0
+            if not reused:
+                startup_started = time.perf_counter()
+                self._stop_locked()
+                remaining = timeout - (time.perf_counter() - started)
+                if remaining <= 0:
+                    raise CnnWorkerTimeoutError("timed out waiting for the CNN worker")
+                self._start_locked(configuration, requested_device, env, remaining)
+                startup_ms = (time.perf_counter() - startup_started) * 1000
+
+            process = self._process
+            if process is None or process.stdin is None:
+                raise CnnWorkerError("CNN worker is unavailable")
+            request_id = uuid.uuid4().hex
+            payload = {
+                "request_id": request_id,
+                "test_dir": str(test_dir),
+                "output_dir": str(output_dir),
+            }
+            request_started = time.perf_counter()
+            try:
+                process.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
+                process.stdin.flush()
+            except (BrokenPipeError, OSError) as exc:
+                self._stop_locked()
+                raise CnnWorkerError(f"CNN worker pipe failed: {exc}") from exc
+
+            remaining = timeout - (time.perf_counter() - started)
+            if remaining <= 0:
+                raise CnnWorkerTimeoutError("CNN worker prediction timed out")
+            response = self._wait_for_message(remaining)
+            request_ms = (time.perf_counter() - request_started) * 1000
+            if response.get("type") == "eof":
+                self._stop_locked()
+                raise CnnWorkerError("CNN worker exited unexpectedly")
+            if response.get("request_id") != request_id:
+                self._stop_locked()
+                raise CnnWorkerError("CNN worker returned a mismatched response")
+            if response.get("type") == "error":
+                raise CnnWorkerError(str(response.get("error") or "CNN worker prediction failed"))
+            if response.get("type") != "result":
+                self._stop_locked()
+                raise CnnWorkerError("CNN worker returned an invalid response")
+            return {
+                "result": response.get("result") or {},
+                "device": str(response.get("device") or self._device or requested_device),
+                "worker_reused": reused,
+                "worker_pid": process.pid,
+                "worker_queue_ms": round(queue_ms, 1),
+                "worker_startup_ms": round(startup_ms, 1),
+                "worker_request_ms": round(request_ms, 1),
+                "worker_elapsed_ms": response.get("elapsed_ms"),
+                "stderr": self.stderr_tail(),
+            }
+        finally:
+            self._lock.release()
+
+    def close(self) -> None:
+        with self._lock:
+            self._stop_locked()
+
+    def stderr_tail(self) -> str:
+        with self._stderr_lock:
+            return "".join(self._stderr)[-4000:]
+
+    def _worker_configuration(self, requested_device: str) -> tuple[Any, ...]:
+        return (
+            cnn_python(),
+            requested_device,
+            cnn_inference_batch_size(),
+            _file_identity(WORKER_SCRIPT),
+            _file_identity(MODEL_SCRIPT),
+            _file_identity(GRID_PATH),
+            _file_identity(WEIGHT_PATH),
+        )
+
+    def _is_running(self, configuration: tuple[Any, ...]) -> bool:
+        return bool(
+            self._process is not None
+            and self._process.poll() is None
+            and self._configuration == configuration
+        )
+
+    def _start_locked(self, configuration: tuple[Any, ...],
+                      requested_device: str, env: dict[str, str],
+                      timeout: float) -> None:
+        responses: queue.Queue[dict[str, Any]] = queue.Queue()
+        stderr: deque[str] = deque(maxlen=200)
+        self._responses = responses
+        with self._stderr_lock:
+            self._stderr = stderr
+        command = [
+            cnn_python(),
+            str(WORKER_SCRIPT),
+            "--device", requested_device,
+            "--grid-file", str(GRID_PATH),
+            "--grid-cache-file", str(GRID_CACHE_PATH),
+            "--model-path", str(WEIGHT_PATH),
+            "--inference-batch-size", str(cnn_inference_batch_size()),
+            "--no-timeseries-csv",
+        ]
+        try:
+            process = subprocess.Popen(
+                command,
+                cwd=str(MODEL_DIR),
+                env=env,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+        except OSError as exc:
+            raise CnnWorkerError(f"could not start CNN worker: {exc}") from exc
+        self._process = process
+        self._configuration = configuration
+        response_thread = threading.Thread(
+            target=self._read_responses, args=(process, responses), daemon=True,
+            name="cnn-worker-responses",
+        )
+        stderr_thread = threading.Thread(
+            target=self._read_stderr, args=(process, stderr), daemon=True,
+            name="cnn-worker-stderr",
+        )
+        self._reader_threads = [response_thread, stderr_thread]
+        response_thread.start()
+        stderr_thread.start()
+        ready = self._wait_for_message(float(timeout))
+        if ready.get("type") != "ready":
+            detail = ready.get("error") or self.stderr_tail() or "no ready response"
+            self._stop_locked()
+            raise CnnWorkerError(f"CNN worker failed to start: {detail}")
+        self._device = str(ready.get("device") or requested_device)
+
+    def _wait_for_message(self, timeout: float) -> dict[str, Any]:
+        try:
+            return self._responses.get(timeout=timeout)
+        except queue.Empty as exc:
+            self._stop_locked()
+            raise CnnWorkerTimeoutError("CNN worker prediction timed out") from exc
+
+    def _read_responses(self, process: subprocess.Popen[str],
+                        responses: queue.Queue[dict[str, Any]]) -> None:
+        stream = process.stdout
+        if stream is None:
+            responses.put({"type": "eof"})
+            return
+        try:
+            for line in stream:
+                try:
+                    message = json.loads(line)
+                except json.JSONDecodeError:
+                    message = {"type": "protocol_error", "error": line.strip()}
+                responses.put(message)
+        finally:
+            responses.put({"type": "eof"})
+
+    def _read_stderr(self, process: subprocess.Popen[str],
+                     stderr: deque[str]) -> None:
+        stream = process.stderr
+        if stream is None:
+            return
+        for line in stream:
+            with self._stderr_lock:
+                stderr.append(line)
+
+    def _stop_locked(self) -> None:
+        process = self._process
+        reader_threads = self._reader_threads
+        self._process = None
+        self._reader_threads = []
+        self._configuration = None
+        self._device = ""
+        if process is None:
+            return
+        if process.stdin is not None:
+            try:
+                process.stdin.close()
+            except OSError:
+                pass
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
+        for thread in reader_threads:
+            thread.join(timeout=1)
+        for stream in (process.stdout, process.stderr):
+            if stream is not None:
+                stream.close()
+
+
+_CNN_WORKER = _CnnWorker()
+atexit.register(_CNN_WORKER.close)
+
+
 def run_cnn_v2_forecast(boundary_flow: dict[str, Any],
                         target_depth_path: Path) -> dict[str, Any]:
+    total_started = time.perf_counter()
     if not MODEL_SCRIPT.exists():
         return {"error": f"missing CNN_V2.py: {rel(MODEL_SCRIPT)}"}
+    if cnn_worker_enabled() and not WORKER_SCRIPT.exists():
+        return {"error": f"missing CNN_V2_worker.py: {rel(WORKER_SCRIPT)}"}
     if not GRID_PATH.exists():
         return {"error": f"missing CNN grid file: {rel(GRID_PATH)}"}
     if not WEIGHT_PATH.exists():
@@ -52,33 +290,21 @@ def run_cnn_v2_forecast(boundary_flow: dict[str, Any],
     _write_case_csvs(summary, case_dir)
     requested_device = cnn_device()
 
-    command = [
-        cnn_python(),
-        str(MODEL_SCRIPT),
-        "--mode", "predict",
-        "--device", requested_device,
-        "--test-dir", str(test_dir),
-        "--grid-file", str(GRID_PATH),
-        "--model-path", str(WEIGHT_PATH),
-        "--output-dir", str(output_dir),
-        "--no-timeseries-csv",
-    ]
     env = dict(os.environ)
     env.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
     env.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    timeout = int(env.get("FLOOD_CNN_TIMEOUT_SECONDS", "300"))
     try:
-        completed = subprocess.run(
-            command,
-            cwd=str(MODEL_DIR),
+        execution = _execute_prediction(
+            test_dir=test_dir,
+            output_dir=output_dir,
+            requested_device=requested_device,
+            timeout=timeout,
             env=env,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=int(env.get("FLOOD_CNN_TIMEOUT_SECONDS", "300")),
         )
     except FileNotFoundError as exc:
         return {
-            "error": f"CNN python not found: {command[0]}",
+            "error": f"CNN python not found: {cnn_python()}",
             "detail": str(exc),
         }
     except subprocess.TimeoutExpired as exc:
@@ -86,13 +312,27 @@ def run_cnn_v2_forecast(boundary_flow: dict[str, Any],
             "error": "CNN_V2 prediction timed out",
             "detail": str(exc),
         }
-    if completed.returncode != 0:
+    except CnnWorkerTimeoutError as exc:
+        return {
+            "error": "CNN_V2 prediction timed out",
+            "detail": str(exc),
+            "stderr": _CNN_WORKER.stderr_tail(),
+            "python": cnn_python(),
+        }
+    except CnnWorkerError as exc:
         return {
             "error": "CNN_V2 prediction failed",
-            "returncode": completed.returncode,
-            "stdout": completed.stdout[-4000:],
-            "stderr": completed.stderr[-4000:],
-            "python": command[0],
+            "detail": str(exc),
+            "stderr": _CNN_WORKER.stderr_tail(),
+            "python": cnn_python(),
+        }
+    if int(execution.get("returncode") or 0) != 0:
+        return {
+            "error": "CNN_V2 prediction failed",
+            "returncode": execution.get("returncode"),
+            "stdout": str(execution.get("stdout") or "")[-4000:],
+            "stderr": str(execution.get("stderr") or "")[-4000:],
+            "python": cnn_python(),
         }
 
     output_depth_path = output_dir / "TEST_RESULTS" / case_name / f"{case_name}_max_depth.csv"
@@ -102,10 +342,11 @@ def run_cnn_v2_forecast(boundary_flow: dict[str, Any],
         return {
             "error": "CNN_V2 prediction did not produce max_depth.csv",
             "expected_path": rel(output_depth_path),
-            "stdout": completed.stdout[-4000:],
-            "stderr": completed.stderr[-4000:],
+            "stdout": str(execution.get("stdout") or "")[-4000:],
+            "stderr": str(execution.get("stderr") or "")[-4000:],
         }
 
+    finalize_started = time.perf_counter()
     target_depth_path.parent.mkdir(parents=True, exist_ok=True)
     target_series_path = target_depth_path.with_name("depth_series.npy")
     target_time_steps_path = target_depth_path.with_name("time_steps.json")
@@ -125,7 +366,12 @@ def run_cnn_v2_forecast(boundary_flow: dict[str, Any],
             }, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-    stats = depth_csv_stats(target_depth_path)
+    finalize_ms = (time.perf_counter() - finalize_started) * 1000
+    scan_started = time.perf_counter()
+    positive_depths, stats = read_depth_csv(target_depth_path)
+    scan_ms = (time.perf_counter() - scan_started) * 1000
+    model_case = (execution.get("model_result") or {}).get(case_name) or {}
+    model_timings = model_case.get("timings_ms") or {}
     result = {
         "status": "completed",
         "model_name": "FLOOD_CNN_V2",
@@ -136,14 +382,90 @@ def run_cnn_v2_forecast(boundary_flow: dict[str, Any],
         "hydrodynamic_time_steps_path": rel(target_time_steps_path) if target_time_steps_path.exists() else "",
         "time_steps_h": time_steps,
         "time_step_count": len(time_steps),
-        "python": command[0],
-        "device": _device_used(completed.stdout, requested_device),
-        "stdout_tail": completed.stdout[-2000:],
-        "stderr_tail": completed.stderr[-2000:],
+        "python": cnn_python(),
+        "device": str(execution.get("device") or requested_device),
+        "persistent_worker": bool(execution.get("persistent_worker")),
+        "worker_reused": bool(execution.get("worker_reused")),
+        "worker_pid": execution.get("worker_pid"),
+        "inference_batch_size": cnn_inference_batch_size(),
+        "stdout_tail": str(execution.get("stdout") or "")[-2000:],
+        "stderr_tail": str(execution.get("stderr") or "")[-2000:],
+        "timings_ms": {
+            "worker_queue": execution.get("worker_queue_ms", 0.0),
+            "worker_startup": execution.get("worker_startup_ms", 0.0),
+            "worker_request": execution.get("worker_request_ms"),
+            "worker_compute": execution.get("worker_elapsed_ms"),
+            "model": model_timings,
+            "finalize_outputs": round(finalize_ms, 1),
+            "depth_scan": round(scan_ms, 1),
+            "total": round((time.perf_counter() - total_started) * 1000, 1),
+        },
+        "_positive_depths": positive_depths,
         **stats,
     }
     shutil.rmtree(run_dir, ignore_errors=True)
     return result
+
+
+def _execute_prediction(*, test_dir: Path, output_dir: Path,
+                        requested_device: str, timeout: int,
+                        env: dict[str, str]) -> dict[str, Any]:
+    if cnn_worker_enabled():
+        result = _CNN_WORKER.run(
+            test_dir=test_dir,
+            output_dir=output_dir,
+            requested_device=requested_device,
+            timeout=timeout,
+            env=env,
+        )
+        return {
+            "returncode": 0,
+            "stdout": "",
+            "persistent_worker": True,
+            "model_result": result.pop("result", {}),
+            **result,
+        }
+
+    command = [
+        cnn_python(),
+        str(MODEL_SCRIPT),
+        "--mode", "predict",
+        "--device", requested_device,
+        "--test-dir", str(test_dir),
+        "--grid-file", str(GRID_PATH),
+        "--grid-cache-file", str(GRID_CACHE_PATH),
+        "--model-path", str(WEIGHT_PATH),
+        "--output-dir", str(output_dir),
+        "--inference-batch-size", str(cnn_inference_batch_size()),
+        "--no-timeseries-csv",
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=str(MODEL_DIR),
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    summary_path = output_dir / "TEST_RESULTS" / "summary.json"
+    model_result: dict[str, Any] = {}
+    if summary_path.exists():
+        try:
+            parsed = json.loads(summary_path.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict):
+                model_result = parsed
+        except (OSError, json.JSONDecodeError):
+            pass
+    return {
+        "returncode": completed.returncode,
+        "stdout": completed.stdout,
+        "stderr": completed.stderr,
+        "device": _device_used(completed.stdout, requested_device),
+        "persistent_worker": False,
+        "worker_reused": False,
+        "model_result": model_result,
+    }
 
 
 def cnn_python() -> str:
@@ -159,6 +481,32 @@ def cnn_device() -> str:
         choices = ", ".join(sorted(CNN_DEVICE_CHOICES))
         raise ValueError(f"FLOOD_CNN_DEVICE must be one of: {choices}")
     return configured
+
+
+def cnn_worker_enabled() -> bool:
+    configured = str(
+        os.environ.get("FLOOD_CNN_PERSISTENT_WORKER") or "true"
+    ).strip().lower()
+    return configured not in {"0", "false", "no", "off"}
+
+
+def cnn_inference_batch_size() -> int:
+    configured = str(os.environ.get("FLOOD_CNN_BATCH_SIZE") or "8").strip()
+    try:
+        size = int(configured)
+    except ValueError as exc:
+        raise ValueError("FLOOD_CNN_BATCH_SIZE must be a positive integer") from exc
+    if size <= 0:
+        raise ValueError("FLOOD_CNN_BATCH_SIZE must be a positive integer")
+    return size
+
+
+def _file_identity(path: Path) -> tuple[int, int] | tuple[None, None]:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None, None
+    return stat.st_mtime_ns, stat.st_size
 
 
 def _device_used(stdout: str, requested: str) -> str:
@@ -237,7 +585,8 @@ def _read_output_interval_hours() -> float:
     return 0.5
 
 
-def depth_csv_stats(path: Path) -> dict[str, Any]:
+def read_depth_csv(path: Path) -> tuple[dict[int, float], dict[str, Any]]:
+    positive_depths: dict[int, float] = {}
     depth_count = 0
     flooded_count = 0
     max_depth = 0.0
@@ -245,13 +594,18 @@ def depth_csv_stats(path: Path) -> dict[str, Any]:
     with path.open(newline="", encoding="utf-8") as file:
         reader = csv.DictReader(file)
         for row in reader:
-            depth = float(row.get("max_depth") or row.get("max_depth_m") or 0)
+            try:
+                cell_id = int(row["cell_id"])
+                depth = float(row.get("max_depth") or row.get("max_depth_m") or 0)
+            except (KeyError, TypeError, ValueError):
+                continue
             depth_count += 1
             if depth > 0:
+                positive_depths[cell_id] = depth
                 flooded_count += 1
                 depth_sum += depth
                 max_depth = max(max_depth, depth)
-    return {
+    return positive_depths, {
         "depth_count": depth_count,
         "flooded_count": flooded_count,
         "max_depth_m": round(max_depth, 4),

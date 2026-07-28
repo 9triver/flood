@@ -42,6 +42,7 @@ import os
 import random
 import re
 import struct
+import time
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -100,6 +101,7 @@ CONFIG = {
     "output_dir": "./OUTPUT",
     "test_output_dir": "./OUTPUT/TEST_RESULTS",
     "cache_dir": "./OUTPUT/CACHE",
+    "grid_cache_file": None,
     "force_retrain": False,
     "random_seed": 20260628,
 
@@ -158,6 +160,8 @@ CONFIG = {
     "loss_flooded": 0.40,
     "loss_dry": 0.10,
     "predict_frame_stride": 1,
+    # Bound peak memory while still amortizing per-frame model overhead.
+    "inference_batch_size": 8,
     "export_time_series_csv": True,
     "coord_system": "EPSG:4546",
 }
@@ -297,50 +301,105 @@ def nearest_frame_indices(frame_hours: np.ndarray, target_hours: Iterable[float]
 
 
 class GridParser:
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path,
+                 cache_path: str | Path | None = None):
         self.path = Path(path)
+        self.cache_path = Path(cache_path) if cache_path else None
         self.cell_ids: list[int] = []
         self.bounds: dict[str, float] | None = None
 
     def parse(self) -> "GridParser":
         if not self.path.exists():
             raise FileNotFoundError(f"Grid file not found: {self.path}")
+        if self._load_cache():
+            print(f"[grid] cells={len(self.cell_ids)}, cache={self.cache_path}")
+            return self
 
         with self.path.open("r", encoding="utf-8") as f:
-            lines = [line.strip() for line in f if line.strip()]
+            header = self._next_nonempty(f).split()
+            node_count = int(header[0])
+            quad_count = int(header[2])
+            tri_count = int(header[3])
 
-        header = lines[0].split()
-        node_count = int(header[0])
-        quad_count = int(header[2])
-        tri_count = int(header[3])
+            xmin = ymin = float("inf")
+            xmax = ymax = float("-inf")
+            for _ in range(node_count):
+                parts = self._next_nonempty(f).split()
+                x = float(parts[1])
+                y = float(parts[2])
+                xmin = min(xmin, x)
+                xmax = max(xmax, x)
+                ymin = min(ymin, y)
+                ymax = max(ymax, y)
 
-        idx = 1
-        xs, ys = [], []
-        for _ in range(node_count):
-            parts = lines[idx].split()
-            xs.append(float(parts[1]))
-            ys.append(float(parts[2]))
-            idx += 1
-
-        cell_ids = []
-        for _ in range(quad_count):
-            parts = lines[idx].split()
-            cell_ids.append(int(parts[0]))
-            idx += 1
-        for _ in range(tri_count):
-            parts = lines[idx].split()
-            cell_ids.append(int(parts[0]))
-            idx += 1
+            cell_ids = []
+            for _ in range(quad_count + tri_count):
+                parts = self._next_nonempty(f).split()
+                cell_ids.append(int(parts[0]))
 
         self.cell_ids = sorted(cell_ids)
         self.bounds = {
-            "xmin": min(xs),
-            "xmax": max(xs),
-            "ymin": min(ys),
-            "ymax": max(ys),
+            "xmin": xmin,
+            "xmax": xmax,
+            "ymin": ymin,
+            "ymax": ymax,
         }
+        self._save_cache()
         print(f"[grid] cells={len(self.cell_ids)}, elevation=not used")
         return self
+
+    @staticmethod
+    def _next_nonempty(file) -> str:
+        for line in file:
+            value = line.strip()
+            if value:
+                return value
+        raise ValueError("Unexpected end of grid file")
+
+    def _load_cache(self) -> bool:
+        if self.cache_path is None or not self.cache_path.exists():
+            return False
+        source = self.path.stat()
+        try:
+            with np.load(self.cache_path, allow_pickle=False) as cached:
+                if (
+                    int(cached["source_size"]) != source.st_size
+                    or int(cached["source_mtime_ns"]) != source.st_mtime_ns
+                ):
+                    return False
+                self.cell_ids = cached["cell_ids"].astype(np.int64).tolist()
+                values = cached["bounds"].astype(np.float64).tolist()
+        except (OSError, KeyError, ValueError):
+            return False
+        self.bounds = dict(zip(("xmin", "xmax", "ymin", "ymax"), values))
+        return True
+
+    def _save_cache(self) -> None:
+        if self.cache_path is None or self.bounds is None:
+            return
+        source = self.path.stat()
+        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = self.cache_path.with_name(
+            f".{self.cache_path.name}.{os.getpid()}.tmp",
+        )
+        try:
+            with temp_path.open("wb") as file:
+                np.savez(
+                    file,
+                    source_size=np.asarray(source.st_size, dtype=np.int64),
+                    source_mtime_ns=np.asarray(source.st_mtime_ns, dtype=np.int64),
+                    cell_ids=np.asarray(self.cell_ids, dtype=np.int32),
+                    bounds=np.asarray([
+                        self.bounds["xmin"], self.bounds["xmax"],
+                        self.bounds["ymin"], self.bounds["ymax"],
+                    ], dtype=np.float64),
+                )
+            temp_path.replace(self.cache_path)
+        except OSError:
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
 
 
 class DatFloodReader:
@@ -998,22 +1057,44 @@ class FloodPredictor:
     def load(self, path: str | Path) -> None:
         path = Path(path)
         ckpt = torch.load(path, map_location=self.device)
+        self.load_checkpoint(ckpt, path)
+
+    def load_checkpoint(self, ckpt: dict, path: str | Path = "") -> None:
         self.model.load_state_dict(ckpt["model"])
         self.input_dim = int(ckpt["input_dim"])
         self.num_cells = int(ckpt["num_cells"])
         self.norm_state = ckpt.get("norm_state")
-        normalizer_state = ckpt.get("normalizer") or self.norm_state.get("depth_normalizer")
+        normalizer_state = ckpt.get("normalizer") or (self.norm_state or {}).get("depth_normalizer")
+        if not normalizer_state:
+            raise ValueError("checkpoint has no depth normalization state")
         self.normalizer.load_state_dict(normalizer_state)
-        print(f"[model] loaded: {path}")
+        print(f"[model] loaded: {path or '<checkpoint>'}")
 
     @torch.no_grad()
     def predict_depth(self, x: np.ndarray) -> np.ndarray:
+        return self.predict_depths(np.expand_dims(x, axis=0), batch_size=1)[0]
+
+    @torch.no_grad()
+    def predict_depths(self, features: np.ndarray,
+                       batch_size: int | None = None) -> np.ndarray:
         self.model.eval()
-        xt = torch.from_numpy(x.astype(np.float32)).unsqueeze(0).to(self.device)
-        pred_norm = self.model(xt).squeeze(0).detach().cpu().numpy()
-        depth = self.normalizer.inverse(pred_norm)
-        depth[depth < CONFIG["depth_threshold"]] = 0.0
-        return depth
+        features = np.asarray(features, dtype=np.float32)
+        if features.ndim != 2:
+            raise ValueError(f"expected 2D prediction features, got {features.shape}")
+        if not len(features):
+            return np.empty((0, self.num_cells), dtype=np.float32)
+        size = int(batch_size or CONFIG.get("inference_batch_size") or len(features))
+        size = max(1, min(size, len(features)))
+        batches = []
+        for start in range(0, len(features), size):
+            xt = torch.from_numpy(features[start:start + size]).to(
+                self.device, non_blocking=self.device.type == "cuda",
+            )
+            pred_norm = self.model(xt).detach().cpu().numpy()
+            batches.append(self.normalizer.inverse(pred_norm))
+        depths = np.concatenate(batches, axis=0)
+        depths[depths < CONFIG["depth_threshold"]] = 0.0
+        return depths
 
 
 def find_case_dirs(base: str | Path, require_dat: bool) -> list[Path]:
@@ -1133,7 +1214,9 @@ def train() -> FloodPredictor:
 
 
 def predict(predictor: FloodPredictor, grid: GridParser | None = None) -> dict[str, dict]:
+    scenarios_started = time.perf_counter()
     scenarios = load_scenarios(CONFIG["test_dir"], require_dat=False)
+    scenario_load_ms = (time.perf_counter() - scenarios_started) * 1000
     if not scenarios:
         print(f"[predict] no test cases found in {CONFIG['test_dir']}")
         return {}
@@ -1144,6 +1227,7 @@ def predict(predictor: FloodPredictor, grid: GridParser | None = None) -> dict[s
     out_base.mkdir(parents=True, exist_ok=True)
     results = {}
     for scenario in scenarios:
+        case_started = time.perf_counter()
         try:
             print(f"[predict] {scenario.name}")
             out_dir = out_base / scenario.name
@@ -1158,16 +1242,24 @@ def predict(predictor: FloodPredictor, grid: GridParser | None = None) -> dict[s
                 interval = float(output_interval if output_interval is not None else CONFIG["csv_time_step"])
                 hours = make_regular_hours(scenario.duration_hours, interval)
 
-            pred_depths = []
-            max_depth = np.zeros(predictor.num_cells, dtype=np.float32)
-            for hour in hours:
-                x = make_predict_feature(scenario, float(hour), predictor.norm_state)
-                depth = predictor.predict_depth(x)
-                pred_depths.append(depth)
-                max_depth = np.maximum(max_depth, depth)
+            features_started = time.perf_counter()
+            features = np.stack([
+                make_predict_feature(scenario, float(hour), predictor.norm_state)
+                for hour in hours
+            ], axis=0)
+            feature_build_ms = (time.perf_counter() - features_started) * 1000
 
-            np.save(out_dir / f"{scenario.name}_pred_depths.npy", np.stack(pred_depths, axis=0))
+            inference_started = time.perf_counter()
+            pred_depths = predictor.predict_depths(features)
+            max_depth = np.max(pred_depths, axis=0)
+            inference_ms = (time.perf_counter() - inference_started) * 1000
+
+            series_export_started = time.perf_counter()
+            np.save(out_dir / f"{scenario.name}_pred_depths.npy", pred_depths)
+            series_export_ms = (time.perf_counter() - series_export_started) * 1000
+            max_export_started = time.perf_counter()
             export_max_depth_csv(out_dir / f"{scenario.name}_max_depth.csv", max_depth, grid)
+            max_depth_export_ms = (time.perf_counter() - max_export_started) * 1000
             if CONFIG["export_time_series_csv"]:
                 export_time_series_csv(out_dir / f"{scenario.name}_time_series.csv", hours, pred_depths, grid)
 
@@ -1183,6 +1275,14 @@ def predict(predictor: FloodPredictor, grid: GridParser | None = None) -> dict[s
                 "max_depth": float(max_depth.max()),
                 "flooded_cells": int((max_depth > CONFIG["depth_threshold"]).sum()),
                 "output_dir": str(out_dir),
+                "timings_ms": {
+                    "scenario_load": round(scenario_load_ms, 1),
+                    "feature_build": round(feature_build_ms, 1),
+                    "inference": round(inference_ms, 1),
+                    "series_export": round(series_export_ms, 1),
+                    "max_depth_export": round(max_depth_export_ms, 1),
+                    "total": round((time.perf_counter() - case_started) * 1000, 1),
+                },
             }
         finally:
             scenario.close()
@@ -1192,9 +1292,10 @@ def predict(predictor: FloodPredictor, grid: GridParser | None = None) -> dict[s
 
 
 def load_predictor_from_checkpoint(path: str | Path) -> FloodPredictor:
+    path = Path(path)
     ckpt = torch.load(path, map_location="cpu")
     predictor = FloodPredictor(int(ckpt["input_dim"]), int(ckpt["num_cells"]))
-    predictor.load(path)
+    predictor.load_checkpoint(ckpt, path)
     return predictor
 
 
@@ -1205,6 +1306,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-dir", default=None)
     parser.add_argument("--test-dir", default=None)
     parser.add_argument("--grid-file", default=None)
+    parser.add_argument("--grid-cache-file", default=None)
     parser.add_argument("--model-path", default=None)
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--epochs", type=int, default=None)
@@ -1214,6 +1316,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-interval-hours", type=float, default=None)
     parser.add_argument("--train-frame-stride", type=int, default=None)
     parser.add_argument("--predict-frame-stride", type=int, default=None)
+    parser.add_argument("--inference-batch-size", type=int, default=None)
     parser.add_argument("--cache-dir", default=None)
     parser.add_argument("--cache-dtype", choices=["float16", "float32"], default=None)
     parser.add_argument("--no-cache-labels", action="store_true")
@@ -1230,6 +1333,7 @@ def apply_args(args: argparse.Namespace) -> None:
         ("device", "device"),
         ("test_dir", "test_dir"),
         ("grid_file", "grid_file"),
+        ("grid_cache_file", "grid_cache_file"),
         ("model_path", "model_path"),
         ("output_dir", "output_dir"),
         ("epochs", "epochs"),
@@ -1239,6 +1343,7 @@ def apply_args(args: argparse.Namespace) -> None:
         ("output_interval_hours", "output_interval_hours"),
         ("train_frame_stride", "train_frame_stride"),
         ("predict_frame_stride", "predict_frame_stride"),
+        ("inference_batch_size", "inference_batch_size"),
         ("cache_dir", "cache_dir"),
         ("cache_dtype", "cache_dtype"),
     ]:
@@ -1271,7 +1376,9 @@ def main() -> None:
 
     grid = None
     if Path(CONFIG["grid_file"]).exists():
-        grid = GridParser(CONFIG["grid_file"]).parse()
+        grid = GridParser(
+            CONFIG["grid_file"], CONFIG.get("grid_cache_file"),
+        ).parse()
 
     model_path = Path(CONFIG["model_path"])
     if mode == "train" or CONFIG["force_retrain"] or not model_path.exists():
