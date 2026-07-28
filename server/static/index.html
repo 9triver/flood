@@ -48,14 +48,6 @@
                   <div class="section-title">领域对象</div>
                   <div class="object-list" id="objectList"></div>
                 </div>
-                <div class="panel-section">
-                  <div class="section-title">设施筛选</div>
-                  <div class="segmented">
-                    <button data-facility="school">学校</button>
-                    <button data-facility="hospital">医院</button>
-                    <button data-facility="government">政府</button>
-                  </div>
-                </div>
                 <div class="panel-section selected-panel">
                   <div class="section-title">选中对象</div>
                   <div id="selectedObject" class="muted">未选中</div>
@@ -65,12 +57,12 @@
                 <div class="panel-section basemap-section">
                   <div class="section-title">选择底图</div>
                   <div class="basemap-options" role="radiogroup" aria-label="底图选择">
-                    <button type="button" class="basemap-option" data-basemap="standard" role="radio" aria-checked="true">
+                    <button type="button" class="basemap-option" data-basemap="standard" role="radio" aria-checked="false">
                       <i data-lucide="map"></i>
                       <span>标准</span>
                       <small>道路与行政标注</small>
                     </button>
-                    <button type="button" class="basemap-option" data-basemap="satellite" role="radio" aria-checked="false">
+                    <button type="button" class="basemap-option" data-basemap="satellite" role="radio" aria-checked="true">
                       <i data-lucide="satellite"></i>
                       <span>卫星</span>
                       <small>遥感影像</small>
@@ -181,6 +173,13 @@
                   <option value="20" selected>20×</option>
                 </select>
               </label>
+              <label class="playback-auto-pause" title="事件处理完成后自动暂停演进">
+                <input id="playbackAutoPauseSwitch" type="checkbox" checked>
+                <span class="playback-auto-pause-track" aria-hidden="true">
+                  <span></span>
+                </span>
+                <span class="playback-auto-pause-copy">自动暂停</span>
+              </label>
               <button class="icon-button playback-step" id="playbackStepBtn" title="向前步进一个预测时刻" aria-label="向前步进一个预测时刻" hidden>
                 <i data-lucide="skip-forward"></i>
               </button>
@@ -191,6 +190,9 @@
             <div class="hydro-timeline is-hidden" id="hydroTimeline" aria-label="预测淹没时间轴">
               <button class="icon-button" id="hydroPlayBtn" type="button" title="播放预测过程" aria-label="播放预测过程">
                 <i data-lucide="play"></i>
+              </button>
+              <button class="icon-button hydro-envelope-toggle" id="hydroEnvelopeBtn" type="button" title="显示未来24小时最大淹没包络" aria-label="显示未来24小时最大淹没包络" aria-pressed="false">
+                <i data-lucide="layers"></i>
               </button>
               <span class="hydro-timeline-caption">预测时刻</span>
               <input id="hydroTimeSlider" type="range" min="0" max="0" value="0" step="1" aria-label="预测时刻" />
@@ -212,6 +214,18 @@
                   </button>
                 </div>
               </header>
+              <div class="telemetry-forecast-strip" aria-label="未来24小时关键预测">
+                <div class="telemetry-forecast-head">
+                  <strong>未来24小时关键预测</strong>
+                  <small id="telemetryForecastWindow">等待预测窗口</small>
+                </div>
+                <div class="telemetry-forecast-metrics">
+                  <div><span>边界总流量峰值</span><strong id="forecastFlowPeak">--</strong><small id="forecastFlowPeakTime">m³/s</small></div>
+                  <div><span>首次超过 230</span><strong id="forecastFlowThresholdTime">--</strong><small>阈值 230 m³/s</small></div>
+                  <div><span>水库最高水位</span><strong id="forecastReservoirPeak">--</strong><small id="forecastReservoirPeakTime">m</small></div>
+                  <div class="forecast-alert-summary"><span>水库最高预警</span><strong id="forecastReservoirAlert">--</strong><small id="forecastReservoirAlertTime"></small></div>
+                </div>
+              </div>
               <div class="telemetry-overview">
                 <div class="telemetry-weather" id="telemetryWeather" data-weather="waiting" aria-live="polite">
                   <div class="telemetry-weather-icon" id="telemetryWeatherIcon" aria-hidden="true">
@@ -223,16 +237,16 @@
                   </div>
                 </div>
                 <div class="telemetry-metrics">
-                  <div><span>降雨</span><strong data-mock-field="rainfall_mm">--</strong><small>mm/h</small></div>
-                  <div><span>水库水位</span><strong data-mock-field="reservoir_level_m">--</strong><small>m</small></div>
-                  <div><span>入库流量</span><strong data-mock-field="reservoir_inflow_m3s">--</strong><small>m³/s</small></div>
-                  <div><span>泄洪流量</span><strong data-mock-field="reservoir_release_m3s">--</strong><small>m³/s</small></div>
+                  <div><span>当前雨量</span><strong data-mock-field="rainfall_mm">--</strong><small>mm/h</small></div>
+                  <div><span>当前水位</span><strong data-mock-field="reservoir_level_m">--</strong><small>m</small></div>
+                  <div><span>当前入库</span><strong data-mock-field="reservoir_inflow_m3s">--</strong><small>m³/s</small></div>
+                  <div><span>当前下泄</span><strong data-mock-field="reservoir_release_m3s">--</strong><small>m³/s</small></div>
                 </div>
               </div>
               <div class="telemetry-flow-list">
                 <div class="flow-history-card">
                   <div class="flow-history-head">
-                    <span>四边界预测流量</span>
+                    <span>四边界流量 · 实况 / 预测</span>
                     <small id="flowHistoryRange">--</small>
                   </div>
                   <svg id="boundaryFlowHistoryChart" class="flow-history-chart" viewBox="0 0 320 78" preserveAspectRatio="xMidYMid meet" aria-hidden="true"></svg>
@@ -366,7 +380,7 @@
 
     <script src="/vendor/leaflet/leaflet.js?v=1.9.4"></script>
     <script src="/vendor/lucide.js?v=2"></script>
-    <script src="/map-symbols.js"></script>
+    <script src="/map-symbols.js?v=3"></script>
     <script src="/vendor/marked/marked.min.js?v=12.0.2"></script>
     <script src="/app.js"></script>
   </body>

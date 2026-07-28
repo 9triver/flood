@@ -24,6 +24,22 @@ class CnnV2AdapterTest(unittest.TestCase):
         with patch.dict(os.environ, {"FLOOD_CNN_PYTHON": "/opt/flood/python"}):
             self.assertEqual("/opt/flood/python", cnn_v2.cnn_python())
 
+    def test_cnn_prefers_cpu_by_default(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("FLOOD_CNN_DEVICE", None)
+            self.assertEqual("cpu", cnn_v2.cnn_device())
+
+    def test_cnn_device_can_be_overridden_explicitly(self):
+        for device in ("cuda", "auto"):
+            with self.subTest(device=device):
+                with patch.dict(os.environ, {"FLOOD_CNN_DEVICE": device}):
+                    self.assertEqual(device, cnn_v2.cnn_device())
+
+    def test_invalid_cnn_device_is_rejected(self):
+        with patch.dict(os.environ, {"FLOOD_CNN_DEVICE": "metal"}):
+            with self.assertRaisesRegex(ValueError, "FLOOD_CNN_DEVICE"):
+                cnn_v2.cnn_device()
+
     def test_boundary_csvs_use_explicit_feature_order(self):
         boundaries = {
             key: {
@@ -103,6 +119,8 @@ class CnnV2AdapterTest(unittest.TestCase):
             command = commands[0]
             self.assertEqual(str(cnn_v2.WEIGHT_PATH), command[command.index("--model-path") + 1])
             self.assertIn("--no-timeseries-csv", command)
+            self.assertEqual("cpu", command[command.index("--device") + 1])
+            self.assertEqual("cpu", result["device"])
 
 
 if __name__ == "__main__":

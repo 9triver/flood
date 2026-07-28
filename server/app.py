@@ -107,6 +107,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(EVENT_RUNTIME.step_playback())
             if parsed.path == "/api/autonomy/speed":
                 return self._json(EVENT_RUNTIME.set_playback_speed(payload.get("speed_multiplier", 1)))
+            if parsed.path == "/api/autonomy/auto-pause":
+                return self._json(EVENT_RUNTIME.set_auto_pause(
+                    payload.get("auto_pause_enabled"),
+                ))
             if parsed.path == "/api/agent/confirm":
                 return self._confirm(payload)
             if parsed.path == "/api/directives":

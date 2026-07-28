@@ -8,7 +8,7 @@ import threading
 from collections import OrderedDict
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 
@@ -27,9 +27,17 @@ MESH_ONLY_ID = "mesh"
 _DEPTH_CACHE_LOCK = threading.Lock()
 _DEPTH_CACHE_MAX = 8
 _DEPTH_CACHE: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
+_DEPTH_LOADS: dict[tuple[Any, ...], "_DepthLoad"] = {}
 _TILE_CACHE_LOCK = threading.Lock()
 _TILE_CACHE_MAX = 1024
 _TILE_CACHE: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
+
+
+class _DepthLoad:
+    def __init__(self):
+        self.event = threading.Event()
+        self.entry: dict[str, Any] | None = None
+        self.error: BaseException | None = None
 
 
 class HydrodynamicMeshStore:
@@ -434,6 +442,7 @@ def forecast_stats(forecast_id: str = LATEST_FORECAST_ID) -> dict[str, Any]:
         "valid_to": metadata.get("valid_to"),
         "generated_at": metadata.get("generated_at"),
         "lead_time_h": metadata.get("lead_time_h"),
+        "rainfall_series": forecast_rainfall_series(metadata),
         "result_version": forecast_result_version(path, series_path, time_steps_path),
         "depth_path": str(path.relative_to(PROJECT_DIR)) if path.exists() else "",
         "series_path": str(series_path.relative_to(PROJECT_DIR)) if series_path.exists() else "",
@@ -453,6 +462,23 @@ def forecast_stats(forecast_id: str = LATEST_FORECAST_ID) -> dict[str, Any]:
         ],
         "time_step_count": len(time_steps),
     }
+
+
+def forecast_rainfall_series(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    series = metadata.get("rainfall_series")
+    if not isinstance(series, list):
+        boundary_flow = metadata.get("boundary_flow")
+        if isinstance(boundary_flow, dict):
+            boundary_flow_metadata = boundary_flow
+        else:
+            try:
+                boundary_flow_metadata = json.loads(str(boundary_flow or "{}"))
+            except (TypeError, json.JSONDecodeError):
+                boundary_flow_metadata = {}
+        series = boundary_flow_metadata.get("rainfall_series")
+    if not isinstance(series, list):
+        return []
+    return [dict(point) for point in series if isinstance(point, dict)]
 
 
 def forecast_result_version(*paths: Path) -> str:
@@ -485,41 +511,76 @@ def forecast_depth_entry(forecast_id: str = LATEST_FORECAST_ID,
     path = forecast_depth_path(forecast_id)
     stat_key = file_stat_key(path)
     cache_key = ("max", normalize_forecast_id(forecast_id), str(path.resolve()), stat_key)
-    with _DEPTH_CACHE_LOCK:
-        cached = _DEPTH_CACHE.get(cache_key)
-        if cached and cached.get("stat_key") == stat_key:
-            _DEPTH_CACHE.move_to_end(cache_key)
-            return cached
-
-    entry = load_forecast_depth_entry(path, stat_key)
-
-    with _DEPTH_CACHE_LOCK:
-        cached = _DEPTH_CACHE.get(cache_key)
-        if cached and cached.get("stat_key") == stat_key:
-            _DEPTH_CACHE.move_to_end(cache_key)
-            return cached
-        return cache_depth_entry(cache_key, entry)
+    return cached_depth_entry(
+        cache_key,
+        stat_key,
+        lambda: load_forecast_depth_entry(path, stat_key),
+    )
 
 
 def forecast_time_depth_entry(forecast_id: str, time_h: float) -> dict[str, Any]:
     series_path = forecast_series_path(forecast_id)
     steps = forecast_time_steps(forecast_id)
-    stat_key = (file_stat_key(series_path), file_stat_key(forecast_time_steps_path(forecast_id)), nearest_time_key(steps, time_h))
+    stat_key = (
+        file_stat_key(series_path),
+        file_stat_key(forecast_time_steps_path(forecast_id)),
+        nearest_time_key(steps, time_h),
+    )
     cache_key = ("time", normalize_forecast_id(forecast_id), str(series_path.resolve()), stat_key)
+    return cached_depth_entry(
+        cache_key,
+        stat_key,
+        lambda: load_forecast_time_depth_entry(
+            series_path, steps, time_h, stat_key,
+        ),
+    )
+
+
+def cached_depth_entry(
+    cache_key: tuple[Any, ...],
+    stat_key: Any,
+    loader: Callable[[], dict[str, Any]],
+) -> dict[str, Any]:
     with _DEPTH_CACHE_LOCK:
         cached = _DEPTH_CACHE.get(cache_key)
-        if cached and cached.get("stat_key") == stat_key:
+        if cached is not None and cached.get("stat_key") == stat_key:
             _DEPTH_CACHE.move_to_end(cache_key)
             return cached
+        load = _DEPTH_LOADS.get(cache_key)
+        is_loader = load is None
+        if load is None:
+            load = _DepthLoad()
+            _DEPTH_LOADS[cache_key] = load
 
-    entry = load_forecast_time_depth_entry(series_path, steps, time_h, stat_key)
+    if not is_loader:
+        load.event.wait()
+        if load.error is not None:
+            raise load.error
+        if load.entry is None:
+            raise RuntimeError("depth cache load completed without a result")
+        return load.entry
 
-    with _DEPTH_CACHE_LOCK:
-        cached = _DEPTH_CACHE.get(cache_key)
-        if cached and cached.get("stat_key") == stat_key:
-            _DEPTH_CACHE.move_to_end(cache_key)
-            return cached
-        return cache_depth_entry(cache_key, entry)
+    try:
+        entry = loader()
+        with _DEPTH_CACHE_LOCK:
+            cached = _DEPTH_CACHE.get(cache_key)
+            if cached is not None and cached.get("stat_key") == stat_key:
+                _DEPTH_CACHE.move_to_end(cache_key)
+                result = cached
+            else:
+                result = cache_depth_entry(cache_key, entry)
+            load.entry = result
+            load.event.set()
+            if _DEPTH_LOADS.get(cache_key) is load:
+                del _DEPTH_LOADS[cache_key]
+            return result
+    except BaseException as error:
+        with _DEPTH_CACHE_LOCK:
+            load.error = error
+            load.event.set()
+            if _DEPTH_LOADS.get(cache_key) is load:
+                del _DEPTH_LOADS[cache_key]
+        raise
 
 
 def cache_depth_entry(cache_key: tuple[Any, ...], entry: dict[str, Any]) -> dict[str, Any]:
@@ -547,21 +608,21 @@ def load_forecast_depth_entry(path: Path, stat_key: tuple[int, int] | None) -> d
             "max_depth_m": 0.0,
         }
     depths = {}
-    flooded_count = 0
+    depth_count = 0
     max_depth = 0.0
     with path.open(newline="", encoding="utf-8") as file:
         reader = csv.DictReader(file)
         for row in reader:
+            depth_count += 1
             depth = float(row.get("max_depth") or row.get("max_depth_m") or 0)
-            depths[int(row["cell_id"])] = depth
             if depth > 0:
-                flooded_count += 1
+                depths[int(row["cell_id"])] = depth
                 max_depth = max(max_depth, depth)
     return {
         "stat_key": stat_key,
         "depths": depths,
-        "depth_count": len(depths),
-        "flooded_count": flooded_count,
+        "depth_count": depth_count,
+        "flooded_count": len(depths),
         "max_depth_m": max_depth,
         "time_h": None,
         "time_index": None,

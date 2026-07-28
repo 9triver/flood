@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import math
@@ -322,54 +323,10 @@ class FloodObjectBuilder:
                 row["osm_match_status"] = "matched_by_osm_id"
             rows.append(row)
 
-        road_ids = {str(row.get("road_id") or "") for row in rows}
-        bridge_candidates = {
-            item["osm_ref"]: item
-            for item in _load_osm_candidates("osm_bridges_shanhu.json", _osm_bridge_kind)
-        }
-        for bridge in self.build("Bridge"):
-            candidate = bridge_candidates.get(str(bridge.get("osm_ref") or ""))
-            if not candidate or candidate["osm_id"] in road_ids:
-                continue
-            rows.append(_osm_bridge_road_record(candidate))
-            road_ids.add(candidate["osm_id"])
         counties = self.build("County")
         for row in rows:
             county = _spatial_owner(row, counties, max_distance_m=500)
             row["county_id"] = county["county_id"] if county else ""
-        return rows
-
-    def _build_bridgeroadlink(self) -> list[dict]:
-        roads_by_id = {
-            str(row.get("road_id") or ""): row
-            for row in self.build("Road")
-        }
-        rows = []
-        for bridge in self.build("Bridge"):
-            osm_ref = str(bridge.get("osm_ref") or "")
-            if not osm_ref.startswith("way/"):
-                continue
-            road_id = osm_ref.split("/", 1)[1]
-            road = roads_by_id.get(road_id)
-            if not road or not road.get("bridge_flag"):
-                continue
-            distance_m = float(bridge.get("osm_distance_m") or 0)
-            confidence = max(0.8, 1.0 - distance_m / 100.0)
-            rows.append({
-                "bridge_road_link_id": f"{bridge['bridge_id']}__{road_id}__deck",
-                "bridge_id": bridge["bridge_id"],
-                "road_id": road_id,
-                "link_role": "deck",
-                "match_method": "local_bridge_point_to_osm_bridge_way",
-                "validation_status": "accepted",
-                "confidence": round(confidence, 3),
-                "distance_m": round(distance_m, 2),
-                "bridge_osm_ref": osm_ref,
-                "road_osm_ref": str(road.get("osm_ref") or ""),
-                "topology_evidence": "bridge and road resolve to the same OSM way",
-                "amap_validation_status": "not_checked",
-                "data_path": str(bridge.get("data_path") or ""),
-            })
         return rows
 
     def _build_evacuationsite(self) -> list[dict]:
@@ -440,79 +397,109 @@ class FloodObjectBuilder:
         _disambiguate_duplicate_names(rows)
         return rows
 
-    def _build_hydrometeorologicalstation(self) -> list[dict]:
-        stations = [
-            {
-                "station_id": "hydro_station_longtan",
+    def _build_station(self) -> list[dict]:
+        directory = DATA_DIR / "测站"
+        workbook_path = directory / "珊瑚河流域测站汇总.xlsx"
+        coordinate_path = directory / "坐标.csv"
+        if not workbook_path.exists() or not coordinate_path.exists():
+            return []
+
+        with coordinate_path.open(encoding="utf-8-sig", newline="") as handle:
+            coordinates = {
+                str(item["stcd"]).strip(): {
+                    "name": str(item["stnm"]).strip(),
+                    "latitude": _float(str(item["st_lat"]).strip()),
+                    "longitude": _float(str(item["st_long"]).strip()),
+                }
+                for item in csv.DictReader(handle)
+            }
+
+        workbook = openpyxl.load_workbook(
+            workbook_path, read_only=True, data_only=True,
+        )
+        reservoir_stations = {
+            str(item[1]).strip(): _code(item[2]).strip()
+            for item in workbook["水库站（15）"].iter_rows(
+                min_row=2, values_only=True,
+            )
+            if item and item[1] and item[2]
+        }
+        station_types = {
+            "山洪": ("flash_flood", "山洪"),
+            "气象": ("meteorological", "气象"),
+            "水文": ("hydrological", "水文"),
+        }
+        rows = []
+        for item in workbook["雨量站（47）"].iter_rows(
+            min_row=2, values_only=True,
+        ):
+            if not item or not item[1] or not item[2]:
+                continue
+            station_code = _code(item[1]).strip()
+            source_name = str(item[2]).strip()
+            source_system = str(item[3] or "").strip()
+            if source_name in reservoir_stations:
+                continue
+            station_type = station_types.get(source_system)
+            if not station_type:
+                raise ValueError(
+                    f"unsupported station source type {source_system!r}: {station_code}"
+                )
+            coordinate = coordinates.get(station_code)
+            if not coordinate:
+                raise ValueError(
+                    f"missing station coordinate: {station_code} {source_name}"
+                )
+            if coordinate["name"] != source_name:
+                raise ValueError(
+                    f"station name mismatch for {station_code}: "
+                    f"{source_name!r} != {coordinate['name']!r}"
+                )
+            name = _strip_station_type_suffix(source_name)
+            longitude = coordinate["longitude"]
+            latitude = coordinate["latitude"]
+            geometry = {
+                "type": "Point",
+                "coordinates": [longitude, latitude],
+            }
+            rows.append({
+                "station_id": station_code,
+                "station_code": station_code,
                 "river_id": "shanhu",
-                "name": "龙潭水库站",
-                "alias": "龙潭",
-                "station_type": "reservoir_hydro_rainfall",
-                "location": "钟山县珊瑚镇龙潭水库坝首",
-                "longitude": _dms_to_decimal(111, 22),
-                "latitude": _dms_to_decimal(24, 23),
-                "established_year": 1973,
-                "observation_items": "rainfall,water_level,outflow",
-                "record_period": "1973~1974、1976~2020年最大一日降雨；1973年起降雨和库水位；1983年起由发电、灌溉用水反推出库流量。",
-                "data_availability": "summary_only",
-                "source": "洪水风险图水文分析专题（珊瑚河）.md: 1.3水文资料、3.1测站基本资料",
-            },
-            {
-                "station_id": "hydro_station_zhongshan_huilong",
-                "river_id": "shanhu",
-                "name": "钟山回龙雨量站",
-                "alias": "钟山回龙",
-                "station_type": "rainfall",
-                "location": "钟山县回龙镇回龙村",
-                "longitude": _dms_to_decimal(111, 17),
-                "latitude": _dms_to_decimal(24, 27),
-                "established_year": 1966,
+                "name": name,
+                "source_name": source_name,
+                "name_source": (
+                    "normalized_source_name"
+                    if name != source_name
+                    else "source_station_name"
+                ),
+                "station_type": station_type[0],
+                "station_type_name": station_type[1],
+                "source_system": source_system,
+                "longitude": longitude,
+                "latitude": latitude,
                 "observation_items": "rainfall",
-                "record_period": "1977年至今降雨观测资料。",
-                "data_availability": "metadata_only",
-                "source": "洪水风险图水文分析专题（珊瑚河）.md: 3.1测站基本资料",
-            },
-            {
-                "station_id": "hydro_station_tonggu",
-                "river_id": "shanhu",
-                "name": "同古雨量站",
-                "alias": "同古",
-                "station_type": "rainfall",
-                "location": "钟山县同古镇同古村",
-                "longitude": _dms_to_decimal(111, 13),
-                "latitude": _dms_to_decimal(24, 23),
-                "established_year": 1956,
-                "observation_items": "rainfall",
-                "record_period": "1958年至今降雨观测资料。",
-                "data_availability": "metadata_only",
-                "source": "洪水风险图水文分析专题（珊瑚河）.md: 3.1测站基本资料",
-            },
-            {
-                "station_id": "weather_station_zhongshan",
-                "river_id": "shanhu",
-                "name": "钟山县气象站",
-                "alias": "钟山县",
-                "station_type": "weather",
-                "location": "钟山县城区",
-                "longitude": _dms_to_decimal(111, 18),
-                "latitude": _dms_to_decimal(24, 31),
-                "elevation_m": 150.0,
-                "established_year": 1960,
-                "observation_items": "rainfall,temperature,wind_speed,evaporation",
-                "record_period": "1960年设站；1990年以前人工观测，1990年以后自记式观测。",
-                "data_availability": "metadata_only",
-                "source": "洪水风险图水文分析专题（珊瑚河）.md: 3.1测站基本资料",
-            },
-        ]
-        for row in stations:
-            geometry = {"type": "Point", "coordinates": [row["longitude"], row["latitude"]]}
-            row.update({
-                "source_crs": "EPSG:4326",
+                "data_availability": "location_metadata",
+                "source": "珊瑚河流域测站汇总.xlsx/雨量站（47）",
+                "coordinate_source": "坐标.csv",
+                "source_crs": "unspecified",
                 "geometry_crs": "EPSG:4326",
+                "coordinate_quality": "source_crs_unspecified_assumed_wgs84",
                 "geometry_type": "Point",
                 "geometry": json.dumps(geometry, ensure_ascii=False),
+                "data_path": rel(workbook_path),
+                "coordinate_data_path": rel(coordinate_path),
             })
-        return stations
+        longtan_station_code = reservoir_stations.get("龙潭水库")
+        if not longtan_station_code:
+            raise ValueError("水库站清单缺少龙潭水库源编码")
+        rows.append(_longtan_station_record(
+            longtan_station_code,
+            self.build("River")[0],
+            self.build("Reservoir")[0],
+            workbook_path,
+        ))
+        return rows
 
 def write_object_library(object_type: str, rows: list[dict]) -> Path:
     OBJECTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -856,6 +843,61 @@ def _nearest_point_on_polygon_boundary(point: list[float] | tuple[float, float],
                 nearest = candidate
                 nearest_distance = distance
     return nearest, nearest_distance
+
+
+def _longtan_station_record(station_code: str, river: dict,
+                            reservoir: dict, workbook_path: Path) -> dict:
+    river_geometry = json.loads(str(river["geometry"]))
+    reservoir_geometry = json.loads(str(reservoir["geometry"]))
+    river_coordinates = river_geometry.get("coordinates") or []
+    if river_geometry.get("type") != "LineString" or len(river_coordinates) < 2:
+        raise ValueError("珊瑚河 geometry 无法用于计算龙潭水库站位置")
+    candidates = [
+        _nearest_point_on_polygon_boundary(point, reservoir_geometry)
+        for point in (river_coordinates[0], river_coordinates[-1])
+    ]
+    intersection, distance_m = min(candidates, key=lambda item: item[1])
+    if intersection is None or distance_m > 1.0:
+        raise ValueError(
+            f"珊瑚河与龙潭水库边界没有有效连接点: {distance_m:.3f} m"
+        )
+    longitude, latitude = intersection
+    geometry = {
+        "type": "Point",
+        "coordinates": [longitude, latitude],
+    }
+    return {
+        "station_id": station_code,
+        "station_code": station_code,
+        "river_id": "shanhu",
+        "reservoir_id": LONGTAN_RESERVOIR_ID,
+        "name": "龙潭水库",
+        "source_name": "龙潭水库",
+        "name_source": "source_station_name",
+        "station_type": "reservoir",
+        "station_type_name": "水库",
+        "source_system": "水库",
+        "longitude": longitude,
+        "latitude": latitude,
+        "observation_items": "water_level,inflow,release",
+        "data_availability": "location_metadata",
+        "source": "珊瑚河流域测站汇总.xlsx/水库站（15）",
+        "coordinate_source": "river_reservoir_boundary_intersection",
+        "source_crs": "EPSG:4326",
+        "geometry_crs": "EPSG:4326",
+        "coordinate_quality": "exact_geometry_intersection",
+        "geometry_source": "shanhu_longtan_boundary_connection",
+        "geometry_type": "Point",
+        "geometry": json.dumps(geometry, ensure_ascii=False),
+        "data_path": rel(workbook_path),
+        "coordinate_data_path": (
+            f"{river.get('data_path', '')};{reservoir.get('data_path', '')}"
+        ),
+        "data_note": (
+            "源水库站清单未提供坐标；位置取珊瑚河中心线与龙潭水库"
+            f"多边形边界连接点，几何距离 {distance_m:.3f} m。"
+        ),
+    }
 
 
 def _nearest_point_on_segment(point: list[float] | tuple[float, float],
@@ -1560,39 +1602,6 @@ def _road_record(index: int, feature: dict, path: Path) -> dict:
     }
 
 
-def _osm_bridge_road_record(candidate: dict) -> dict:
-    tags = candidate.get("tags") or {}
-    geometry = candidate.get("geometry") or {}
-    coords = list(_iter_coords(geometry.get("coordinates") or []))
-    source_name = candidate.get("name") or ""
-    ref = tags.get("ref") or ""
-    return {
-        "road_id": candidate["osm_id"],
-        "name": source_name or ref or f"未命名桥上道路 {candidate['osm_id']}",
-        "source_name": source_name,
-        "name_source": "source" if source_name else "road_ref" if ref else "generated_from_stable_id",
-        "ref": ref,
-        "road_class": tags.get("highway") or "",
-        "one_way": tags.get("oneway") or "",
-        "bridge_flag": True,
-        "tunnel_flag": False,
-        "length_m": round(_line_length_m(coords), 2) if len(coords) >= 2 else 0.0,
-        "geometry_source": "osm_bridge_way",
-        "osm_match_status": "source_osm_bridge_way",
-        "osm_ref": candidate["osm_ref"],
-        "osm_name": candidate.get("name") or "",
-        "osm_feature": "bridge",
-        "osm_distance_m": 0.0,
-        "osm_tags": json.dumps(_selected_osm_tags(tags), ensure_ascii=False, sort_keys=True),
-        "osm_data_path": rel(candidate["source_path"]),
-        "geometry_type": geometry.get("type", ""),
-        "source_crs": "EPSG:4326",
-        "geometry_crs": "EPSG:4326",
-        "geometry": json.dumps(geometry, ensure_ascii=False) if geometry else "",
-        "data_path": rel(candidate["source_path"]),
-    }
-
-
 def _evacuation_site_record(site_type: str, index: int,
                             feature: dict, path: Path) -> dict:
     props = feature.get("properties") or {}
@@ -2045,9 +2054,8 @@ def _float(value: Any) -> float:
     return float(value)
 
 
-def _dms_to_decimal(degrees: float, minutes: float = 0.0,
-                    seconds: float = 0.0) -> float:
-    return round(float(degrees) + float(minutes) / 60 + float(seconds) / 3600, 7)
+def _strip_station_type_suffix(value: str) -> str:
+    return re.sub(r"\s*[（(][^（）()]*[）)]\s*$", "", value).strip()
 
 
 def _slug_id(value: str) -> str:

@@ -17,6 +17,7 @@ from domains.flood.runtime.boundary_flow import (
     BoundaryFlowPlaybackSource,
     FloodForecastPolicy,
 )
+from domains.flood.runtime.reservoir_monitoring import assess_reservoir_window
 from domains.flood.runtime.workspace import WorkspaceManager
 from oag.ontology.prompt_builder import OntologyPromptBuilder
 from oag.ontology.registry import FunctionRegistry
@@ -65,8 +66,195 @@ class BoundaryFlowPolicyTest(unittest.TestCase):
         tonggu = flood_row["boundaries"]["tonggu"]["flow_m3s"]
         self.assertAlmostEqual(tonggu, interval2 * 0.946, places=6)
 
+    def test_observation_includes_next_24_hours_of_station_rainfall(self):
+        for index, row in enumerate(self.source.rows[:25]):
+            row["station_rainfall"] = [{
+                "station_id": "weather_1",
+                "name": "测试气象站",
+                "rainfall_mm": float(index),
+                "derivation_method": "test",
+            }]
+
+        observation = self.source.next_observation()
+
+        self.assertIsNotNone(observation)
+        forecasts = observation["station_rainfall_forecast"]
+        self.assertEqual(len(forecasts), 1)
+        self.assertEqual(forecasts[0]["station_id"], "weather_1")
+        self.assertEqual(len(forecasts[0]["series"]), 24)
+        self.assertEqual(
+            forecasts[0]["series"][0],
+            {
+                "valid_time": self.source.rows[1]["simulation_time"],
+                "rainfall_mm": 1.0,
+            },
+        )
+        self.assertEqual(
+            forecasts[0]["series"][-1],
+            {
+                "valid_time": self.source.rows[24]["simulation_time"],
+                "rainfall_mm": 24.0,
+            },
+        )
+        stored = json.loads(self.source.observation_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            stored["station_rainfall_forecast"],
+            forecasts,
+        )
+
+    def test_observation_includes_future_rainfall_and_boundary_flow_window(self):
+        for index, row in enumerate(self.source.rows[:25]):
+            row["rainfall_mm"] = float(index)
+            for boundary in row["boundaries"].values():
+                boundary["flow_m3s"] = float(index * 10)
+            row["total_flow_m3s"] = float(index * 40)
+
+        observation = self.source.next_observation()
+
+        self.assertIsNotNone(observation)
+        rainfall = observation["rainfall_forecast"]
+        self.assertEqual(len(rainfall), 24)
+        self.assertEqual(rainfall[0]["rainfall_mm"], 1.0)
+        self.assertEqual(rainfall[-1]["rainfall_mm"], 24.0)
+
+        flow = observation["boundary_flow_forecast"]
+        self.assertEqual(flow["window_start"], self.source.rows[0]["simulation_time"])
+        self.assertEqual(flow["window_end"], self.source.rows[24]["simulation_time"])
+        self.assertEqual(flow["window_hours"], 24)
+        self.assertEqual(flow["threshold_m3s"], 230.0)
+        self.assertEqual(flow["peak_total_flow_m3s"], 960.0)
+        self.assertEqual(flow["peak_at"], self.source.rows[24]["simulation_time"])
+        self.assertEqual(
+            flow["first_threshold_exceeded_at"],
+            self.source.rows[6]["simulation_time"],
+        )
+        self.assertEqual(len(flow["series"]), 24)
+        self.assertEqual(
+            flow["series"][0]["boundaries"]["interval1"]["flow_m3s"],
+            10.0,
+        )
+
+    def test_observation_includes_next_24_hours_of_reservoir_forecast(self):
+        for index, row in enumerate(self.source.rows[:25]):
+            row["reservoir_inflow_m3s"] = float(index + 10)
+            row["reservoir_release_m3s"] = float(index + 5)
+            row["reservoir_level_m"] = 245.0 + index * 0.1
+
+        observation = self.source.next_observation()
+
+        self.assertIsNotNone(observation)
+        forecast = observation["reservoir_forecast"]
+        self.assertEqual(forecast["reservoir_id"], "longtan")
+        self.assertEqual(forecast["station_id"], "HP0014511220000128")
+        self.assertEqual(len(forecast["series"]), 24)
+        self.assertEqual(
+            forecast["series"][0],
+            {
+                "valid_time": self.source.rows[1]["simulation_time"],
+                "reservoir_inflow_m3s": 11.0,
+                "reservoir_release_m3s": 6.0,
+                "reservoir_level_m": 245.1,
+                "status": {
+                    "key": "normal",
+                    "label": "正常",
+                    "color": "#238b57",
+                },
+            },
+        )
+        self.assertEqual(
+            forecast["series"][-1]["valid_time"],
+            self.source.rows[24]["simulation_time"],
+        )
+        assessment = forecast["assessment"]
+        self.assertEqual(assessment["window_hours"], 24)
+        self.assertEqual(assessment["peak"]["level_m"], 247.4)
+        self.assertEqual(assessment["peak"]["status"]["key"], "warning")
+        self.assertIsNone(assessment["alert"])
+
+        stored = json.loads(self.source.observation_path.read_text(encoding="utf-8"))
+        self.assertEqual(stored["reservoir_forecast"], forecast)
+
+    def test_reservoir_level_status_uses_ontology_threshold_boundaries(self):
+        expected = (
+            (245.29, "normal"),
+            (245.30, "warning"),
+            (247.92, "danger"),
+            (248.91, "danger"),
+            (248.911, "critical"),
+        )
+        for level, status in expected:
+            with self.subTest(level=level):
+                assessment = assess_reservoir_window(
+                    {
+                        "simulation_time": "2026-07-01T00:00:00+08:00",
+                        "reservoir_level_m": level,
+                    },
+                    [],
+                )
+                self.assertEqual(assessment["current"]["status"]["key"], status)
+
+    def test_reservoir_window_returns_only_the_highest_alert(self):
+        expected = (
+            (247.61, None),
+            (247.62, "为保障大坝安全，按泄洪设施下泄能力下泄"),
+            (248.61, "入库流量持续加大，水位逼近校核洪水位"),
+            (248.911, "警告：水位超校核洪水位！大坝安全面临严峻考验"),
+        )
+        for level, alert_text in expected:
+            with self.subTest(level=level):
+                assessment = assess_reservoir_window(
+                    {
+                        "simulation_time": "2026-07-01T00:00:00+08:00",
+                        "reservoir_level_m": 245.1,
+                    },
+                    [{
+                        "valid_time": "2026-07-01T01:00:00+08:00",
+                        "reservoir_level_m": level,
+                    }],
+                )
+                actual = assessment["alert"]["text"] if assessment["alert"] else None
+                self.assertEqual(actual, alert_text)
+                if assessment["alert"]:
+                    self.assertEqual(
+                        assessment["alert"]["triggered_at"],
+                        "2026-07-01T01:00:00+08:00",
+                    )
+                    self.assertTrue(assessment["alert"]["triggered_in_forecast"])
+
+    def test_reservoir_alert_time_is_first_entry_into_highest_severity(self):
+        assessment = assess_reservoir_window(
+            {
+                "simulation_time": "2026-07-01T00:00:00+08:00",
+                "reservoir_level_m": 245.1,
+            },
+            [
+                {
+                    "valid_time": "2026-07-01T01:00:00+08:00",
+                    "reservoir_level_m": 248.7,
+                },
+                {
+                    "valid_time": "2026-07-01T02:00:00+08:00",
+                    "reservoir_level_m": 248.92,
+                },
+                {
+                    "valid_time": "2026-07-01T03:00:00+08:00",
+                    "reservoir_level_m": 249.4,
+                },
+            ],
+        )
+
+        self.assertEqual(assessment["peak"]["valid_time"], "2026-07-01T03:00:00+08:00")
+        self.assertEqual(assessment["alert"]["severity"], "critical")
+        self.assertEqual(
+            assessment["alert"]["triggered_at"],
+            "2026-07-01T02:00:00+08:00",
+        )
+        self.assertIn("{triggered_at}超校核洪水位", assessment["alert"]["future_text_template"])
+
     def test_trigger_and_cnn_input_use_the_same_current_to_plus_24h_window(self):
         rows = _forecast_rows(30, {25: 240.0})
+        for index, row in enumerate(rows):
+            row["rainfall_mm"] = index + 0.125
         policy = self._policy(rows)
 
         self.assertEqual(policy.observe(rows[0]), [])
@@ -80,6 +268,23 @@ class BoundaryFlowPolicyTest(unittest.TestCase):
         self.assertEqual(summary["window_start"], rows[1]["observed_at"])
         self.assertEqual(summary["window_end"], rows[25]["observed_at"])
         self.assertEqual(summary["forecast_point_count"], 25)
+        self.assertEqual(len(summary["rainfall_series"]), 25)
+        self.assertEqual(
+            summary["rainfall_series"][0],
+            {
+                "time_h": 0,
+                "valid_time": rows[1]["observed_at"],
+                "rainfall_mm": 1.125,
+            },
+        )
+        self.assertEqual(
+            summary["rainfall_series"][-1],
+            {
+                "time_h": 24,
+                "valid_time": rows[25]["observed_at"],
+                "rainfall_mm": 25.125,
+            },
+        )
         self.assertEqual(trigger["trigger_type"], "forecast_window_peak")
         self.assertEqual(trigger["threshold_m3s"], 230.0)
         self.assertEqual(trigger["window_peak_total_flow_m3s"], 240.0)
@@ -278,6 +483,159 @@ class BoundaryFlowPlaybackRunnerTest(unittest.TestCase):
 
 
 class EventRuntimePlaybackControlTest(unittest.TestCase):
+    def test_forecast_trigger_blocks_playback_at_the_current_observation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manager = WorkspaceManager(root / "workspaces", retention_count=3)
+            manager.create()
+            rows = _forecast_rows(26, {24: 300.0})
+            source = BoundaryFlowPlaybackSource(
+                CSV_PATH,
+                root / "observations.jsonl",
+            )
+            source.rows = rows
+            policy = FloodForecastPolicy(
+                rows,
+                forecast_input_dir=root / "forecast_inputs",
+                latest_forecast_input_path=root / "latest.json",
+            )
+            runner = BoundaryFlowPlaybackRunner(
+                BoundaryFlowPlayback(source, policy),
+                interval_seconds=0,
+            )
+            runtime = EventRuntime(object())
+            runtime._started = True
+            runtime._generation = 3
+            runtime._playback_running = True
+            runtime._playback_phase = "running"
+            runtime._boundary_flow_runner = runner
+
+            with patch("server.events.runtime.WORKSPACES", manager), patch(
+                "domains.flood.runtime.workspace.WORKSPACES", manager,
+            ):
+                runner.play_generation(
+                    generation=3,
+                    is_running=runtime._is_playback_running,
+                    publish_observation=runtime._publish_boundary_flow_observation,
+                    publish_policy_event=runtime._publish_policy_event,
+                    finish_sequence=runtime._finish_playback_sequence,
+                    sleep_while_running=runtime._sleep_while_playback_running,
+                )
+
+            self.assertEqual(source.index, 1)
+            self.assertFalse(runtime._playback_running)
+            self.assertTrue(runtime._playback_processing)
+            self.assertEqual(runtime._playback_phase, "processing")
+            self.assertEqual(runtime.status()["policy_state"], "PENDING")
+            self.assertEqual(
+                [event[0]["event_type"] for event in runtime._event_queue],
+                ["FloodForecastRequired"],
+            )
+
+    def test_processing_waits_for_inundation_followup_before_pausing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = WorkspaceManager(Path(directory), retention_count=3)
+            manager.create()
+            runtime = EventRuntime(object())
+            runtime._started = True
+            runtime._generation = 5
+            runtime._playback_running = True
+            forecast_event = {
+                "event_id": "evt_forecast",
+                "event_type": "FloodForecastRequired",
+                "correlation_id": "flood_1",
+                "payload": {"observation": {"observed_at": "2026-07-01T01:00:00+08:00"}},
+            }
+            inundation_event = {
+                "event_id": "evt_inundation",
+                "event_type": "InundationGenerated",
+                "source_id": "forecast_1:boundary_1",
+                "correlation_id": "flood_1",
+                "title": "水动力模型生成预测淹没范围",
+                "payload": {},
+            }
+
+            with patch("server.events.runtime.WORKSPACES", manager), patch(
+                "domains.flood.runtime.workspace.WORKSPACES", manager,
+            ):
+                runtime._begin_event_processing(forecast_event)
+                runtime._publish_inundation_event_once(inundation_event, 5)
+                runtime._complete_event_processing(forecast_event, 5)
+                self.assertTrue(runtime._playback_processing)
+                self.assertFalse(runtime._playback_paused)
+
+                runtime._complete_event_processing(inundation_event, 5)
+
+            self.assertFalse(runtime._playback_processing)
+            self.assertTrue(runtime._playback_paused)
+            self.assertEqual(runtime._playback_phase, "paused")
+            self.assertEqual(runtime.outputs[-1]["data"]["status"], "paused")
+
+    def test_processing_pauses_when_forecast_does_not_generate_followup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = WorkspaceManager(Path(directory), retention_count=3)
+            manager.create()
+            runtime = EventRuntime(object())
+            runtime._started = True
+            runtime._generation = 2
+            runtime._playback_running = True
+            event = {
+                "event_id": "evt_failed",
+                "event_type": "FloodForecastRequired",
+                "correlation_id": "flood_failed",
+                "payload": {},
+            }
+
+            with patch("server.events.runtime.WORKSPACES", manager), patch(
+                "domains.flood.runtime.workspace.WORKSPACES", manager,
+            ):
+                runtime._begin_event_processing(event)
+                runtime._complete_event_processing(event, 2)
+
+            status = runtime.status()
+            self.assertFalse(status["processing"])
+            self.assertTrue(status["paused"])
+            self.assertEqual(status["playback_phase"], "paused")
+            self.assertIn("未生成有效", runtime.outputs[-1]["data"]["detail"])
+
+    def test_processing_resumes_when_auto_pause_is_disabled(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = WorkspaceManager(Path(directory), retention_count=3)
+            manager.create()
+            runtime = EventRuntime(object())
+            runtime._started = True
+            runtime._generation = 6
+            runtime._playback_running = True
+            event = {
+                "event_id": "evt_forecast",
+                "event_type": "FloodForecastRequired",
+                "correlation_id": "flood_auto_continue",
+                "payload": {},
+            }
+
+            with patch("server.events.runtime.WORKSPACES", manager), patch(
+                "domains.flood.runtime.workspace.WORKSPACES", manager,
+            ):
+                setting = runtime.set_auto_pause(False)
+                runtime._begin_event_processing(event)
+                runtime._complete_event_processing(event, 6)
+
+            status = runtime.status()
+            self.assertFalse(setting["auto_pause_enabled"])
+            self.assertFalse(status["processing"])
+            self.assertFalse(status["paused"])
+            self.assertTrue(status["running"])
+            self.assertFalse(status["auto_pause_enabled"])
+            self.assertEqual(status["playback_phase"], "running")
+            self.assertIn("自动暂停已关闭", runtime.outputs[-1]["data"]["detail"])
+
+    def test_auto_pause_setting_requires_a_boolean(self):
+        runtime = EventRuntime(object())
+        runtime._started = True
+
+        with self.assertRaisesRegex(ValueError, "must be a boolean"):
+            runtime.set_auto_pause("false")
+
     def test_adaptive_speed_only_slows_the_running_playback(self):
         runtime = EventRuntime(object())
         runtime._started = True
@@ -398,7 +756,9 @@ class EventRuntimePlaybackControlTest(unittest.TestCase):
 
                 status = runtime.step_playback()
 
-            self.assertTrue(status["paused"])
+            self.assertFalse(status["paused"])
+            self.assertTrue(status["processing"])
+            self.assertEqual(status["playback_phase"], "processing")
             self.assertTrue(status["forecast_triggered"])
             self.assertFalse(status["step_available"])
             self.assertEqual(status["policy_state"], "PENDING")

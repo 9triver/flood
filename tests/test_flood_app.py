@@ -20,6 +20,15 @@ ONTOLOGY = Ontology.load(PROJECT_DIR / "domains" / "flood" / "ontology.yaml")
 
 
 class FloodAppConfigTest(unittest.TestCase):
+    def test_flood_forecast_tool_has_long_running_timeout(self):
+        self.assertEqual(
+            360,
+            ONTOLOGY.functions["run_flood_forecast"].timeout_seconds,
+        )
+        self.assertFalse(
+            ONTOLOGY.functions["run_flood_forecast"].concurrency_safe,
+        )
+
     def test_map_tool_metadata_comes_from_ontology(self):
         tools = ToolRegistry()
         register_map_tools(tools, resolver=None, ontology=ONTOLOGY)

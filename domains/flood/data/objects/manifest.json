@@ -1,14 +1,10 @@
 {
-  "generated_at": "2026-07-27T06:27:15.743574+00:00",
+  "generated_at": "2026-07-28T03:36:27.839000+00:00",
   "notes": [],
   "object_types": {
     "Bridge": {
       "count": 22,
       "path": "domains/flood/data/objects/bridge.jsonl"
-    },
-    "BridgeRoadLink": {
-      "count": 3,
-      "path": "domains/flood/data/objects/bridge_road_link.jsonl"
     },
     "County": {
       "count": 3,
@@ -42,10 +38,6 @@
       "count": 286,
       "path": "domains/flood/data/objects/hydrodynamic_boundary.jsonl"
     },
-    "HydrometeorologicalStation": {
-      "count": 4,
-      "path": "domains/flood/data/objects/hydrometeorological_station.jsonl"
-    },
     "Reservoir": {
       "count": 1,
       "path": "domains/flood/data/objects/reservoir.jsonl"
@@ -55,12 +47,16 @@
       "path": "domains/flood/data/objects/river.jsonl"
     },
     "Road": {
-      "count": 426,
+      "count": 423,
       "path": "domains/flood/data/objects/road.jsonl"
     },
     "Sluice": {
       "count": 1,
       "path": "domains/flood/data/objects/sluice.jsonl"
+    },
+    "Station": {
+      "count": 32,
+      "path": "domains/flood/data/objects/station.jsonl"
     },
     "Town": {
       "count": 7,

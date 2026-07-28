@@ -55,7 +55,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
 def configure_numeric_precision() -> None:
-    if torch.cuda.is_available():
+    if cuda_device_enabled():
         if hasattr(torch.backends.cuda.matmul, "fp32_precision"):
             torch.backends.cuda.matmul.fp32_precision = "ieee"
             torch.backends.cudnn.conv.fp32_precision = "ieee"
@@ -72,7 +72,7 @@ def set_random_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    if torch.cuda.is_available():
+    if cuda_device_enabled():
         torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
@@ -88,6 +88,9 @@ CONFIG = {
     # "train": only train and save the model.
     # "predict": load saved model and only predict TEST.
     "mode": "auto",
+    # CPU is the operational default. Use "cuda" or "auto" explicitly to
+    # enable GPU inference on hosts where CUDA is available.
+    "device": "cpu",
 
     # ===== Paths =====
     "train_dir": "./TRAIN",
@@ -160,10 +163,20 @@ CONFIG = {
 }
 
 
+def cuda_device_enabled() -> bool:
+    requested = str(CONFIG.get("device") or "cpu").strip().lower()
+    return requested in {"cuda", "auto"} and torch.cuda.is_available()
+
+
 def get_device() -> torch.device:
-    if torch.cuda.is_available():
+    requested = str(CONFIG.get("device") or "cpu").strip().lower()
+    if requested not in {"cpu", "cuda", "auto"}:
+        raise ValueError(f"unsupported CNN device: {requested}")
+    if cuda_device_enabled():
         print(f"[device] CUDA: {torch.cuda.get_device_name(0)}")
         return torch.device("cuda")
+    if requested == "cuda":
+        print("[device] requested CUDA is unavailable; falling back to CPU")
     print("[device] CPU")
     return torch.device("cpu")
 
@@ -866,7 +879,7 @@ class FloodPredictor:
             batch_size=int(CONFIG["batch_size"]),
             shuffle=True,
             num_workers=0,
-            pin_memory=torch.cuda.is_available(),
+            pin_memory=self.device.type == "cuda",
         )
         val_loader = None
         if val_ds is not None:
@@ -875,7 +888,7 @@ class FloodPredictor:
                 batch_size=int(CONFIG["batch_size"]),
                 shuffle=False,
                 num_workers=0,
-                pin_memory=torch.cuda.is_available(),
+                pin_memory=self.device.type == "cuda",
             )
 
         best_val = float("inf")
@@ -1188,6 +1201,7 @@ def load_predictor_from_checkpoint(path: str | Path) -> FloodPredictor:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Flood CNN v2 direct-dat training")
     parser.add_argument("--mode", choices=["auto", "train", "predict"], default=None)
+    parser.add_argument("--device", choices=["cpu", "cuda", "auto"], default=None)
     parser.add_argument("--train-dir", default=None)
     parser.add_argument("--test-dir", default=None)
     parser.add_argument("--grid-file", default=None)
@@ -1213,6 +1227,7 @@ def apply_args(args: argparse.Namespace) -> None:
     for arg_name, cfg_name in [
         ("train_dir", "train_dir"),
         ("mode", "mode"),
+        ("device", "device"),
         ("test_dir", "test_dir"),
         ("grid_file", "grid_file"),
         ("model_path", "model_path"),

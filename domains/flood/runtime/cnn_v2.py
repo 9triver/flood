@@ -24,6 +24,7 @@ BOUNDARY_FILES = (
     ("tonggu", "02_tonggu.csv"),
     ("upstream", "03_upstream.csv"),
 )
+CNN_DEVICE_CHOICES = {"cpu", "cuda", "auto"}
 
 
 def run_cnn_v2_forecast(boundary_flow: dict[str, Any],
@@ -49,11 +50,13 @@ def run_cnn_v2_forecast(boundary_flow: dict[str, Any],
     case_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
     _write_case_csvs(summary, case_dir)
+    requested_device = cnn_device()
 
     command = [
         cnn_python(),
         str(MODEL_SCRIPT),
         "--mode", "predict",
+        "--device", requested_device,
         "--test-dir", str(test_dir),
         "--grid-file", str(GRID_PATH),
         "--model-path", str(WEIGHT_PATH),
@@ -134,6 +137,7 @@ def run_cnn_v2_forecast(boundary_flow: dict[str, Any],
         "time_steps_h": time_steps,
         "time_step_count": len(time_steps),
         "python": command[0],
+        "device": _device_used(completed.stdout, requested_device),
         "stdout_tail": completed.stdout[-2000:],
         "stderr_tail": completed.stderr[-2000:],
         **stats,
@@ -147,6 +151,22 @@ def cnn_python() -> str:
     if configured:
         return configured
     return sys.executable
+
+
+def cnn_device() -> str:
+    configured = str(os.environ.get("FLOOD_CNN_DEVICE") or "cpu").strip().lower()
+    if configured not in CNN_DEVICE_CHOICES:
+        choices = ", ".join(sorted(CNN_DEVICE_CHOICES))
+        raise ValueError(f"FLOOD_CNN_DEVICE must be one of: {choices}")
+    return configured
+
+
+def _device_used(stdout: str, requested: str) -> str:
+    if "[device] CUDA:" in stdout:
+        return "cuda"
+    if "[device] CPU" in stdout:
+        return "cpu"
+    return requested
 
 
 def _replace_file(source: Path, target: Path) -> None:

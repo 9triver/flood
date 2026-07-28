@@ -9,7 +9,6 @@ from .forecast import (
     LATEST_FORECAST_ID,
     build_cell_spatial_index,
     compact_cell_index,
-    distance_m,
     iter_coords,
     nearby_cells,
     nearest_cell,
@@ -78,7 +77,7 @@ def analyze_inundation_impacts(
     minimum_depth = float(min_depth_m or 0)
     cell_index = compact_cell_index(cells, min_depth=minimum_depth)
     bridge_cell_index = None
-    if "Bridge" in target_types or "Road" in target_types:
+    if "Bridge" in target_types:
         bridge_cell_index = build_cell_spatial_index([
             row for row in cells
             if float(row.get("depth_m") or 0) >= minimum_depth
@@ -111,26 +110,6 @@ def analyze_inundation_impacts(
                 min_depth_m=minimum_depth,
                 max_distance_m=float(max_distance_m or 0),
             ))
-
-    if "Road" in target_types:
-        bridge_impacts = [
-            row for row in impacts
-            if row.get("object_type") == "Bridge"
-        ]
-        if "Bridge" not in target_types:
-            bridge_impacts = analyze_bridge_objects(
-                resolver,
-                bridge_cell_index,
-                min_depth_m=minimum_depth,
-                influence_radius_m=float(bridge_influence_radius_m or 0),
-            )
-        mark_bridge_approach_impacts(
-            resolver,
-            bridge_impacts,
-            impacts,
-            influence_radius_m=float(bridge_influence_radius_m or 0),
-        )
-        impacts.extend(propagate_bridge_impacts(resolver, bridge_impacts, impacts))
 
     impacts = sorted(
         impacts,
@@ -209,8 +188,7 @@ def analysis_basis(time_h: float | None, analysis_time_at: str | None = None,
     return (
         f"{prefix}执行确定性空间邻近分析；"
         "普通点对象按对象坐标匹配最近淹没网格，桥梁按完整网格多边形执行桥头影响区分析，"
-        "线对象按几何采样点匹配最深命中网格；"
-        "已校核的 BridgeRoadLink 用于把桥梁影响传播到关联道路，并标注通行状态。"
+        "线对象按几何采样点匹配最深命中网格。"
     )
 
 
@@ -447,122 +425,6 @@ def make_impact(object_type: str, row: dict[str, Any], object_id_field: str,
         impact["facility_type"] = str(row.get("facility_type") or "")
         impact["subtype"] = str(row.get("subtype") or "")
     return impact
-
-
-def mark_bridge_approach_impacts(resolver,
-                                 bridge_impacts: list[dict[str, Any]],
-                                 existing_impacts: list[dict[str, Any]],
-                                 influence_radius_m: float) -> None:
-    bridge_by_id = {
-        str(row.get("object_id") or ""): row
-        for row in bridge_impacts
-        if row.get("object_id")
-    }
-    road_impacts = {
-        str(row.get("object_id") or ""): row
-        for row in existing_impacts
-        if row.get("object_type") == "Road"
-        and row.get("object_id")
-        and row.get("directly_inundated") is not False
-    }
-    if not bridge_by_id or not road_impacts:
-        return
-
-    for link in resolver.query("BridgeRoadLink"):
-        if link.get("validation_status") != "accepted":
-            continue
-        bridge = bridge_by_id.get(str(link.get("bridge_id") or ""))
-        road = road_impacts.get(str(link.get("road_id") or ""))
-        if not bridge or not road:
-            continue
-        try:
-            bridge_point = (float(bridge["longitude"]), float(bridge["latitude"]))
-            road_impact_point = (float(road["longitude"]), float(road["latitude"]))
-        except (KeyError, TypeError, ValueError):
-            continue
-        if distance_m(bridge_point, road_impact_point) > influence_radius_m:
-            continue
-        bridge["impact_status"] = "bridge_approach_inundated"
-        bridge["basis"] = "bridge_approach_inundated"
-        bridge["passability_status"] = "likely_impassable"
-        bridge["approach_road_inundated"] = True
-        append_unique(bridge, "related_road_ids", str(road.get("object_id") or ""))
-
-
-def propagate_bridge_impacts(resolver, bridge_impacts: list[dict[str, Any]],
-                             existing_impacts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    bridge_by_id = {
-        str(row.get("object_id") or ""): row
-        for row in bridge_impacts
-        if row.get("object_id")
-    }
-    if not bridge_by_id:
-        return []
-
-    existing_roads = {
-        str(row.get("object_id") or ""): row
-        for row in existing_impacts
-        if row.get("object_type") == "Road" and row.get("object_id")
-    }
-    roads_by_id = {
-        str(row.get("road_id") or ""): row
-        for row in resolver.query("Road")
-        if row.get("road_id")
-    }
-    propagated = []
-    for link in resolver.query("BridgeRoadLink"):
-        if link.get("validation_status") != "accepted":
-            continue
-        bridge_id = str(link.get("bridge_id") or "")
-        road_id = str(link.get("road_id") or "")
-        bridge_impact = bridge_by_id.get(bridge_id)
-        road = roads_by_id.get(road_id)
-        if not bridge_impact or not road:
-            continue
-
-        existing = existing_roads.get(road_id)
-        if existing:
-            append_unique(existing, "related_bridge_ids", bridge_id)
-            append_unique(existing, "related_bridge_names", str(bridge_impact.get("name") or bridge_id))
-            existing["bridge_dependency"] = True
-            bridge_status = str(bridge_impact.get("passability_status") or "")
-            if bridge_status == "likely_impassable":
-                existing["passability_status"] = bridge_status
-            continue
-
-        impact = {
-            "object_type": "Road",
-            "object_id": road_id,
-            "name": road.get("name") or road_id,
-            "risk_level": bridge_impact.get("risk_level") or "unknown",
-            "depth_m": float(bridge_impact.get("depth_m") or 0),
-            "velocity_mps": float(bridge_impact.get("velocity_mps") or 0),
-            "distance_m": float(bridge_impact.get("distance_m") or 0),
-            "forecast_cell_id": bridge_impact.get("forecast_cell_id") or "",
-            "mesh_cell_id": bridge_impact.get("mesh_cell_id") or "",
-            "longitude": bridge_impact.get("longitude"),
-            "latitude": bridge_impact.get("latitude"),
-            "basis": "bridge_dependency",
-            "directly_inundated": False,
-            "bridge_dependency": True,
-            "related_bridge_ids": [bridge_id],
-            "related_bridge_names": [str(bridge_impact.get("name") or bridge_id)],
-            "bridge_road_link_id": link.get("bridge_road_link_id") or "",
-            "passability_status": (
-                bridge_impact.get("passability_status") or "inspection_required"
-            ),
-            "data_quality": "insufficient_bridge_elevation",
-            "depth_basis": bridge_impact.get("depth_basis") or "nearby_floodplain_forecast",
-        }
-        propagated.append(impact)
-        existing_roads[road_id] = impact
-    return propagated
-
-
-def append_unique(row: dict[str, Any], field: str, value: str) -> None:
-    values = row.setdefault(field, [])
-    if value and value not in values:
-        values.append(value)
 
 
 def summarize_impacts(target_types: list[str], impacts: list[dict[str, Any]]) -> dict[str, Any]:

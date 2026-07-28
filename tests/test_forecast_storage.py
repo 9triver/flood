@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -77,6 +80,11 @@ class ForecastStorageTest(unittest.TestCase):
                     "observed_through": "2025-01-01T08:00:00+08:00",
                     "window_start": "2025-01-01T03:00:00+08:00",
                     "window_end": "2025-01-02T03:00:00+08:00",
+                    "rainfall_series": [{
+                        "time_h": 0,
+                        "valid_time": "2025-01-01T03:00:00+08:00",
+                        "rainfall_mm": 2.5,
+                    }],
                 }),
                 "forecast_trigger": json.dumps({"reason": "测试触发"}),
                 "hydrodynamic_series_path": "latest/depth_series.npy",
@@ -97,6 +105,14 @@ class ForecastStorageTest(unittest.TestCase):
 
             self.assertEqual("v001", first["forecast_id"])
             self.assertEqual("v002", second["forecast_id"])
+            self.assertEqual(
+                [{
+                    "time_h": 0,
+                    "valid_time": "2025-01-01T03:00:00+08:00",
+                    "rainfall_mm": 2.5,
+                }],
+                second["rainfall_series"],
+            )
             self.assertEqual([second], latest)
             self.assertTrue((workspace_path / "forecasts" / "v001" / "max_depth.csv").exists())
             self.assertTrue((workspace_path / "forecasts" / "v002" / "max_depth.csv").exists())
@@ -116,6 +132,56 @@ class ForecastStorageTest(unittest.TestCase):
                         self.assertEqual([], forecast.query_forecast_runs(None))
                         self.assertEqual([], forecast.query_forecast_cells(None))
             ensure.assert_not_called()
+
+    def test_forecast_generation_is_serialized_per_workspace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = WorkspaceManager(Path(directory) / "workspaces")
+            workspace_id = manager.create()["workspace_id"]
+            workspace_path = manager.path(workspace_id)
+            latest_dir = workspace_path / "forecasts" / "latest"
+            latest_dir.mkdir(parents=True)
+            (latest_dir / "max_depth.csv").write_text(
+                "cell_id,max_depth\n1,0.4\n", encoding="utf-8",
+            )
+            active_generations = 0
+            max_active_generations = 0
+            generation_count = 0
+            count_lock = threading.Lock()
+
+            def generate(_resolver):
+                nonlocal active_generations, max_active_generations, generation_count
+                with count_lock:
+                    active_generations += 1
+                    generation_count += 1
+                    max_active_generations = max(
+                        max_active_generations, active_generations,
+                    )
+                time.sleep(0.03)
+                with count_lock:
+                    active_generations -= 1
+                return {
+                    "schema_version": forecast.FORECAST_SCHEMA_VERSION,
+                    "status": "completed",
+                    "generated_at": "2026-07-25T00:00:00+00:00",
+                    "boundary_flow": "{}",
+                    "forecast_trigger": "{}",
+                }
+
+            def run_forecast():
+                with workspace_scope(workspace_id):
+                    return forecast.ensure_latest_forecast(None, force=True)
+
+            with patch("domains.flood.runtime.workspace.WORKSPACES", manager):
+                with patch.object(forecast, "generate_forecast", side_effect=generate):
+                    with ThreadPoolExecutor(max_workers=4) as pool:
+                        runs = list(pool.map(lambda _: run_forecast(), range(4)))
+
+            self.assertEqual(4, generation_count)
+            self.assertEqual(1, max_active_generations)
+            self.assertEqual(
+                ["v001", "v002", "v003", "v004"],
+                [run["forecast_id"] for run in runs],
+            )
 
 
 if __name__ == "__main__":

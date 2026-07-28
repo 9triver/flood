@@ -16,7 +16,7 @@ from .cnn_v2 import GRID_PATH, run_cnn_v2_forecast
 from .common import apply_filters, apply_order, apply_window, id_field, rel
 from .hydrodynamic_grid import MESH_DB_PATH, coerce_optional_float, forecast_depth_entry
 from .boundary_flow import read_latest_forecast_input
-from .workspace import WORKSPACES, active_workspace_id, workspace_dir
+from .workspace import WORKSPACES, active_workspace_id, workspace_dir, workspace_scope
 
 
 LATEST_FORECAST_ID = "forecast_latest"
@@ -24,6 +24,8 @@ FORECAST_SCHEMA_VERSION = 6
 _FORECAST_CELL_CACHE_MAX = 2
 _FORECAST_CELL_CACHE_LOCK = threading.RLock()
 _FORECAST_CELL_CACHE: OrderedDict[tuple[Any, ...], list[dict[str, Any]]] = OrderedDict()
+_FORECAST_RUN_LOCKS_LOCK = threading.Lock()
+_FORECAST_RUN_LOCKS: dict[str, threading.RLock] = {}
 
 
 def forecast_dir(*, create: bool = False) -> Path:
@@ -161,6 +163,24 @@ def count_forecast_cells(resolver, filters: dict[str, Any] | None = None) -> int
 def ensure_latest_forecast(resolver, force: bool = False) -> dict[str, Any]:
     if not active_workspace_id():
         WORKSPACES.create()
+    workspace_id = active_workspace_id()
+    if not workspace_id:
+        raise RuntimeError("failed to create forecast workspace")
+    with forecast_run_lock(workspace_id):
+        with workspace_scope(workspace_id):
+            return ensure_latest_forecast_locked(resolver, force=force)
+
+
+def forecast_run_lock(workspace_id: str) -> threading.RLock:
+    with _FORECAST_RUN_LOCKS_LOCK:
+        lock = _FORECAST_RUN_LOCKS.get(workspace_id)
+        if lock is None:
+            lock = threading.RLock()
+            _FORECAST_RUN_LOCKS[workspace_id] = lock
+        return lock
+
+
+def ensure_latest_forecast_locked(resolver, force: bool = False) -> dict[str, Any]:
     rows = read_forecast_runs()
     if not force and rows:
         latest_boundary_flow = read_latest_forecast_input()
@@ -197,6 +217,9 @@ def finalize_forecast_run(
     version = f"v{sequence:03d}"
     boundary_flow = _json_object(run.get("boundary_flow"))
     trigger = _json_object(run.get("forecast_trigger"))
+    rainfall_series = run.get("rainfall_series")
+    if not isinstance(rainfall_series, list):
+        rainfall_series = boundary_flow.get("rainfall_series")
     finalized = {
         **run,
         "forecast_id": version,
@@ -211,6 +234,9 @@ def finalize_forecast_run(
         ),
         "valid_from": boundary_flow.get("window_start"),
         "valid_to": boundary_flow.get("window_end"),
+        "rainfall_series": (
+            rainfall_series if isinstance(rainfall_series, list) else []
+        ),
         "trigger_reason": trigger.get("reason"),
         "is_latest": True,
     }

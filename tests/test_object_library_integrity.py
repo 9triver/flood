@@ -1,15 +1,70 @@
 from __future__ import annotations
 
+from collections import Counter
 import json
 import unittest
 
 import yaml
 
+from domains.flood.build_objects import (
+    FloodObjectBuilder,
+    _strip_station_type_suffix,
+)
 from domains.flood.runtime.common import OBJECT_LIBRARY_FILES, OBJECTS_DIR, PROJECT_DIR
 from domains.flood.runtime.repository import read_object_library
 
 
 class FloodObjectLibraryIntegrityTest(unittest.TestCase):
+    def test_station_type_suffix_is_removed_from_display_name(self):
+        self.assertEqual("水寨", _strip_station_type_suffix("水寨(山洪)"))
+        self.assertEqual("水寨", _strip_station_type_suffix("水寨（山洪）"))
+
+    def test_station_library_matches_source_inventory(self):
+        stations = read_object_library("Station")
+
+        self.assertEqual(32, len(stations))
+        self.assertEqual(32, len({row["station_id"] for row in stations}))
+        self.assertEqual(
+            {
+                "flash_flood": 13,
+                "meteorological": 12,
+                "hydrological": 6,
+                "reservoir": 1,
+            },
+            dict(Counter(row["station_type"] for row in stations)),
+        )
+        self.assertTrue(all(
+            row["station_id"] == row["station_code"]
+            and row["river_id"] == "shanhu"
+            and row["geometry_type"] == "Point"
+            and "(" not in row["name"]
+            and "（" not in row["name"]
+            for row in stations
+        ))
+        for row in stations:
+            coordinates = json.loads(row["geometry"])["coordinates"]
+            self.assertEqual(
+                [row["longitude"], row["latitude"]], coordinates,
+            )
+        by_id = {row["station_id"]: row for row in stations}
+        self.assertEqual("水寨", by_id["808J017Y"]["name"])
+        self.assertEqual("水寨(山洪)", by_id["808J017Y"]["source_name"])
+        self.assertEqual(
+            "normalized_source_name", by_id["808J017Y"]["name_source"],
+        )
+        self.assertEqual("气象", by_id["N4593"]["station_type_name"])
+        self.assertEqual("凤翔", by_id["808J0210"]["name"])
+        longtan = by_id["HP0014511220000128"]
+        self.assertEqual("龙潭水库", longtan["name"])
+        self.assertEqual("reservoir", longtan["station_type"])
+        self.assertEqual("longtan", longtan["reservoir_id"])
+        self.assertEqual("exact_geometry_intersection", longtan["coordinate_quality"])
+        self.assertEqual(
+            [111.36935270331932, 24.32545936202293],
+            json.loads(longtan["geometry"])["coordinates"],
+        )
+        self.assertEqual(stations, FloodObjectBuilder().build("Station"))
+
     def test_reservoir_library_contains_only_longtan(self):
         reservoirs = read_object_library("Reservoir")
 
@@ -61,10 +116,24 @@ class FloodObjectLibraryIntegrityTest(unittest.TestCase):
         self.assertEqual(106, len(facilities))
         self.assertTrue(all(row.get("town_id") in town_ids for row in facilities))
         self.assertTrue(all(row.get("town_name") for row in facilities))
-        self.assertEqual(426, len(roads))
+        self.assertEqual(423, len(roads))
         self.assertTrue(all(row.get("county_id") in county_ids for row in roads))
+        self.assertFalse(any(
+            row.get("geometry_source") == "osm_bridge_way"
+            for row in roads
+        ))
+        self.assertEqual(roads, FloodObjectBuilder().build("Road"))
         self.assertEqual(22, len(bridges))
         self.assertTrue(all(row.get("river_id") == "shanhu" for row in bridges))
+        coordinates = {
+            (round(float(row["longitude"]), 7), round(float(row["latitude"]), 7))
+            for row in bridges
+        }
+        self.assertEqual(22, len(coordinates))
+        self.assertEqual(
+            44,
+            sum(int(row.get("source_record_count") or 0) for row in bridges),
+        )
 
     def test_danger_area_library_only_contains_static_fields(self):
         dynamic_fields = {
@@ -138,6 +207,39 @@ class FloodObjectLibraryIntegrityTest(unittest.TestCase):
         self.assertNotIn("Hydrology", OBJECT_LIBRARY_FILES)
         self.assertNotIn("Hydrology", manifest["object_types"])
         self.assertFalse((OBJECTS_DIR / "hydrology.jsonl").exists())
+
+    def test_bridge_road_link_is_not_an_object_type(self):
+        ontology = yaml.safe_load(
+            (PROJECT_DIR / "domains/flood/ontology.yaml").read_text(encoding="utf-8")
+        )
+        manifest = json.loads(
+            (OBJECTS_DIR / "manifest.json").read_text(encoding="utf-8")
+        )
+
+        self.assertNotIn("BridgeRoadLink", ontology["objects"])
+        self.assertNotIn("BridgeRoadLink", OBJECT_LIBRARY_FILES)
+        self.assertNotIn("BridgeRoadLink", manifest["object_types"])
+        self.assertFalse((OBJECTS_DIR / "bridge_road_link.jsonl").exists())
+
+    def test_station_replaces_legacy_hydrometeorological_station_type(self):
+        ontology = yaml.safe_load(
+            (PROJECT_DIR / "domains/flood/ontology.yaml").read_text(encoding="utf-8")
+        )
+        manifest = json.loads(
+            (OBJECTS_DIR / "manifest.json").read_text(encoding="utf-8")
+        )
+
+        self.assertIn("Station", ontology["objects"])
+        self.assertNotIn("HydrometeorologicalStation", ontology["objects"])
+        self.assertEqual("station.jsonl", OBJECT_LIBRARY_FILES["Station"])
+        self.assertNotIn("HydrometeorologicalStation", OBJECT_LIBRARY_FILES)
+        self.assertEqual(32, manifest["object_types"]["Station"]["count"])
+        self.assertNotIn(
+            "HydrometeorologicalStation", manifest["object_types"],
+        )
+        self.assertFalse(
+            (OBJECTS_DIR / "hydrometeorological_station.jsonl").exists(),
+        )
 
 
 if __name__ == "__main__":

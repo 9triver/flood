@@ -105,8 +105,8 @@ class FloodRepository:
         return rows
 
     @cached_property
-    def hydro_stations(self) -> list[dict]:
-        return self._rows("HydrometeorologicalStation")
+    def stations(self) -> list[dict]:
+        return self._rows("Station")
 
     @cached_property
     def towns(self) -> list[dict]:

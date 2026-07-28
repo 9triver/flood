@@ -10,8 +10,6 @@ from domains.flood.runtime.impact_analysis import (
     analyze_inundation_impacts,
     analyze_linear_objects,
     analyze_point_objects,
-    mark_bridge_approach_impacts,
-    propagate_bridge_impacts,
 )
 
 
@@ -244,95 +242,6 @@ class ImpactAnalysisTest(unittest.TestCase):
 
         self.assertEqual(len(impacts), 1)
         self.assertLess(impacts[0]["distance_m"], 80)
-
-    def test_linked_road_impact_marks_bridge_approach_impassable(self):
-        resolver = StaticResolver({
-            "BridgeRoadLink": [{
-                "bridge_id": "bridge-1",
-                "road_id": "road-1",
-                "validation_status": "accepted",
-            }],
-        })
-        bridge = {
-            "object_type": "Bridge",
-            "object_id": "bridge-1",
-            "longitude": 111.3,
-            "latitude": 24.4,
-            "passability_status": "inspection_required",
-        }
-        road = {
-            "object_type": "Road",
-            "object_id": "road-1",
-            "longitude": 111.3001,
-            "latitude": 24.4,
-            "directly_inundated": True,
-        }
-
-        mark_bridge_approach_impacts(resolver, [bridge], [road], 80)
-
-        self.assertEqual(bridge["basis"], "bridge_approach_inundated")
-        self.assertEqual(bridge["passability_status"], "likely_impassable")
-        self.assertEqual(bridge["related_road_ids"], ["road-1"])
-
-    def test_bridge_impact_propagates_to_linked_road(self):
-        resolver = StaticResolver({
-            "Road": [{"road_id": "road-1", "name": "桥上路段"}],
-            "BridgeRoadLink": [{
-                "bridge_road_link_id": "link-1",
-                "bridge_id": "bridge-1",
-                "road_id": "road-1",
-                "validation_status": "accepted",
-            }],
-        })
-        bridge_impacts = [{
-            "object_type": "Bridge",
-            "object_id": "bridge-1",
-            "name": "测试桥梁",
-            "risk_level": "high",
-            "depth_m": 0.6,
-            "velocity_mps": 0.3,
-            "distance_m": 2.0,
-            "forecast_cell_id": "cell-1",
-            "mesh_cell_id": "mesh-1",
-            "longitude": 111.3,
-            "latitude": 24.4,
-        }]
-
-        impacts = propagate_bridge_impacts(resolver, bridge_impacts, [])
-
-        self.assertEqual(len(impacts), 1)
-        self.assertEqual(impacts[0]["object_id"], "road-1")
-        self.assertEqual(impacts[0]["basis"], "bridge_dependency")
-        self.assertFalse(impacts[0]["directly_inundated"])
-        self.assertEqual(impacts[0]["passability_status"], "inspection_required")
-
-    def test_direct_road_impact_is_not_duplicated_by_bridge_link(self):
-        resolver = StaticResolver({
-            "Road": [{"road_id": "road-1", "name": "桥上路段"}],
-            "BridgeRoadLink": [{
-                "bridge_road_link_id": "link-1",
-                "bridge_id": "bridge-1",
-                "road_id": "road-1",
-                "validation_status": "accepted",
-            }],
-        })
-        bridge_impacts = [{
-            "object_type": "Bridge",
-            "object_id": "bridge-1",
-            "name": "测试桥梁",
-        }]
-        direct_road = {
-            "object_type": "Road",
-            "object_id": "road-1",
-            "basis": "line_sample_nearest_cell",
-        }
-
-        propagated = propagate_bridge_impacts(resolver, bridge_impacts, [direct_road])
-
-        self.assertEqual(propagated, [])
-        self.assertEqual(direct_road["related_bridge_ids"], ["bridge-1"])
-        self.assertTrue(direct_road["bridge_dependency"])
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -42,7 +42,13 @@ class EventRuntime:
         self._started = False
         self._playback_running = False
         self._playback_paused = False
+        self._playback_processing = False
+        self._auto_pause_enabled = True
         self._playback_phase = "ready"
+        self._processing_generation: int | None = None
+        self._processing_event_id = ""
+        self._processing_correlation_id = ""
+        self._processing_followup_pending = False
         self._event_queue: collections.deque[
             tuple[dict[str, Any], int]
         ] = collections.deque()
@@ -73,6 +79,7 @@ class EventRuntime:
         with self.condition:
             self._generation += 1
             self._playback_paused = False
+            self._clear_processing_locked()
             self._playback_phase = "running"
             self.events.clear()
             self.outputs.clear()
@@ -125,6 +132,7 @@ class EventRuntime:
                 self._playback_sources.get(source_id)
                 self._playback_running = False
                 self._playback_paused = False
+                self._clear_processing_locked()
                 self._generation += 1
                 self._clear_event_queue()
                 if active_workspace_id():
@@ -164,6 +172,7 @@ class EventRuntime:
             self._generation += 1
             self._playback_running = False
             self._playback_paused = False
+            self._clear_processing_locked()
             self._playback_phase = "ready"
             self.events.clear()
             self.outputs.clear()
@@ -201,13 +210,39 @@ class EventRuntime:
             self.condition.notify_all()
         return self.status()
 
+    def set_auto_pause(self, enabled: bool) -> dict[str, Any]:
+        self.ensure_started()
+        if not isinstance(enabled, bool):
+            raise ValueError("auto_pause_enabled must be a boolean")
+        with self.condition:
+            self._auto_pause_enabled = enabled
+            self._append_output_locked("runtime_status", {
+                "type": "runtime_status",
+                "status": "auto_pause_changed",
+                "label": "自动暂停已开启" if enabled else "自动暂停已关闭",
+                "detail": (
+                    "当前时刻事件链处理完成后，演进将自动进入暂停状态。"
+                    if enabled
+                    else
+                    "当前时刻事件链处理完成后，演进将自动继续播放下一时刻。"
+                ),
+                "workspace_id": active_workspace_id(),
+            })
+            self.condition.notify_all()
+        return {**self.status(), "status": "auto_pause_changed"}
+
     def stop_playback(self) -> dict[str, Any]:
         self.ensure_started()
         with self.condition:
-            if not self._playback_running and not self._playback_paused:
+            if (
+                not self._playback_running
+                and not self._playback_paused
+                and not self._playback_processing
+            ):
                 return self.status()
             self._playback_running = False
             self._playback_paused = False
+            self._clear_processing_locked()
             self._playback_phase = "stopped"
             self._generation += 1
             self._clear_event_queue()
@@ -227,6 +262,8 @@ class EventRuntime:
     def pause_playback(self) -> dict[str, Any]:
         self.ensure_started()
         with self.condition:
+            if self._playback_processing:
+                return self.status()
             if not self._playback_running:
                 return self.status()
             self._playback_running = False
@@ -260,6 +297,7 @@ class EventRuntime:
                 raise ValueError("boundary flow playback is not paused")
             self._playback_running = True
             self._playback_paused = False
+            self._clear_processing_locked()
             self._playback_phase = "running"
             WORKSPACES.update_manifest(status="active")
             self._append_output_locked("runtime_status", {
@@ -290,11 +328,18 @@ class EventRuntime:
             self._publish_boundary_flow_observation(observation_event)
             for event in policy_events:
                 self._publish_policy_event(event)
-            WORKSPACES.update_manifest(status="paused")
             observation = (
                 (observation_event.get("payload") or {}).get("observation") or {}
             )
             forecast_triggered = bool(policy_events)
+            if forecast_triggered:
+                return {
+                    **self.status(),
+                    "status": "processing",
+                    "stepped": True,
+                    "forecast_triggered": True,
+                }
+            WORKSPACES.update_manifest(status="paused")
             playback_status = self._boundary_flow_runner.status()
             self._append_output_locked("runtime_status", {
                 "type": "runtime_status",
@@ -332,6 +377,8 @@ class EventRuntime:
             return {
                 "running": self._playback_running,
                 "paused": self._playback_paused,
+                "processing": self._playback_processing,
+                "auto_pause_enabled": self._auto_pause_enabled,
                 "playback_phase": self._playback_phase,
                 "started": self._started,
                 "event_count": len(self.events),
@@ -410,7 +457,10 @@ class EventRuntime:
                     if len(self.outputs) < next_seq:
                         next_seq = 0
                     if len(self.outputs) <= next_seq:
-                        if not self._playback_running:
+                        if (
+                            not self._playback_running
+                            and not self._playback_processing
+                        ):
                             heartbeat = {
                                 "type": "runtime_status",
                                 "label": "等待启动边界流量回放",
@@ -509,7 +559,8 @@ class EventRuntime:
     def _publish_policy_event(self, event: dict[str, Any]) -> None:
         event = {**event, "workspace_id": active_workspace_id()}
         if event.get("event_type") == "FloodForecastRequired":
-            self._publish_event(event)
+            generation = self._begin_event_processing(event)
+            self._publish_event(event, generation)
             return
         with self.condition:
             self._append_event_locked(event)
@@ -526,6 +577,7 @@ class EventRuntime:
                 return
             self._playback_running = False
             self._playback_paused = False
+            self._clear_processing_locked()
             self._playback_phase = "finished"
             WORKSPACES.update_manifest(status="finished")
             self._append_output_locked("runtime_status", {
@@ -537,13 +589,18 @@ class EventRuntime:
             })
             self.condition.notify_all()
 
-    def _publish_event(self, event: dict[str, Any]) -> None:
+    def _publish_event(
+        self,
+        event: dict[str, Any],
+        generation: int,
+    ) -> None:
         event = {
             **event,
             "workspace_id": event.get("workspace_id") or active_workspace_id(),
         }
-        generation = self._generation
         with self.condition:
+            if generation != self._generation:
+                return
             self._append_event_locked(event)
             self.condition.notify_all()
         self._enqueue_event(event, generation)
@@ -579,6 +636,8 @@ class EventRuntime:
                     "detail": str(exc),
                     "event_id": event.get("event_id"),
                 }, generation)
+            finally:
+                self._complete_event_processing(event, generation)
 
     def _publish_inundation_event_once(
         self,
@@ -593,11 +652,135 @@ class EventRuntime:
                 or ""
             )
         with self.condition:
+            if generation != self._generation:
+                return
             if source_id and source_id in self._published_inundation_sources:
                 return
             if source_id:
                 self._published_inundation_sources.add(source_id)
+            if self._is_processing_event_locked(event, generation):
+                self._processing_followup_pending = True
         self._publish_child_event(event, generation)
+
+    def _begin_event_processing(self, event: dict[str, Any]) -> int:
+        observation = (event.get("payload") or {}).get("observation") or {}
+        simulation_time = str(
+            observation.get("simulation_time")
+            or observation.get("observed_at")
+            or event.get("time")
+            or "当前时刻"
+        )
+        with self.condition:
+            generation = self._generation
+            self._playback_running = False
+            self._playback_paused = False
+            self._playback_processing = True
+            self._playback_phase = "processing"
+            self._processing_generation = self._generation
+            self._processing_event_id = str(event.get("event_id") or "")
+            self._processing_correlation_id = str(
+                event.get("correlation_id") or ""
+            )
+            self._processing_followup_pending = False
+            WORKSPACES.update_manifest(status="processing")
+            self._append_output_locked("runtime_status", {
+                "type": "runtime_status",
+                "status": "processing",
+                "label": "当前时刻事件处理中",
+                "detail": (
+                    f"演进已停在 {simulation_time}，等待洪水预测及其后续事件处理完成。"
+                ),
+                "automatic": True,
+                "trigger_event_id": self._processing_event_id,
+                "speed_multiplier": self._boundary_flow_runner.speed_multiplier,
+                "workspace_id": active_workspace_id(),
+            })
+            self.condition.notify_all()
+            return generation
+
+    def _complete_event_processing(
+        self,
+        event: dict[str, Any],
+        generation: int,
+    ) -> None:
+        event_type = str(event.get("event_type") or "")
+        if event_type not in {"FloodForecastRequired", "InundationGenerated"}:
+            return
+        with self.condition:
+            if not self._is_processing_event_locked(event, generation):
+                return
+            if (
+                event_type == "FloodForecastRequired"
+                and self._processing_followup_pending
+            ):
+                return
+            trigger_event_id = self._processing_event_id
+            generated = event_type == "InundationGenerated"
+            auto_pause = self._auto_pause_enabled
+            self._playback_running = not auto_pause
+            self._playback_paused = auto_pause
+            self._clear_processing_locked()
+            self._playback_phase = "paused" if auto_pause else "running"
+            WORKSPACES.update_manifest(
+                status="paused" if auto_pause else "active",
+            )
+            self._append_output_locked("runtime_status", {
+                "type": "runtime_status",
+                "status": "paused" if auto_pause else "running",
+                "label": (
+                    "当前时刻事件处理完成，演进已暂停"
+                    if auto_pause
+                    else "当前时刻事件处理完成，演进已继续"
+                ),
+                "detail": (
+                    (
+                        "洪水预测及其后续事件已处理完成；演进保持在当前时刻，"
+                        "可继续演进或单步推进。"
+                        if generated
+                        else
+                        "洪水预测事件已处理结束，但未生成有效的预测淹没事件；"
+                        "演进保持在当前时刻，请检查事件 Trace 后决定是否继续。"
+                    )
+                    if auto_pause
+                    else (
+                        "洪水预测及其后续事件已处理完成；自动暂停已关闭，"
+                        "演进继续播放下一时刻。"
+                        if generated
+                        else
+                        "洪水预测事件已处理结束，但未生成有效的预测淹没事件；"
+                        "自动暂停已关闭，演进继续播放下一时刻。"
+                    )
+                ),
+                "automatic": True,
+                "trigger_event_id": trigger_event_id,
+                "workspace_id": active_workspace_id(),
+            })
+            self.condition.notify_all()
+
+    def _is_processing_event_locked(
+        self,
+        event: dict[str, Any],
+        generation: int,
+    ) -> bool:
+        if (
+            not self._playback_processing
+            or generation != self._generation
+            or generation != self._processing_generation
+        ):
+            return False
+        correlation_id = str(event.get("correlation_id") or "")
+        return (
+            not self._processing_correlation_id
+            or not correlation_id
+            or correlation_id == self._processing_correlation_id
+        )
+
+    def _clear_processing_locked(self) -> None:
+        self._playback_processing = False
+        self._processing_generation = None
+        self._processing_event_id = ""
+        self._processing_correlation_id = ""
+        self._processing_followup_pending = False
 
     def _publish_impact_event_once(
         self,
@@ -660,7 +843,14 @@ class EventRuntime:
     ) -> None:
         workspace_id = data.get("workspace_id") or active_workspace_id()
         if event_name == "runtime_status":
-            data = {"playback_phase": self._playback_phase, **data}
+            data = {
+                "running": self._playback_running,
+                "paused": self._playback_paused,
+                "processing": self._playback_processing,
+                "auto_pause_enabled": self._auto_pause_enabled,
+                "playback_phase": self._playback_phase,
+                **data,
+            }
         item = {
             "event": event_name,
             "data": {**data, "workspace_id": workspace_id},

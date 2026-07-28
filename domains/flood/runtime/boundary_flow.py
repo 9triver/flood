@@ -10,6 +10,13 @@ from threading import Lock
 from typing import Any
 
 from .common import DOMAIN_DATA_DIR, rel
+from .reservoir_monitoring import (
+    LONGTAN_RESERVOIR_ID,
+    LONGTAN_RESERVOIR_STATION_ID,
+    assess_reservoir_window,
+    reservoir_level_status,
+)
+from .station_rainfall import station_rainfall_from_csv_row
 from .workspace import workspace_dir
 
 
@@ -75,11 +82,13 @@ def load_boundary_flow_rows(path: Path | None = None) -> list[dict[str, Any]]:
                 "upstream": _boundary("upstream", raw.get("release_m3s")),
             }
             baseflow_total = sum(BASE_FLOWS_M3S.values())
+            station_rainfall = station_rainfall_from_csv_row(raw)
             rows.append({
                 "sequence": sequence,
                 "observed_at": observed_at.isoformat(),
                 "simulation_time": observed_at.isoformat(),
                 "rainfall_mm": round(_number(raw.get("rainfall_mm")), 3),
+                "station_rainfall": station_rainfall,
                 "reservoir_inflow_m3s": round(_number(raw.get("reservoir_outlet_flow_m3s")), 6),
                 "reservoir_release_m3s": round(_number(raw.get("release_m3s")), 6),
                 "reservoir_level_m": round(_number(raw.get("end_level_m")), 3),
@@ -114,11 +123,145 @@ class BoundaryFlowPlaybackSource:
     def next_observation(self) -> dict[str, Any] | None:
         if self.index >= len(self.rows):
             return None
-        observation = dict(self.rows[self.index])
+        sequence = self.index
+        observation = dict(self.rows[sequence])
+        observation["station_rainfall_forecast"] = (
+            self._station_rainfall_forecast(sequence)
+        )
+        observation["rainfall_forecast"] = self._rainfall_forecast(sequence)
+        observation["boundary_flow_forecast"] = (
+            self._boundary_flow_forecast(sequence)
+        )
+        observation["reservoir_forecast"] = self._reservoir_forecast(sequence)
         observation["playback_id"] = self.run_id
         self.index += 1
         self._append_observation(observation)
         return observation
+
+    def _station_rainfall_forecast(
+        self,
+        sequence: int,
+    ) -> list[dict[str, Any]]:
+        current_readings = self.rows[sequence].get("station_rainfall") or []
+        if not current_readings:
+            return []
+        future_rows = self.rows[
+            sequence + 1:sequence + FORECAST_WINDOW_POINT_COUNT
+        ]
+        future_readings = [
+            {
+                str(reading.get("station_id") or ""): reading
+                for reading in row.get("station_rainfall") or []
+            }
+            for row in future_rows
+        ]
+        forecasts = []
+        for current in current_readings:
+            station_id = str(current.get("station_id") or "")
+            if not station_id:
+                continue
+            series = []
+            for row, readings_by_id in zip(future_rows, future_readings):
+                reading = readings_by_id.get(station_id)
+                if not reading:
+                    continue
+                series.append({
+                    "valid_time": _row_time(row),
+                    "rainfall_mm": round(
+                        float(reading.get("rainfall_mm") or 0),
+                        3,
+                    ),
+                })
+            forecasts.append({
+                "station_id": station_id,
+                "name": str(current.get("name") or station_id),
+                "derivation_method": current.get("derivation_method"),
+                "series": series,
+            })
+        return forecasts
+
+    def _future_rows(self, sequence: int) -> list[dict[str, Any]]:
+        return self.rows[
+            sequence + 1:sequence + FORECAST_WINDOW_POINT_COUNT
+        ]
+
+    def _rainfall_forecast(self, sequence: int) -> list[dict[str, Any]]:
+        return [
+            {
+                "valid_time": _row_time(row),
+                "rainfall_mm": round(_number(row.get("rainfall_mm")), 3),
+            }
+            for row in self._future_rows(sequence)
+        ]
+
+    def _boundary_flow_forecast(self, sequence: int) -> dict[str, Any]:
+        current = self.rows[sequence]
+        future_rows = self._future_rows(sequence)
+        window = [current, *future_rows]
+        peak = max(window, key=_total_flow)
+        first_exceeded = next(
+            (
+                row for row in window
+                if _total_flow(row) > FORECAST_TRIGGER_TOTAL_M3S
+            ),
+            None,
+        )
+        return {
+            "window_start": _row_time(current),
+            "window_end": _row_time(window[-1]),
+            "window_hours": len(future_rows),
+            "threshold_m3s": FORECAST_TRIGGER_TOTAL_M3S,
+            "series": [
+                {
+                    "valid_time": _row_time(row),
+                    "total_flow_m3s": round(_total_flow(row), 6),
+                    "boundaries": {
+                        key: {
+                            "flow_m3s": round(
+                                _number((row.get("boundaries", {}).get(key) or {}).get("flow_m3s")),
+                                6,
+                            ),
+                        }
+                        for key in BOUNDARIES
+                    },
+                }
+                for row in future_rows
+            ],
+            "peak_total_flow_m3s": round(_total_flow(peak), 6),
+            "peak_at": _row_time(peak),
+            "first_threshold_exceeded_at": (
+                _row_time(first_exceeded) if first_exceeded else None
+            ),
+        }
+
+    def _reservoir_forecast(self, sequence: int) -> dict[str, Any]:
+        current = self.rows[sequence]
+        current_point = {
+            "valid_time": current.get("simulation_time") or current.get("observed_at") or "",
+            "reservoir_inflow_m3s": _number(current.get("reservoir_inflow_m3s")),
+            "reservoir_release_m3s": _number(current.get("reservoir_release_m3s")),
+            "reservoir_level_m": _number(current.get("reservoir_level_m")),
+        }
+        future_rows = self._future_rows(sequence)
+        series = [
+            {
+                "valid_time": row.get("simulation_time") or row.get("observed_at") or "",
+                "reservoir_inflow_m3s": _number(row.get("reservoir_inflow_m3s")),
+                "reservoir_release_m3s": _number(row.get("reservoir_release_m3s")),
+                "reservoir_level_m": _number(row.get("reservoir_level_m")),
+                "status": reservoir_level_status(
+                    _number(row.get("reservoir_level_m")),
+                ),
+            }
+            for row in future_rows
+        ]
+        return {
+            "reservoir_id": LONGTAN_RESERVOIR_ID,
+            "station_id": LONGTAN_RESERVOIR_STATION_ID,
+            "name": "龙潭水库",
+            "series": series,
+            "assessment": assess_reservoir_window(current_point, series),
+        }
 
     def _append_observation(self, observation: dict[str, Any]) -> None:
         self.observation_path.parent.mkdir(parents=True, exist_ok=True)
@@ -320,6 +463,17 @@ class FloodForecastPolicy:
                 "last_flow_m3s": round(values[-1], 3),
             }
         rainfall_total = sum(float(row.get("rainfall_mm") or 0) for row in selected)
+        rainfall_series = [
+            {
+                "time_h": round(
+                    (_observed_datetime(row) - window_start).total_seconds() / 3600,
+                    3,
+                ),
+                "valid_time": _observed_datetime(row).isoformat(),
+                "rainfall_mm": round(float(row.get("rainfall_mm") or 0), 3),
+            }
+            for row in selected
+        ]
         summary = {
             "boundary_flow_id": input_id,
             "episode_id": self.episode_id,
@@ -333,6 +487,7 @@ class FloodForecastPolicy:
             "forecast_point_count": len(selected),
             "predicted_rainfall_24h_mm": round(rainfall_total, 3),
             "rainfall_total_mm": round(rainfall_total, 3),
+            "rainfall_series": rainfall_series,
             "forecast_horizon_h": FORECAST_WINDOW_HOURS,
             "reservoir_level_m": float(observation.get("reservoir_level_m") or 0),
             "boundaries": boundaries,
@@ -473,6 +628,10 @@ def parse_boundary_flow_time(value: str) -> datetime:
 
 def _observed_datetime(observation: dict[str, Any]) -> datetime:
     return datetime.fromisoformat(str(observation["observed_at"]))
+
+
+def _row_time(row: dict[str, Any]) -> str:
+    return str(row.get("simulation_time") or row.get("observed_at") or "")
 
 
 def _total_flow(observation: dict[str, Any] | None) -> float:

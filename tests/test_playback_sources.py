@@ -19,6 +19,11 @@ from domains.flood.runtime.playback_sources import (
     REQUIRED_BOUNDARY_FLOW_COLUMNS,
     validate_playback_source,
 )
+from domains.flood.runtime.station_rainfall import (
+    STATION_RAINFALL_METHOD,
+    extend_boundary_flow_csv,
+    station_rainfall_columns,
+)
 from domains.flood.runtime.boundary_flow import load_boundary_flow_rows
 from domains.flood.runtime.workspace import WorkspaceManager
 from server.events import EventRuntime
@@ -53,12 +58,40 @@ class PlaybackSourceValidationTest(unittest.TestCase):
         self.assertEqual(rows[0]["observed_at"], "2025-01-01T00:00:00+08:00")
         self.assertEqual(rows[-1]["observed_at"], "2025-01-02T00:00:00+08:00")
 
-    def test_requires_exact_columns(self):
+    def test_requires_base_columns(self):
         lines = _csv_content(25).decode("utf-8").splitlines()
         lines[0] = lines[0].replace(",end_level_m", "")
 
-        with self.assertRaisesRegex(PlaybackSourceValidationError, "CSV 字段必须为"):
+        with self.assertRaisesRegex(PlaybackSourceValidationError, "CSV 必须包含字段"):
             validate_playback_source("\n".join(lines).encode("utf-8"))
+
+    def test_accepts_complete_station_rainfall_columns(self):
+        content = extend_boundary_flow_csv(_csv_content(25), "test-source")
+
+        summary = validate_playback_source(content)
+
+        self.assertEqual(
+            summary["station_rainfall_station_count"],
+            len(station_rainfall_columns()),
+        )
+
+    def test_rejects_incomplete_station_rainfall_columns(self):
+        content = extend_boundary_flow_csv(_csv_content(25), "test-source")
+        lines = content.decode("utf-8").splitlines()
+        removed_column = station_rainfall_columns()[-1]
+        headers = lines[0].split(",")
+        removed_index = headers.index(removed_column)
+        lines = [
+            ",".join(
+                value
+                for index, value in enumerate(line.split(","))
+                if index != removed_index
+            )
+            for line in lines
+        ]
+
+        with self.assertRaisesRegex(PlaybackSourceValidationError, "必须完整提供"):
+            validate_playback_source(("\n".join(lines) + "\n").encode("utf-8"))
 
     def test_rejects_non_hourly_or_short_data(self):
         content = _csv_content(25).replace(
@@ -121,12 +154,35 @@ class PlaybackSourceRegistryTest(unittest.TestCase):
 
         snapshot, metadata = self.registry.snapshot(uploaded.source_id, workspace)
 
-        self.assertEqual(snapshot.read_bytes(), _csv_content(25))
+        self.assertEqual(snapshot.read_bytes(), uploaded.csv_path.read_bytes())
+        self.assertNotEqual(snapshot.read_bytes(), _csv_content(25))
+        self.assertEqual(
+            metadata["station_rainfall_station_count"],
+            len(station_rainfall_columns()),
+        )
+        self.assertEqual(
+            metadata["station_rainfall_method"],
+            STATION_RAINFALL_METHOD,
+        )
         self.assertEqual(metadata["source_id"], uploaded.source_id)
         stored = json.loads(
             (workspace / "inputs" / "playback_source.json").read_text(encoding="utf-8")
         )
         self.assertEqual(stored["workspace_path"], "inputs/boundary_flow.csv")
+
+    def test_uploaded_station_rainfall_is_deterministic_and_preserves_mean(self):
+        uploaded = self.registry.upload("custom.csv", _csv_content(25))
+        first_bytes = uploaded.csv_path.read_bytes()
+        extended_again = extend_boundary_flow_csv(first_bytes, uploaded.source_id)
+        rows = load_boundary_flow_rows(uploaded.csv_path)
+
+        self.assertEqual(first_bytes, extended_again)
+        self.assertEqual(len(rows[0]["station_rainfall"]), 12)
+        self.assertAlmostEqual(
+            sum(item["rainfall_mm"] for item in rows[0]["station_rainfall"]) / 12,
+            rows[0]["rainfall_mm"],
+            places=3,
+        )
 
     def test_runtime_switches_source_and_records_workspace_input(self):
         uploaded = self.registry.upload("custom.csv", _csv_content(25))

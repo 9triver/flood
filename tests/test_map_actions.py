@@ -130,7 +130,7 @@ class MapActionBuilderTest(unittest.TestCase):
     def test_event_marker_requires_coordinates(self):
         result = json.loads(self.builder.show_event_marker(
             {"event": {"event_type": "TestEvent"}},
-            {"HydrometeorologicalStation"},
+            {"Station"},
         ))
 
         self.assertEqual(

@@ -27,12 +27,11 @@ OBJECT_LIBRARY_FILES = {
     "Facility": "facility.jsonl",
     "HydraulicStructure": "hydraulic_structure.jsonl",
     "Road": "road.jsonl",
-    "BridgeRoadLink": "bridge_road_link.jsonl",
     "EvacuationSite": "evacuation_site.jsonl",
     "EvacuationUnit": "evacuation_unit.jsonl",
     "EvacuationRoute": "evacuation_route.jsonl",
     "DangerArea": "danger_area.jsonl",
-    "HydrometeorologicalStation": "hydrometeorological_station.jsonl",
+    "Station": "station.jsonl",
 }
 
 MAPPABLE_OBJECTS = {
@@ -106,8 +105,8 @@ MAPPABLE_OBJECTS = {
         "role": "risk",
         "style": {"type": "circle", "color": "#b91c1c", "radius": 5, "stroke": "#ffffff"},
     },
-    "HydrometeorologicalStation": {
-        "label": "水文气象测站",
+    "Station": {
+        "label": "测站",
         "role": "hydrology",
         "style": {"type": "circle", "color": "#0284c7", "radius": 5, "stroke": "#ffffff"},
     },
@@ -180,13 +179,12 @@ def id_field(object_type: str) -> str:
         "HydraulicStructure": "structure_id",
         "Road": "road_id",
         "Bridge": "bridge_id",
-        "BridgeRoadLink": "bridge_road_link_id",
         "Facility": "facility_id",
         "EvacuationSite": "evacuation_site_id",
         "EvacuationUnit": "evacuation_unit_id",
         "EvacuationRoute": "evacuation_route_id",
         "DangerArea": "danger_area_id",
-        "HydrometeorologicalStation": "station_id",
+        "Station": "station_id",
         "FloodForecast": "forecast_id",
         "InundationForecastCell": "forecast_cell_id",
         "HydrodynamicGridCell": "hydrodynamic_cell_id",

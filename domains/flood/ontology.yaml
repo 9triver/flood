@@ -304,6 +304,11 @@ objects:
       check_flood_standard_year: {type: float, description: "校核洪水标准，年一遇"}
       max_discharge_m3s: {type: float, description: "最大泄量"}
       safety_status: {type: str, description: "安全状态或安全类别"}
+      normal_pool_level_m: {type: float, default: 245.30, description: "正常蓄水位，米；低于该值显示绿色，达到后显示黄色"}
+      design_flood_level_m: {type: float, default: 247.92, description: "设计洪水位，米；达到后显示橙色"}
+      check_flood_level_m: {type: float, default: 248.91, description: "校核洪水位，米；超过后显示红色严重警告"}
+      design_flood_warning_level_m: {type: float, default: 247.62, description: "接近设计洪水位的提示阈值，米；按设计洪水位提前0.30米"}
+      check_flood_warning_level_m: {type: float, default: 248.61, description: "接近校核洪水位的提示阈值，米；按校核洪水位提前0.30米"}
       longitude: {type: float, description: "经度"}
       latitude: {type: float, description: "纬度"}
 
@@ -426,33 +431,6 @@ objects:
       source_record_count: {type: int, description: "合并到该桥梁实体的源记录数"}
       longitude: {type: float, description: "经度"}
       latitude: {type: float, description: "纬度"}
-
-  BridgeRoadLink:
-    kind: relation
-    display_name: "桥梁道路关联"
-    aliases:
-      - {terms: ["桥梁道路关联", "桥路关联"]}
-    data_source: external_api
-    mutability: read_only
-    source:
-      type: resolver
-      resolver: flood_repository
-      id_field: bridge_road_link_id
-    summary: "桥梁与道路的显式关联"
-    description: "BridgeRoadLink 表达桥梁和桥上道路分段的多对多关系，并保存空间匹配与拓扑校核证据。"
-    properties:
-      bridge_road_link_id: {type: str, required: true, description: "关系稳定ID"}
-      bridge_id: {type: str, required: true, description: "桥梁ID"}
-      road_id: {type: str, required: true, description: "道路分段ID"}
-      link_role: {type: str, description: "关系角色: deck/approach"}
-      match_method: {type: str, description: "匹配方法"}
-      validation_status: {type: str, description: "校核状态: accepted/review/rejected"}
-      confidence: {type: float, description: "匹配置信度，0到1"}
-      distance_m: {type: float, description: "本地桥梁点到桥上道路几何的距离，米"}
-      bridge_osm_ref: {type: str, description: "桥梁匹配的 OSM 对象引用"}
-      road_osm_ref: {type: str, description: "道路对应的 OSM 对象引用"}
-      topology_evidence: {type: str, description: "拓扑关系证据"}
-      amap_validation_status: {type: str, description: "高德辅助校核状态"}
 
   Facility:
     kind: entity
@@ -695,32 +673,37 @@ objects:
       depth_m: {type: float, description: "模型输出最大水深，米；0 表示无水"}
       is_flooded: {type: bool, description: "是否有水深"}
 
-  HydrometeorologicalStation:
+  Station:
     kind: entity
-    display_name: "水文气象测站"
+    display_name: "测站"
     aliases:
-      - {terms: ["水文站", "测站", "雨量站", "水位站", "气象站"]}
-    data_source: mixed
+      - {terms: ["测站", "监测站", "雨量站", "水位站"]}
+      - {terms: ["山洪测站", "山洪站"], filters: {station_type: flash_flood}}
+      - {terms: ["气象测站", "气象站"], filters: {station_type: meteorological}}
+      - {terms: ["水文测站", "水文站"], filters: {station_type: hydrological}}
+      - {terms: ["水库测站", "水库站"], filters: {station_type: reservoir}}
+    countable: true
+    data_source: local_file
     mutability: read_only
     source:
       type: resolver
       resolver: flood_repository
       id_field: station_id
-    summary: "水文、雨量或气象测站"
-    description: "表达珊瑚河流域及附近可作为自动感知来源的测站，包括龙潭水库站、雨量站和气象站。"
+    summary: "山洪、气象、水文或水库测站"
+    description: "表达珊瑚河流域测站。station_type 支持 flash_flood、meteorological、hydrological、reservoir；当前对象库包含有坐标的山洪、气象、水文测站以及龙潭水库站。"
     properties:
-      station_id: {type: str, required: true, description: "测站ID"}
+      station_id: {type: str, required: true, description: "测站ID，当前直接采用源测站编码"}
+      station_code: {type: str, required: true, description: "源测站编码"}
       river_id: {type: str, description: "关联河流编号"}
+      reservoir_id: {type: str, description: "水库测站关联的水库编号"}
       name: {type: str, description: "测站名称"}
-      alias: {type: str, description: "别名或表格站名"}
-      station_type: {type: str, description: "测站类型: reservoir_hydro_rainfall/rainfall/weather"}
-      location: {type: str, description: "测站位置描述"}
+      station_type: {type: str, description: "测站类型: flash_flood/meteorological/hydrological/reservoir"}
+      station_type_name: {type: str, description: "测站类型中文名称"}
+      source_system: {type: str, description: "源表中的数据来源系统: 山洪/气象/水文/水库"}
       longitude: {type: float, description: "经度"}
       latitude: {type: float, description: "纬度"}
-      elevation_m: {type: float, description: "站点高程，若资料给出"}
-      established_year: {type: int, description: "设站年份"}
-      observation_items: {type: str, description: "观测项目，如 rainfall,water_level,outflow"}
-      record_period: {type: str, description: "资料系列或可用时段说明"}
+      observation_items: {type: str, description: "已知观测项目；当前清单来自雨量站工作表"}
+      coordinate_quality: {type: str, description: "坐标质量说明；源文件未声明坐标系，当前按 WGS84 用于 GeoJSON 展示，后续需校核"}
 
   DangerArea:
     kind: entity
@@ -802,45 +785,13 @@ links:
     link_type: relates
     cardinality: 1..n
 
-  river_hydro_stations:
+  river_stations:
     source: River
-    target: HydrometeorologicalStation
+    target: Station
     join: {source_key: river_id, target_key: river_id}
-    description: "河流关联的水文、雨量和气象测站"
+    description: "河流关联的山洪、气象、水文和水库测站"
     link_type: observes
     cardinality: 1..n
-
-  bridge_road_links:
-    source: Bridge
-    target: BridgeRoadLink
-    join: {source_key: bridge_id, target_key: bridge_id}
-    description: "桥梁关联的道路关系记录"
-    link_type: relates
-    cardinality: 1..n
-
-  bridge_link_roads:
-    source: BridgeRoadLink
-    target: Road
-    join: {source_key: road_id, target_key: road_id}
-    description: "桥梁道路关系记录指向的道路分段"
-    link_type: relates
-    cardinality: n..1
-
-  road_bridge_links:
-    source: Road
-    target: BridgeRoadLink
-    join: {source_key: road_id, target_key: road_id}
-    description: "道路分段关联的桥梁关系记录"
-    link_type: relates
-    cardinality: 1..n
-
-  road_link_bridges:
-    source: BridgeRoadLink
-    target: Bridge
-    join: {source_key: bridge_id, target_key: bridge_id}
-    description: "桥梁道路关系记录指向的桥梁"
-    link_type: relates
-    cardinality: n..1
 
   evacuation_unit_routes:
     source: EvacuationUnit
@@ -858,12 +809,69 @@ links:
     link_type: enables
     cardinality: n..1
 
-rules: {}
+rules:
+  reservoir_level_status:
+    description: "根据龙潭水库水位判定地图和图表使用的确定性颜色等级"
+    rule_type: classification
+    applies_to: [Reservoir]
+    result_field: level_status
+    source: "龙潭水库正常蓄水位、设计洪水位和校核洪水位"
+    conditions:
+      - field: reservoir_level_m
+        operator: gt
+        value: 248.91
+        result: {key: critical, label: "超校核洪水位", color: "#c62828"}
+      - field: reservoir_level_m
+        operator: gte
+        value: 247.92
+        result: {key: danger, label: "设计洪水位以上", color: "#e66a19"}
+      - field: reservoir_level_m
+        operator: gte
+        value: 245.30
+        result: {key: warning, label: "正常蓄水位以上", color: "#c99700"}
+      - field: reservoir_level_m
+        operator: lt
+        value: 245.30
+        result: {key: normal, label: "正常", color: "#238b57"}
+
+  reservoir_level_alert:
+    description: "按当前至未来24小时预测最高水位返回唯一且最高级别的水库调度提示"
+    rule_type: threshold
+    applies_to: [Reservoir]
+    result_field: alert
+    source: "龙潭水库设计洪水位和校核洪水位；接近阈值统一提前0.30米"
+    conditions:
+      - field: reservoir_level_m
+        operator: gt
+        value: 248.91
+        result:
+          severity: critical
+          text: "警告：水位超校核洪水位！大坝安全面临严峻考验"
+          future_text_template: "警告：水位将在{triggered_at}超校核洪水位！大坝安全面临严峻考验"
+          current_text_template: "警告：水位已于{triggered_at}超校核洪水位！大坝安全面临严峻考验"
+      - field: reservoir_level_m
+        operator: gte
+        value: 248.61
+        result:
+          severity: danger
+          text: "入库流量持续加大，水位逼近校核洪水位"
+          future_text_template: "入库流量持续加大，水位将在{triggered_at}逼近校核洪水位"
+          current_text_template: "入库流量持续加大，水位已于{triggered_at}逼近校核洪水位"
+      - field: reservoir_level_m
+        operator: gte
+        value: 247.62
+        result:
+          severity: warning
+          text: "为保障大坝安全，按泄洪设施下泄能力下泄"
+          future_text_template: "预计水位将在{triggered_at}接近设计洪水位。为保障大坝安全，按泄洪设施下泄能力下泄"
+          current_text_template: "水位已于{triggered_at}接近设计洪水位。为保障大坝安全，按泄洪设施下泄能力下泄"
 
 functions:
   run_flood_forecast:
     summary: "运行或读取最新洪水预测"
     description: "读取领域策略生成的最新版本化四边界流量输入快照，调用 CNN_V2 水动力模型生成水动力网格 max_depth 预测结果和 FloodForecast 汇总。普通边界观测不会直接改变该快照；该函数也不把 severity 或综合指标映射为 5/10/20/50/100 年一遇设计方案。"
+    timeout_seconds: 360
+    concurrency_safe: false
     usage_prompt: "当用户要求运行预测、查看实时预测或显示未来淹没，或者当前事件策略要求执行预测时调用。该函数只返回 FloodForecast 汇总；如需在 GIS 展示预测淹没范围，在本函数返回后调用 ui_show_objects，object_type=HydrodynamicGridCell，filters={\"forecast_id\":\"latest\"}，label=预测淹没结果，fit=false，refresh=true。"
     function_type: lookup
     involves_objects: [FloodForecast, InundationForecastCell, HydrodynamicGridCell, River, Reservoir]
@@ -889,11 +897,11 @@ functions:
       time_h 是相对 valid_from 的偏移量，回答用户时应以结果的 analysis_time_at 实际时刻为主，并把预测 +Nh 作为辅助信息。
       已有水动力时间轴时直接分析已有预测，除非用户明确要求重算，否则不要先调用 run_flood_forecast。
       桥梁默认检查80米桥头影响区内的完整湿网格多边形。桥梁结果中的 depth_m 和 nearby_max_depth_m 是邻近洪泛区最大水深，不是桥面水深；directly_inundated=false 表示模型未直接覆盖桥面。
-      passability_status=inspection_required 表示周边或单侧桥头受淹、需要现场核查；likely_impassable 表示两侧桥头受淹或已校核的关联道路在桥头附近受淹。缺少桥面高程时，不得声称桥梁本体已经淹没。
+      passability_status=inspection_required 表示周边或单侧桥头受淹、需要现场核查；likely_impassable 表示两侧桥头受淹。缺少桥面高程时，不得声称桥梁本体已经淹没。
       只有用户明确请求在地图展示影响对象时，才把 affected_object_ids 中各对象类型对应的对象项与 HydrodynamicGridCell 放入同一次 ui_show_objects 调用，并设置 highlight=true、show_only_object_ids=true；自动事件的展示范围由 event_policies 决定。
       需要缩窄范围时 target_type 可传 Road、Bridge、Facility、EvacuationRoute、EvacuationUnit、EvacuationSite 或 all；min_depth_m 默认0.15，普通对象 max_distance_m 默认10，桥梁 bridge_influence_radius_m 默认80。除非用户明确要求敏感性分析，否则保持默认桥梁影响半径。
     function_type: lookup
-    involves_objects: [FloodForecast, InundationForecastCell, Road, Bridge, BridgeRoadLink, Facility, EvacuationRoute, EvacuationUnit, EvacuationSite]
+    involves_objects: [FloodForecast, InundationForecastCell, Road, Bridge, Facility, EvacuationRoute, EvacuationUnit, EvacuationSite]
     params:
       forecast_id: {type: str, description: "预测运行ID；latest 表示最新预测", default: "latest"}
       target_type: {type: str, description: "分析目标类型: Road/Bridge/Facility/EvacuationRoute/EvacuationUnit/EvacuationSite/all", default: "all"}

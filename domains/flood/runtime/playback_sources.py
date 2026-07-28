@@ -17,6 +17,11 @@ from .boundary_flow import (
     configured_boundary_flow_csv_path,
     parse_boundary_flow_time,
 )
+from .station_rainfall import (
+    STATION_RAINFALL_METHOD,
+    extend_boundary_flow_csv,
+    station_rainfall_columns,
+)
 from .workspace import RUNTIME_ROOT
 
 
@@ -52,6 +57,8 @@ class PlaybackSource:
     end_time: str
     uploaded_at: str | None
     validation_status: str = "valid"
+    station_rainfall_method: str | None = None
+    station_rainfall_station_count: int = 0
 
     def public(self, *, selected: bool = False) -> dict[str, Any]:
         return {
@@ -64,6 +71,8 @@ class PlaybackSource:
             "end_time": self.end_time,
             "uploaded_at": self.uploaded_at,
             "validation_status": self.validation_status,
+            "station_rainfall_method": self.station_rainfall_method,
+            "station_rainfall_station_count": self.station_rainfall_station_count,
             "selected": selected,
         }
 
@@ -140,6 +149,8 @@ class PlaybackSourceRegistry:
 
         summary = validate_playback_source(content)
         source_id = f"source_{uuid.uuid4().hex[:12]}"
+        stored_content = extend_boundary_flow_csv(content, source_id)
+        summary = validate_playback_source(stored_content)
         source_dir = self.root / source_id
         uploaded_at = datetime.now(timezone.utc).isoformat()
         metadata = {
@@ -152,11 +163,15 @@ class PlaybackSourceRegistry:
             "end_time": summary["end_time"],
             "uploaded_at": uploaded_at,
             "validation_status": "valid",
+            "station_rainfall_method": STATION_RAINFALL_METHOD,
+            "station_rainfall_station_count": summary[
+                "station_rainfall_station_count"
+            ],
         }
         with self._lock:
             source_dir.mkdir(parents=True, exist_ok=False)
             try:
-                (source_dir / "source.csv").write_bytes(content)
+                (source_dir / "source.csv").write_bytes(stored_content)
                 _write_json(source_dir / "metadata.json", metadata)
             except Exception:
                 shutil.rmtree(source_dir, ignore_errors=True)
@@ -206,6 +221,8 @@ class PlaybackSourceRegistry:
             start_time=summary["start_time"],
             end_time=summary["end_time"],
             uploaded_at=None,
+            station_rainfall_method=None,
+            station_rainfall_station_count=0,
         )
 
     def _uploaded_source(self, source_id: str) -> PlaybackSource:
@@ -237,6 +254,14 @@ class PlaybackSourceRegistry:
                 else None
             ),
             validation_status=str(metadata.get("validation_status") or "valid"),
+            station_rainfall_method=(
+                str(metadata["station_rainfall_method"])
+                if metadata.get("station_rainfall_method")
+                else None
+            ),
+            station_rainfall_station_count=int(
+                metadata.get("station_rainfall_station_count") or 0
+            ),
         )
 
 
@@ -248,18 +273,35 @@ def validate_playback_source(content: bytes) -> dict[str, Any]:
 
     reader = csv.DictReader(io.StringIO(text, newline=""))
     columns = tuple(reader.fieldnames or ())
-    if set(columns) != set(REQUIRED_BOUNDARY_FLOW_COLUMNS) or len(columns) != len(
-        REQUIRED_BOUNDARY_FLOW_COLUMNS
-    ):
+    required = set(REQUIRED_BOUNDARY_FLOW_COLUMNS)
+    station_columns = set(station_rainfall_columns())
+    actual = set(columns)
+    if len(actual) != len(columns):
+        raise PlaybackSourceValidationError("CSV 字段名不能重复")
+    unknown = actual - required - station_columns
+    present_station_columns = actual & station_columns
+    if not required.issubset(actual):
         raise PlaybackSourceValidationError(
-            "CSV 字段必须为：" + ", ".join(REQUIRED_BOUNDARY_FLOW_COLUMNS)
+            "CSV 必须包含字段：" + ", ".join(REQUIRED_BOUNDARY_FLOW_COLUMNS)
+        )
+    if unknown:
+        raise PlaybackSourceValidationError(
+            "CSV 包含不支持的字段：" + ", ".join(sorted(unknown))
+        )
+    if present_station_columns and present_station_columns != station_columns:
+        missing = station_columns - present_station_columns
+        raise PlaybackSourceValidationError(
+            "气象站雨量列必须完整提供，缺少：" + ", ".join(sorted(missing))
         )
 
     previous_time: datetime | None = None
     start_time = ""
     end_time = ""
     row_count = 0
-    numeric_columns = REQUIRED_BOUNDARY_FLOW_COLUMNS[1:]
+    numeric_columns = [
+        *REQUIRED_BOUNDARY_FLOW_COLUMNS[1:],
+        *(column for column in station_rainfall_columns() if column in actual),
+    ]
     for line_number, row in enumerate(reader, start=2):
         if None in row:
             raise PlaybackSourceValidationError(
@@ -290,6 +332,19 @@ def validate_playback_source(content: bytes) -> dict[str, Any]:
                 raise PlaybackSourceValidationError(
                     f"第 {line_number} 行 {column} 必须是有限数值"
                 )
+            if column in station_columns and value < 0:
+                raise PlaybackSourceValidationError(
+                    f"第 {line_number} 行 {column} 不能小于 0"
+                )
+        if present_station_columns:
+            rainfall = float(row["rainfall_mm"])
+            station_mean = sum(
+                float(row[column]) for column in station_rainfall_columns()
+            ) / len(station_columns)
+            if not math.isclose(station_mean, rainfall, abs_tol=0.001):
+                raise PlaybackSourceValidationError(
+                    f"第 {line_number} 行气象站雨量平均值必须等于 rainfall_mm"
+                )
         if not start_time:
             start_time = observed_at.strftime("%Y-%m-%d %H:%M")
         end_time = observed_at.strftime("%Y-%m-%d %H:%M")
@@ -304,6 +359,7 @@ def validate_playback_source(content: bytes) -> dict[str, Any]:
         "row_count": row_count,
         "start_time": start_time,
         "end_time": end_time,
+        "station_rainfall_station_count": len(present_station_columns),
     }
 
 
