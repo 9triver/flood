@@ -26,6 +26,15 @@ class StaticAssetTest(unittest.TestCase):
         self.assertIn('playbackAutoPauseEnabled: true', app)
         self.assertIn('fetch("/api/autonomy/auto-pause"', app)
         self.assertIn('setPlaybackAutoPauseControl(data.auto_pause_enabled)', app)
+        self.assertIn('state.playbackStepPending = false;\n    updateTelemetryRuntimeStatus(data);', app)
+        self.assertNotIn(
+            'state.playbackStepPending = Boolean(data.forecast_triggered)',
+            app,
+        )
+        self.assertIn(
+            'const stepUnavailable = state.runtimeStatus?.step_available === false;',
+            app,
+        )
         self.assertIn('.playback-auto-pause-track', styles)
 
     def test_direct_lucide_references_exist_in_local_bundle(self):

@@ -345,7 +345,11 @@ class BoundaryFlowPolicyTest(unittest.TestCase):
         self.assertTrue(policy.mark_forecast_completed(initial["source_id"]))
 
         for sequence in range(1, 25):
-            request = policy.observe(rows[sequence], rolling=True)[0]
+            request = policy.observe(
+                rows[sequence],
+                rolling=True,
+                trigger_source="manual_step",
+            )[0]
             trigger = request["payload"]["forecast_trigger"]
             summary = request["payload"]["forecast_input"]
             self.assertEqual(trigger["trigger_type"], "rolling_step")
@@ -354,7 +358,11 @@ class BoundaryFlowPolicyTest(unittest.TestCase):
             self.assertTrue(policy.mark_forecast_started(request["source_id"]))
             self.assertTrue(policy.mark_forecast_completed(request["source_id"]))
 
-        self.assertEqual(policy.observe(rows[25], rolling=True), [])
+        self.assertEqual(policy.observe(
+            rows[25],
+            rolling=True,
+            trigger_source="manual_step",
+        ), [])
         self.assertEqual(policy.version, 25)
         self.assertEqual(policy.completed_version, 25)
         self.assertEqual(policy.state, FloodForecastPolicy.ACTIVE)
@@ -479,6 +487,53 @@ class BoundaryFlowPlaybackRunnerTest(unittest.TestCase):
             self.assertEqual(
                 finished[0][1]["event_type"],
                 "BoundaryFlowForecastAdvanced",
+            )
+
+    def test_automatic_playback_retriggers_each_qualifying_rolling_window(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            rows = _forecast_rows(27, {24: 300.0})
+            source = BoundaryFlowPlaybackSource(
+                CSV_PATH,
+                root / "observations.jsonl",
+            )
+            source.rows = rows
+            policy = FloodForecastPolicy(
+                rows,
+                forecast_input_dir=root / "forecast_inputs",
+                latest_forecast_input_path=root / "latest.json",
+            )
+            runner = BoundaryFlowPlaybackRunner(
+                BoundaryFlowPlayback(source, policy),
+                interval_seconds=0,
+            )
+            forecast_events = []
+
+            def complete_forecast(event):
+                forecast_events.append(event)
+                self.assertTrue(policy.mark_forecast_started(event["source_id"]))
+                self.assertTrue(policy.mark_forecast_completed(event["source_id"]))
+
+            runner.play_generation(
+                generation=1,
+                is_running=lambda generation: generation == 1,
+                publish_observation=lambda event: None,
+                publish_policy_event=complete_forecast,
+                finish_sequence=lambda generation, event: None,
+                sleep_while_running=lambda seconds, generation: None,
+            )
+
+            self.assertEqual(len(forecast_events), 3)
+            self.assertEqual(
+                [
+                    event["payload"]["forecast_trigger"]["trigger_type"]
+                    for event in forecast_events
+                ],
+                ["forecast_window_peak", "rolling_playback", "rolling_playback"],
+            )
+            self.assertEqual(
+                [event["title"] for event in forecast_events[1:]],
+                ["自动推进触发滚动洪水预测"] * 2,
             )
 
 
@@ -756,19 +811,37 @@ class EventRuntimePlaybackControlTest(unittest.TestCase):
 
                 status = runtime.step_playback()
 
-            self.assertFalse(status["paused"])
-            self.assertTrue(status["processing"])
-            self.assertEqual(status["playback_phase"], "processing")
-            self.assertTrue(status["forecast_triggered"])
-            self.assertFalse(status["step_available"])
-            self.assertEqual(status["policy_state"], "PENDING")
-            self.assertEqual(status["forecast_version"], 2)
-            queued_event, _ = runtime._event_queue[0]
-            self.assertEqual(queued_event["event_type"], "FloodForecastRequired")
-            self.assertEqual(
-                queued_event["payload"]["forecast_trigger"]["trigger_type"],
-                "rolling_step",
-            )
+                self.assertFalse(status["paused"])
+                self.assertTrue(status["processing"])
+                self.assertEqual(status["playback_phase"], "processing")
+                self.assertTrue(status["forecast_triggered"])
+                self.assertFalse(status["step_available"])
+                self.assertEqual(status["policy_state"], "PENDING")
+                self.assertEqual(status["forecast_version"], 2)
+                queued_event, generation = runtime._event_queue[0]
+                self.assertEqual(queued_event["event_type"], "FloodForecastRequired")
+                self.assertEqual(
+                    queued_event["payload"]["forecast_trigger"]["trigger_type"],
+                    "rolling_step",
+                )
+
+                self.assertTrue(runtime._boundary_flow_runner.mark_forecast_started(
+                    queued_event["source_id"],
+                ))
+                self.assertTrue(runtime._boundary_flow_runner.mark_forecast_completed(
+                    queued_event["source_id"],
+                ))
+                runtime._complete_event_processing(queued_event, generation)
+                settled = runtime.outputs[-1]["data"]
+                self.assertEqual(settled["playback_phase"], "paused")
+                self.assertEqual(settled["policy_state"], "ACTIVE")
+                self.assertTrue(settled["step_available"])
+
+                next_status = runtime.step_playback()
+
+            self.assertTrue(next_status["forecast_triggered"])
+            self.assertTrue(next_status["processing"])
+            self.assertEqual(next_status["forecast_version"], 3)
 
     def test_restart_creates_new_workspace_and_waits_at_start(self):
         with tempfile.TemporaryDirectory() as directory:

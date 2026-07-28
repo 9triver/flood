@@ -74,7 +74,10 @@ class BoundaryFlowPlaybackRunner:
         return self.playback.mark_forecast_failed(forecast_input_id)
 
     def step(self) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
-        return self.playback.next_events(rolling=True)
+        return self.playback.next_events(
+            rolling=True,
+            trigger_source="manual_step",
+        )
 
     def status(self) -> dict[str, Any]:
         return {
@@ -112,7 +115,10 @@ class BoundaryFlowPlaybackRunner:
                         sleep_while_running: Callable[[float, int], None]) -> None:
         last_observation: dict[str, Any] | None = None
         while is_running(generation):
-            observation_event, policy_events = self.playback.next_events()
+            observation_event, policy_events = self.playback.next_events(
+                rolling=True,
+                trigger_source="automatic_playback",
+            )
             if observation_event is None:
                 finish_sequence(generation, last_observation)
                 return

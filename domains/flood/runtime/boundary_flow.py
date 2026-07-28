@@ -308,6 +308,7 @@ class FloodForecastPolicy:
         observation: dict[str, Any],
         *,
         rolling: bool = False,
+        trigger_source: str = "playback",
     ) -> list[dict[str, Any]]:
         self.last_observation = observation
         if self.state == self.PENDING:
@@ -327,7 +328,13 @@ class FloodForecastPolicy:
             simulation_time = _observed_datetime(observation)
             self.episode_id = f"flood_{simulation_time.strftime('%Y%m%dT%H%M')}"
         peak = max(window, key=_total_flow)
-        reason_prefix = "人工步进后，" if rolling and self.completed_version else ""
+        rolling_trigger = bool(rolling and self.completed_version)
+        manual_step = rolling_trigger and trigger_source == "manual_step"
+        reason_prefix = (
+            "人工步进后，"
+            if manual_step
+            else "演进自动推进后，" if rolling_trigger else ""
+        )
         reason = reason_prefix + (
             f"当前时刻至 +{FORECAST_WINDOW_HOURS}h 的预测窗口内，"
             f"四边界流量和峰值 {_total_flow(peak):.3f} m³/s "
@@ -335,7 +342,9 @@ class FloodForecastPolicy:
         )
         trigger_type = (
             "rolling_step"
-            if rolling and self.completed_version
+            if manual_step
+            else "rolling_playback"
+            if rolling_trigger
             else "forecast_window_peak"
         )
         return [self._request_forecast(
@@ -413,6 +422,8 @@ class FloodForecastPolicy:
             "title": (
                 "步进触发滚动洪水预测"
                 if trigger_type == "rolling_step"
+                else "自动推进触发滚动洪水预测"
+                if trigger_type == "rolling_playback"
                 else "24小时边界流量预测触发洪水预测"
             ),
             "payload": {
@@ -540,13 +551,18 @@ class BoundaryFlowPlayback:
         self,
         *,
         rolling: bool = False,
+        trigger_source: str = "playback",
     ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
         with self._lock:
             observation = self.source.next_observation()
             if observation is None:
                 return None, []
             event = make_boundary_flow_forecast_advanced_event(observation)
-            return event, self.policy.observe(observation, rolling=rolling)
+            return event, self.policy.observe(
+                observation,
+                rolling=rolling,
+                trigger_source=trigger_source,
+            )
 
     def mark_forecast_started(self, forecast_input_id: str) -> bool:
         with self._lock:

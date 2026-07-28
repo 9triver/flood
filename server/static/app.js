@@ -2179,7 +2179,7 @@ async function stepBoundaryFlowPlayback() {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "单步推进失败");
     acceptWorkspace(data.workspace_id);
-    state.playbackStepPending = Boolean(data.forecast_triggered);
+    state.playbackStepPending = false;
     updateTelemetryRuntimeStatus(data);
   } catch (error) {
     state.playbackStepPending = false;
@@ -2661,10 +2661,18 @@ function updatePlaybackStepButton() {
   const btn = document.getElementById("playbackStepBtn");
   if (!btn) return;
   const policyPending = state.runtimeStatus?.policy_state === "PENDING";
+  const stepUnavailable = state.runtimeStatus?.step_available === false;
   btn.hidden = !state.playbackPaused;
-  btn.disabled = !state.playbackPaused || state.playbackStepPending || policyPending;
+  btn.disabled = (
+    !state.playbackPaused
+    || state.playbackStepPending
+    || policyPending
+    || stepUnavailable
+  );
   btn.title = state.playbackStepPending || policyPending
     ? "正在计算当前滚动预测"
+    : stepUnavailable
+      ? "没有可继续步进的预测时刻"
     : "向前步进一个预测时刻";
   btn.setAttribute("aria-label", btn.title);
 }

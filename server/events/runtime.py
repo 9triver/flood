@@ -843,12 +843,19 @@ class EventRuntime:
     ) -> None:
         workspace_id = data.get("workspace_id") or active_workspace_id()
         if event_name == "runtime_status":
+            playback_status = self._boundary_flow_runner.status()
             data = {
+                **playback_status,
                 "running": self._playback_running,
                 "paused": self._playback_paused,
                 "processing": self._playback_processing,
                 "auto_pause_enabled": self._auto_pause_enabled,
                 "playback_phase": self._playback_phase,
+                "step_available": (
+                    self._playback_paused
+                    and playback_status.get("policy_state") != "PENDING"
+                    and bool(playback_status.get("has_next"))
+                ),
                 **data,
             }
         item = {
