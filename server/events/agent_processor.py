@@ -29,6 +29,12 @@ AppendOutput = Callable[[str, dict[str, Any], int | None], None]
 PublishEvent = Callable[[dict[str, Any], int], None]
 
 
+_EVENT_DISPLAY_NAME_FALLBACKS = {
+    "FloodForecastRequired": "洪水预测请求事件",
+    "InundationGenerated": "预测淹没结果生成事件",
+}
+
+
 class ForecastPlaybackTracker(Protocol):
     def mark_forecast_started(self, forecast_input_id: str) -> bool: ...
 
@@ -401,7 +407,7 @@ class EventAgentProcessor:
 
     def _append_agent_conclusion_trace(self, text_chunks: list[str],
                                        generation: int) -> None:
-        conclusion = "".join(text_chunks).strip()
+        conclusion = self._localize_event_names("".join(text_chunks).strip())
         if conclusion:
             self.append_output("agent_trace", {
                 "type": "agent_trace",
@@ -420,25 +426,29 @@ class EventAgentProcessor:
     def _append_forecast_complete_trace(self, result: dict[str, Any],
                                         generation: int) -> None:
         forecast_result = result.get("forecast_result")
+        forecast_event_name = self._event_display_name("FloodForecastRequired")
+        inundation_event_name = self._event_display_name("InundationGenerated")
         if forecast_completed(forecast_result):
             detail = (
-                "FloodForecastRequired 阶段已完成洪水预测。"
-                "本阶段不执行对象影响分析；系统接下来发布后续的 "
-                "InundationGenerated 事件，由该事件阶段执行确定性影响分析。"
+                f"{forecast_event_name}阶段已完成洪水预测。"
+                "本阶段不执行对象级影响分析；系统接下来发布后续的"
+                f"{inundation_event_name}，由该事件判断是否存在淹没、设置流域警戒并"
+                "展示预测淹没范围。对象级影响分析不会自动执行，需用户明确提出后分析。"
             )
         elif result.get("forecast_requested"):
-            detail = "FloodForecastRequired 阶段结束，但洪水预测未成功完成。"
+            detail = f"{forecast_event_name}阶段结束，但洪水预测未成功完成。"
         else:
-            detail = "FloodForecastRequired 阶段结束，智能体未请求运行洪水预测。"
+            detail = f"{forecast_event_name}阶段结束，智能体未请求运行洪水预测。"
         self.append_output("agent_trace", {
             "type": "agent_trace",
             "tag": "DONE",
-            "label": "洪水预测请求事件完成",
+            "label": f"{forecast_event_name}完成",
             "detail": detail,
         }, generation)
 
     def _append_followup_complete_trace(self, result: dict[str, Any],
                                         generation: int) -> None:
+        event_name = self._event_display_name("InundationGenerated")
         impact_result = result.get("impact_result")
         detail = (
             impact_event_detail({"payload": impact_result})
@@ -448,9 +458,24 @@ class EventAgentProcessor:
         self.append_output("agent_trace", {
             "type": "agent_trace",
             "tag": "DONE",
-            "label": "预测淹没影响事件完成",
-            "detail": f"InundationGenerated 阶段处理结束。{detail}",
+            "label": f"{event_name}完成",
+            "detail": f"{event_name}阶段处理结束。{detail}",
         }, generation)
+
+    def _event_display_name(self, event_type: str) -> str:
+        ontology = getattr(self.app, "ontology", None)
+        policies = getattr(ontology, "event_policies", {}) or {}
+        policy = policies.get(event_type)
+        return str(
+            getattr(policy, "display_name", "")
+            or _EVENT_DISPLAY_NAME_FALLBACKS.get(event_type)
+            or event_type
+        )
+
+    def _localize_event_names(self, text: str) -> str:
+        for event_type in _EVENT_DISPLAY_NAME_FALLBACKS:
+            text = text.replace(event_type, self._event_display_name(event_type))
+        return text
 
     def _reason_about_forecast_required_event(
         self,

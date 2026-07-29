@@ -865,7 +865,7 @@ h2 {
   z-index: 2;
   min-width: 0;
   display: grid;
-  grid-template-columns: 34px minmax(120px, 180px) auto minmax(240px, 1fr);
+  grid-template-columns: 34px minmax(120px, 1fr) auto minmax(400px, 640px);
   align-items: center;
   gap: 10px;
   padding: 7px 14px;
@@ -884,12 +884,41 @@ h2 {
   gap: 2px;
 }
 
-.situation-heading strong {
+.situation-heading > strong {
   font-size: 13px;
   font-weight: 850;
 }
 
-.situation-heading span {
+.situation-summary {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  overflow: hidden;
+}
+
+.situation-summary-item {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.situation-summary-item + .situation-summary-item {
+  padding-left: 9px;
+  border-left: 1px solid var(--line);
+}
+
+.situation-summary-item b {
+  flex: 0 0 auto;
+  color: #526171;
+  font-size: 9px;
+  font-weight: 850;
+}
+
+.situation-summary-item span {
+  min-width: 0;
   overflow: hidden;
   color: var(--subtle);
   font-size: 10px;
@@ -1001,15 +1030,34 @@ h2 {
   gap: 8px;
 }
 
-.impact-panel-meta time {
+.impact-panel-context {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.impact-panel-context span {
+  min-width: 0;
+  overflow: hidden;
   color: var(--subtle);
-  font-size: 11px;
-  font-weight: 750;
+  font-size: 10px;
   font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#impactTimeLabel {
+  font-weight: 750;
+}
+
+#impactStatus {
+  flex: 0 0 auto;
 }
 
 .impact-panel-meta output {
-  min-width: 28px;
+  min-width: 44px;
   height: 24px;
   display: inline-grid;
   place-items: center;
@@ -1365,13 +1413,22 @@ h2 {
 
 .telemetry-header {
   grid-column: 1 / -1;
-  min-height: 54px;
+  min-height: 62px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding: 8px 9px 8px 12px;
   border-bottom: 1px solid var(--line);
+}
+
+.telemetry-header-context {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  grid-template-columns: auto minmax(86px, .7fr) minmax(135px, 1.3fr);
+  align-items: center;
+  gap: 8px;
 }
 
 .telemetry-overview {
@@ -1385,49 +1442,22 @@ h2 {
 .telemetry-forecast-strip {
   grid-column: 1 / -1;
   min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(118px, .7fr) minmax(0, 3.3fr);
-  align-items: stretch;
   border-bottom: 1px solid var(--line);
   background: #f8fafc;
-}
-
-.telemetry-forecast-head {
-  min-width: 0;
-  display: grid;
-  align-content: center;
-  gap: 2px;
-  padding: 7px 11px;
-  border-right: 1px solid var(--line);
-}
-
-.telemetry-forecast-head strong {
-  font-size: 11px;
-  font-weight: 850;
-}
-
-.telemetry-forecast-head small {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--subtle);
-  font-size: 9px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .telemetry-forecast-metrics {
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, .82fr)) minmax(0, 1.54fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .telemetry-forecast-metrics > div {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
   align-content: center;
-  gap: 1px 6px;
-  padding: 5px 7px;
+  gap: 3px;
+  padding: 7px 9px;
   border-right: 1px solid var(--line);
 }
 
@@ -1438,46 +1468,37 @@ h2 {
 .telemetry-forecast-metrics span,
 .telemetry-forecast-metrics small {
   min-width: 0;
-  overflow: hidden;
   color: var(--subtle);
   font-size: 9px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.3;
 }
 
 .telemetry-forecast-metrics strong {
   min-width: 0;
-  overflow: hidden;
   color: var(--ink);
   font-size: 12px;
   font-weight: 850;
   font-variant-numeric: tabular-nums;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.telemetry-forecast-metrics small {
-  grid-column: 2;
-  text-align: right;
-}
-
-.telemetry-forecast-metrics .forecast-alert-summary {
-  grid-template-columns: minmax(0, 1fr) auto;
+.telemetry-forecast-value {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 5px;
+  flex-wrap: wrap;
 }
 
 .forecast-alert-summary strong {
-  grid-column: 1 / -1;
   color: var(--ink);
   font-size: 10px;
+  line-height: 1.3;
+  white-space: normal;
 }
 
 .forecast-alert-summary strong.is-alert {
   color: #9f2d38;
-}
-
-.forecast-alert-summary small {
-  grid-column: 2;
-  grid-row: 1;
 }
 
 .telemetry-title {
@@ -1494,12 +1515,36 @@ h2 {
   font-weight: 800;
 }
 
-.telemetry-header time {
-  display: block;
-  margin-top: 3px;
+.telemetry-time-context {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  padding-left: 8px;
+  border-left: 1px solid var(--line);
+}
+
+.telemetry-time-context > span {
   color: var(--subtle);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.telemetry-current-time time {
+  color: var(--ink);
   font-size: 11px;
+  font-weight: 750;
   font-variant-numeric: tabular-nums;
+}
+
+.telemetry-forecast-window small {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+  white-space: normal;
 }
 
 .telemetry-header-actions {
@@ -1870,23 +1915,19 @@ h2 {
 .hydro-timeline {
   position: relative;
   z-index: 1;
-  width: 100%;
+  width: calc(100% - 10px);
   justify-self: stretch;
   display: grid;
-  grid-template-columns: 34px 34px auto minmax(180px, 1fr) minmax(142px, auto);
+  grid-template-columns: 34px auto minmax(180px, 1fr) minmax(132px, auto);
   align-items: center;
   gap: 8px;
-  padding: 0;
+  margin-left: 10px;
+  padding: 0 0 0 14px;
   border: 0;
+  border-left: 1px solid var(--line);
   background: transparent;
   box-shadow: none;
   pointer-events: auto;
-}
-
-.hydro-envelope-toggle[aria-pressed="true"] {
-  border-color: #b91c1c;
-  color: #b91c1c;
-  background: #fff1f2;
 }
 
 .hydro-timeline input[type="range"]:disabled {
@@ -1910,7 +1951,7 @@ h2 {
 }
 
 .hydro-time-label {
-  min-width: 142px;
+  min-width: 132px;
   color: var(--ink);
   font-size: 12px;
   font-weight: 800;
@@ -4089,23 +4130,7 @@ h2 {
 
 @container (max-width: 1120px) {
   .situation-workbench-header {
-    grid-template-columns: 34px minmax(110px, 150px) auto minmax(220px, 1fr);
-  }
-
-  .playback-toggle {
-    width: 38px;
-    min-width: 38px;
-    justify-content: center;
-    padding: 0;
-  }
-
-  .playback-toggle-copy {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
+    grid-template-columns: 34px minmax(110px, 1fr) auto minmax(360px, 560px);
   }
 
   .situation-workbench-body {
@@ -4127,13 +4152,13 @@ h2 {
   }
 
   .situation-workbench-header {
-    grid-template-columns: 34px minmax(96px, 120px) auto minmax(180px, 1fr);
+    grid-template-columns: 34px minmax(96px, 1fr) auto minmax(300px, 460px);
     gap: 7px;
     padding-inline: 10px;
   }
 
   .hydro-timeline {
-    grid-template-columns: 34px 34px auto minmax(100px, 1fr) minmax(126px, auto);
+    grid-template-columns: 34px auto minmax(120px, 1fr) minmax(126px, auto);
     gap: 6px;
   }
 
@@ -4206,9 +4231,11 @@ h2 {
   .hydro-timeline {
     grid-area: timeline;
     width: 100%;
-    grid-template-columns: 34px 34px auto minmax(90px, 1fr) minmax(126px, auto);
+    grid-template-columns: 34px auto minmax(120px, 1fr) minmax(126px, auto);
     gap: 6px;
+    margin-left: 0;
     padding: 3px 0 1px;
+    border-left: 0;
   }
 
   .situation-workbench:has(.hydro-timeline:not(.is-hidden)):not(.is-collapsed) {
@@ -4230,17 +4257,6 @@ h2 {
 
   .telemetry-forecast-strip {
     min-width: 0;
-    display: block;
-  }
-
-  .telemetry-forecast-head {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 6px 9px;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
   }
 
   .telemetry-forecast-metrics {
@@ -4289,12 +4305,8 @@ h2 {
     grid-template-rows: auto minmax(0, 1fr);
   }
 
-  .app-shell.is-agent-open .telemetry-forecast-strip {
-    grid-template-columns: 112px minmax(0, 1fr);
-  }
-
   .app-shell.is-agent-open .telemetry-forecast-metrics {
-    grid-template-columns: repeat(3, minmax(0, .82fr)) minmax(0, 1.54fr);
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .app-shell.is-agent-open .telemetry-weather {

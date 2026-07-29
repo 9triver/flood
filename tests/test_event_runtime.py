@@ -72,10 +72,12 @@ class FakeEventApp:
         self.ontology = SimpleNamespace(event_policies={
             "FloodForecastRequired": SimpleNamespace(
                 allowed_tools=["run_flood_forecast"],
+                display_name="洪水预测请求事件",
             ),
             "InundationGenerated": SimpleNamespace(
                 allowed_tools=["ui_set_inundation_alert", "ui_show_objects"],
                 automatic_map=automatic_map,
+                display_name="预测淹没结果生成事件",
             ),
         })
 
@@ -195,7 +197,9 @@ class EventRuntimeModuleBoundaryTest(unittest.TestCase):
                 result=json.dumps(forecast_result, ensure_ascii=False),
             ),
             ReasoningEvent(content="模型已经返回有效预测。"),
-            TextEvent(content="当前预测请求事件已完成。"),
+            TextEvent(content=(
+                "FloodForecastRequired 已完成，后续发布 InundationGenerated。"
+            )),
         ])
         timeline = []
         processor = EventAgentProcessor(
@@ -232,7 +236,17 @@ class EventRuntimeModuleBoundaryTest(unittest.TestCase):
         result_trace = next(item[2] for item in timeline if item[1] == "RESULT")
         self.assertIn("预测淹没单元：65183 个", result_trace["detail"])
         self.assertNotIn('{"forecast":', result_trace["detail"])
-        self.assertIn("后续", timeline[-2][2]["detail"])
+        conclusion_trace = next(item[2] for item in timeline if item[1] == "TEXT")
+        self.assertIn("洪水预测请求事件", conclusion_trace["detail"])
+        self.assertIn("预测淹没结果生成事件", conclusion_trace["detail"])
+        self.assertNotIn("FloodForecastRequired", conclusion_trace["detail"])
+        self.assertNotIn("InundationGenerated", conclusion_trace["detail"])
+        completion_trace = timeline[-2][2]
+        self.assertEqual("洪水预测请求事件完成", completion_trace["label"])
+        self.assertIn("后续的预测淹没结果生成事件", completion_trace["detail"])
+        self.assertIn("不会自动执行", completion_trace["detail"])
+        self.assertNotIn("FloodForecastRequired", completion_trace["detail"])
+        self.assertNotIn("InundationGenerated", completion_trace["detail"])
 
     def test_missing_forecast_tool_call_is_visible_and_not_bypassed(self):
         app = FakeEventApp([TextEvent(content="本轮不调用预测工具。")])
@@ -386,6 +400,9 @@ class EventRuntimeModuleBoundaryTest(unittest.TestCase):
         )
         self.assertEqual([], impact_events)
         self.assertIn("set_watershed_inundation_alert", timeline[2][2]["detail"])
+        completion_trace = timeline[-1][2]
+        self.assertEqual("预测淹没结果生成事件完成", completion_trace["label"])
+        self.assertNotIn("InundationGenerated", completion_trace["detail"])
 
     def test_generic_tool_summary_keeps_valid_bounded_json(self):
         detail = summarize_event_tool_result("query", {

@@ -131,6 +131,7 @@ presentation_tools:
 
 event_policies:
   FloodForecastRequired:
+    display_name: "洪水预测请求事件"
     role: "珊瑚河洪水应急智能体"
     description: "领域策略已根据当前时刻至 +24h 的边界流量预测窗口生成洪水预测请求。"
     allowed_tools: [inspect, query, count, run_flood_forecast]
@@ -138,10 +139,11 @@ event_policies:
     instructions:
       - "领域策略已经完成阈值判断；当事件 forecast_trigger.should_run_forecast=true 时，必须由你调用一次 run_flood_forecast，forecast_id 使用 latest。不要只用文字说明将要预测。"
       - "事件 payload 包含当前预测时刻 observation、与触发判断完全相同的 25 点 forecast_input，以及 forecast_trigger；run_flood_forecast 会读取事件对应的稳定输入快照，CNN 计算与结果保存由该工具完成。"
-      - "本 FloodForecastRequired 事件只负责判断并运行洪水预测，不在当前事件阶段执行对象影响分析或防洪响应预案；预测完成后系统会另行发布 InundationGenerated 事件，由下一事件阶段执行确定性影响分析。结论中必须写清‘当前预测请求事件未执行影响分析，后续淹没结果事件将执行’，不要笼统表述为‘未启动影响评估’。"
+      - "本洪水预测请求事件只负责判断并运行洪水预测，不在当前事件阶段执行对象级影响分析或防洪响应预案；预测完成后系统会另行发布预测淹没结果生成事件，由后续事件判断是否存在淹没、设置流域警戒并展示预测淹没范围。对象级影响分析在后续事件中也不会自动执行，只有用户明确提出后才执行。结论中必须写清‘当前洪水预测请求事件未执行对象级影响分析；后续预测淹没结果生成事件也不自动执行，需用户明确提出后分析’，不得声称后续事件将自动执行影响分析。"
     conclusion_fields: ["24小时预测窗口", "触发原因", "是否调用了预测模型"]
 
   InundationGenerated:
+    display_name: "预测淹没结果生成事件"
     role: "珊瑚河洪水应急智能体"
     description: "水动力模型已经生成24小时预测结果，本事件负责判断预测期内是否存在淹没并表达流域警戒态势。"
     allowed_tools: [ui_set_inundation_alert, ui_show_objects]

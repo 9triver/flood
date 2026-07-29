@@ -330,18 +330,26 @@ function initMap() {
         ".station-rainfall-panel, .station-reservoir-panel",
       ),
     );
-    document.querySelector(".map-stage")
-      ?.classList.toggle("is-station-popup-open", isStationRainfall);
+    window.requestAnimationFrame(syncStationPopupOpenState);
     if (isStationRainfall) {
       window.requestAnimationFrame(() => keepPopupInsideMap(event.popup));
     }
   });
   state.map.on("popupclose", () => {
-    document.querySelector(".map-stage")
-      ?.classList.remove("is-station-popup-open");
+    window.requestAnimationFrame(syncStationPopupOpenState);
   });
   setBasemap(readStoredBasemap(), { persist: false });
   initRainEffect();
+}
+
+function syncStationPopupOpenState() {
+  const hasStationPopup = Boolean(
+    state.map?.getContainer()?.querySelector(
+      ".leaflet-popup .station-rainfall-panel, .leaflet-popup .station-reservoir-panel",
+    ),
+  );
+  document.querySelector(".map-stage")
+    ?.classList.toggle("is-station-popup-open", hasStationPopup);
 }
 
 function keepPopupInsideMap(popup) {
@@ -913,7 +921,6 @@ function bindEvents() {
   document.getElementById("playbackSpeedSelect").addEventListener("change", updatePlaybackSpeed);
   document.getElementById("playbackAutoPauseSwitch").addEventListener("change", updatePlaybackAutoPause);
   document.getElementById("hydroPlayBtn").addEventListener("click", toggleHydrodynamicTimelinePlayback);
-  document.getElementById("hydroEnvelopeBtn").addEventListener("click", toggleHydrodynamicEnvelopeMode);
   document.getElementById("hydroTimeSlider").addEventListener("input", (event) => {
     setHydrodynamicTimelineIndex(Number(event.target.value || 0));
   });
@@ -1329,13 +1336,7 @@ async function loadObject(objectType, filters = {}, options = {}) {
           indexFeature(objectType, feature, layerItem);
           layerItem.bindPopup(
             popupHtml(objectType, feature),
-            objectType === "Station"
-              ? {
-                maxWidth: 320,
-                autoPanPaddingTopLeft: L.point(18, 18),
-                autoPanPaddingBottomRight: L.point(18, 18),
-              }
-              : undefined,
+            objectPopupOptions(objectType),
           );
           layerItem.on("click", () => selectFeature(objectType, feature, layerItem));
         },
@@ -1476,7 +1477,7 @@ function showHydrodynamicTimeline(meta, layer, key, filters, previousSelection =
   const rainfallSeries = hydrodynamicRainfallSeries(forecast, resultVersion);
   state.hydrodynamicTimeline = {
     ...state.hydrodynamicTimeline,
-    mode: previousSelection?.mode === "envelope" ? "envelope" : "time_slice",
+    mode: "time_slice",
     hours,
     validTimes: steps.map((step) => step.validAt),
     rainfallSeries,
@@ -1498,11 +1499,7 @@ function showHydrodynamicTimeline(meta, layer, key, filters, previousSelection =
   slider.value = String(index);
   control.classList.remove("is-hidden");
   setTelemetryPanelOpen(true);
-  if (state.hydrodynamicTimeline.mode === "envelope") {
-    setHydrodynamicEnvelopeMode();
-  } else {
-    setHydrodynamicTimelineIndex(index);
-  }
+  setHydrodynamicTimelineIndex(index);
   renderForecastWindowSummary(state.lastMockObservation);
 }
 
@@ -1543,7 +1540,6 @@ function captureHydrodynamicTimelineSelection(key) {
   return {
     key,
     hour,
-    mode: timeline.mode,
     resultVersion: String(timeline.resultVersion || ""),
   };
 }
@@ -1576,7 +1572,7 @@ function hideHydrodynamicTimeline() {
   state.hydrodynamicTimeline.validFrom = null;
   state.hydrodynamicTimeline.validTo = null;
   document.getElementById("hydroTimeline")?.classList.add("is-hidden");
-  syncHydrodynamicEnvelopeButton(false);
+  renderSituationSummary();
   renderForecastWindowSummary(state.lastMockObservation);
   setMapTimeContext({
     mode: "current",
@@ -1597,7 +1593,6 @@ function setHydrodynamicTimelineIndex(index) {
   const label = document.getElementById("hydroTimeLabel");
   if (slider) slider.value = String(nextIndex);
   if (slider) slider.disabled = false;
-  syncHydrodynamicEnvelopeButton(false);
   const filters = { ...(timeline.baseFilters || {}) };
   if (timeline.resultVersion) filters.result_version = timeline.resultVersion;
   const hour = timeline.hours[nextIndex];
@@ -1620,63 +1615,20 @@ function setHydrodynamicTimelineIndex(index) {
     validAt,
     hour,
   });
+  renderSituationSummary();
   scheduleImpactAnalysisRefresh();
-}
-
-function toggleHydrodynamicEnvelopeMode() {
-  const timeline = state.hydrodynamicTimeline;
-  if (!timeline.layer || !timeline.hours.length) return;
-  if (timeline.mode === "envelope") {
-    setHydrodynamicTimelineIndex(timeline.index);
-    return;
-  }
-  setHydrodynamicEnvelopeMode();
-}
-
-function setHydrodynamicEnvelopeMode() {
-  const timeline = state.hydrodynamicTimeline;
-  if (!timeline.layer) return;
-  stopHydrodynamicTimelinePlayback();
-  timeline.mode = "envelope";
-  const filters = { ...(timeline.baseFilters || {}) };
-  delete filters.time_h;
-  if (timeline.resultVersion) filters.result_version = timeline.resultVersion;
-  timeline.layer.setResultFilters(filters);
-  const slider = document.getElementById("hydroTimeSlider");
-  const label = document.getElementById("hydroTimeLabel");
-  if (slider) slider.disabled = true;
-  if (label) {
-    label.textContent = "未来24小时 · 最大包络";
-    label.title = "显示未来24小时各预测时刻的最大淹没范围";
-  }
-  syncHydrodynamicEnvelopeButton(true);
-  setMapTimeContext({
-    mode: "envelope",
-    currentAt: state.lastMockObservation?.simulation_time
-      || state.lastMockObservation?.observed_at
-      || timeline.forecastTime,
-  });
-  scheduleImpactAnalysisRefresh();
-}
-
-function syncHydrodynamicEnvelopeButton(active) {
-  const button = document.getElementById("hydroEnvelopeBtn");
-  if (!button) return;
-  button.setAttribute("aria-pressed", String(Boolean(active)));
-  button.title = active ? "返回预测时刻" : "显示未来24小时最大淹没包络";
-  button.setAttribute("aria-label", button.title);
 }
 
 function toggleHydrodynamicTimelinePlayback() {
   const timeline = state.hydrodynamicTimeline;
   if (!timeline.layer || !timeline.hours.length) return;
-  if (timeline.mode === "envelope") setHydrodynamicTimelineIndex(timeline.index);
   if (timeline.playing) {
     stopHydrodynamicTimelinePlayback();
     return;
   }
   timeline.playing = true;
   setHydrodynamicPlayIcon(true);
+  renderSituationSummary();
   timeline.timer = window.setInterval(() => {
     const next = timeline.index >= timeline.hours.length - 1 ? 0 : timeline.index + 1;
     setHydrodynamicTimelineIndex(next);
@@ -1689,13 +1641,14 @@ function stopHydrodynamicTimelinePlayback() {
   timeline.timer = null;
   timeline.playing = false;
   setHydrodynamicPlayIcon(false);
+  renderSituationSummary();
 }
 
 function setHydrodynamicPlayIcon(playing) {
   const btn = document.getElementById("hydroPlayBtn");
   if (!btn) return;
-  btn.innerHTML = `<i data-lucide="${playing ? "pause" : "play"}"></i>`;
-  btn.title = playing ? "暂停预测过程" : "播放预测过程";
+  btn.innerHTML = `<i data-lucide="${playing ? "pause" : "activity"}"></i>`;
+  btn.title = playing ? "暂停逐帧预览" : "逐帧预览预测结果";
   btn.setAttribute("aria-label", btn.title);
   renderIcons();
 }
@@ -1755,7 +1708,7 @@ function formatForecastActualTime(value, includeYear = false) {
 function formatHydrodynamicTimeLabel(hour, validAt) {
   const offset = `+${formatHydrodynamicHour(hour)}h`;
   const actual = formatForecastActualTime(validAt);
-  return actual ? `${actual} · ${offset}` : `预测 ${offset}`;
+  return actual ? `预测 ${offset} · ${actual}` : `预测 ${offset}`;
 }
 
 function fitHydrodynamicGrid() {
@@ -1865,9 +1818,15 @@ function clearImpactAnalysisState() {
   const time = document.getElementById("impactTimeLabel");
   const status = document.getElementById("impactStatus");
   const list = document.getElementById("impactList");
-  if (count) count.textContent = "0";
-  if (time) time.textContent = "--";
-  if (status) status.textContent = "等待水动力结果";
+  if (count) count.textContent = "0 个";
+  if (time) {
+    time.textContent = "--";
+    time.title = "当前影响分析范围";
+  }
+  if (status) {
+    status.textContent = "等待结果";
+    status.title = "等待水动力结果";
+  }
   if (list) list.innerHTML = "";
 }
 
@@ -2685,6 +2644,7 @@ function updateTelemetryRuntimeStatus(data) {
   updatePlaybackControls(state.runtimeStatus);
   updatePlaybackSourceDisplay(data.playback_source);
   if (Number(data.total_rows || 0) > 0) state.playbackTotalRows = Number(data.total_rows);
+  renderSituationSummary();
   if (state.playbackRunning) {
     if (!state.lastMockObservation) setTelemetryState("等待", "normal");
     return;
@@ -2754,7 +2714,7 @@ function renderMockObservation(event) {
   const ratio = total > 0 ? Math.min(100, current / total * 100) : 0;
   document.getElementById("telemetryProgressBar").style.width = `${ratio.toFixed(2)}%`;
   document.getElementById("telemetryProgressText").textContent = `${current} / ${total}`;
-  setSituationSummary(`${formatMockTime(simulationTime)} · 降雨 ${formatMockNumber(observation.rainfall_mm, 1)} mm`);
+  renderSituationSummary();
 }
 
 function clearMockTelemetry() {
@@ -2778,7 +2738,7 @@ function clearMockTelemetry() {
   document.getElementById("telemetryProgressBar").style.width = "0%";
   document.getElementById("telemetryProgressText").textContent = `0 / ${state.playbackTotalRows}`;
   setTelemetryState("等待", "normal");
-  setSituationSummary("等待演进数据");
+  renderSituationSummary();
   renderForecastWindowSummary(null);
 }
 
@@ -2949,7 +2909,7 @@ function renderForecastWindowSummary(observation) {
   const cnnVersion = state.hydrodynamicTimeline.forecastVersion;
   if (window) {
     const timeRange = flow?.window_start && flow?.window_end
-      ? `${formatRainfallChartTime(flow.window_start)} - ${formatRainfallChartTime(flow.window_end)}`
+      ? `${formatRainfallChartTime(flow.window_start)} → ${formatRainfallChartTime(flow.window_end)}`
       : "等待预测窗口";
     window.textContent = cnnVersion
       ? `${timeRange} · CNN ${formatForecastVersion(cnnVersion)}`
@@ -2976,13 +2936,22 @@ function renderForecastWindowSummary(observation) {
     ? `${formatRainfallChartTime(assessment.peak.valid_time)} · m`
     : "m";
   if (alert) {
-    alert.textContent = assessment?.alert?.text || (assessment ? "未触发预警" : "--");
-    alert.title = assessment?.alert?.text || "";
+    alert.textContent = forecastAlertSummaryLabel(assessment?.alert, Boolean(assessment));
+    alert.title = assessment?.alert ? reservoirAlertText(assessment.alert) : "";
     alert.classList.toggle("is-alert", Boolean(assessment?.alert));
   }
   if (alertTime) alertTime.textContent = assessment?.alert?.triggered_at
     ? formatRainfallChartTime(assessment.alert.triggered_at)
     : "";
+}
+
+function forecastAlertSummaryLabel(alert, hasAssessment) {
+  if (!alert) return hasAssessment ? "无预警" : "--";
+  return {
+    critical: "超校核水位",
+    danger: "逼近校核水位",
+    warning: "接近设计水位",
+  }[alert.severity] || "已触发预警";
 }
 
 function expandFlowRange(min, max) {
@@ -3003,9 +2972,49 @@ function formatCompactFlow(value) {
   return number.toFixed(2);
 }
 
-function setSituationSummary(value) {
-  const summary = document.getElementById("situationSummary");
-  if (summary) summary.textContent = String(value || "等待演进数据");
+function renderSituationSummary() {
+  const evolution = document.getElementById("situationEvolutionSummary");
+  const forecast = document.getElementById("situationForecastSummary");
+  if (!evolution || !forecast) return;
+
+  const observation = state.lastMockObservation;
+  const simulationTime = observation?.simulation_time || observation?.observed_at;
+  const evolutionTime = formatForecastActualTime(simulationTime);
+  const evolutionStatus = evolutionPlaybackStatusLabel();
+  evolution.textContent = evolutionTime
+    ? `${evolutionTime} · ${evolutionStatus}`
+    : evolutionStatus;
+  evolution.title = `当前演进时刻：${evolutionTime || "等待数据"}；状态：${evolutionStatus}`;
+
+  const timeline = state.hydrodynamicTimeline;
+  const hour = Number(timeline.hours?.[timeline.index]);
+  const validAt = timeline.validTimes?.[timeline.index] || null;
+  if (!timeline.layer) {
+    forecast.textContent = "未加载";
+    forecast.title = "尚未加载预测时间轴";
+    return;
+  }
+  if (!Number.isFinite(hour)) {
+    forecast.textContent = "已加载";
+    forecast.title = "预测结果已加载，暂无可用预测时刻";
+    return;
+  }
+  const offset = `+${formatHydrodynamicHour(hour)}h`;
+  const actual = formatForecastActualTime(validAt);
+  const preview = timeline.playing ? " · 预览中" : "";
+  forecast.textContent = `${offset}${actual ? ` · ${actual}` : ""}${preview}`;
+  forecast.title = `预测查看时刻：${formatHydrodynamicTimeLabel(hour, validAt)}${
+    timeline.playing ? "；正在逐帧预览" : ""
+  }`;
+}
+
+function evolutionPlaybackStatusLabel() {
+  if (state.playbackProcessing) return "处理中";
+  if (state.playbackRunning) return "运行中";
+  if (state.playbackPaused) return "已暂停";
+  if (state.playbackPhase === "finished") return "已完成";
+  if (state.playbackPhase === "stopped") return "已停止";
+  return state.lastMockObservation ? "待继续" : "等待数据";
 }
 
 function renderTelemetryWeather(value) {
@@ -3289,7 +3298,10 @@ function createReservoirLayer(geojson, mapSelectable) {
     onEachFeature: (feature, layerItem) => {
       if (!mapSelectable) return;
       indexFeature("Reservoir", feature, layerItem);
-      layerItem.bindPopup(popupHtml("Reservoir", feature));
+      layerItem.bindPopup(
+        popupHtml("Reservoir", feature),
+        objectPopupOptions("Reservoir"),
+      );
       if (feature.properties?.name === "龙潭水库") {
         layerItem.bindTooltip("龙潭水库", {
           permanent: true,
@@ -3323,7 +3335,10 @@ function createRiverLayer(geojson, mapSelectable) {
     onEachFeature: (feature, layerItem) => {
       if (!mapSelectable) return;
       indexFeature("River", feature, layerItem);
-      layerItem.bindPopup(popupHtml("River", feature));
+      layerItem.bindPopup(
+        popupHtml("River", feature),
+        objectPopupOptions("River"),
+      );
       layerItem.on("click", () => selectFeature("River", feature, layerItem));
     },
   }).addTo(group);
@@ -3604,6 +3619,21 @@ function popupHtml(objectType, feature) {
     <div class="popup-title">${escapeHtml(name)}</div>
     <div class="popup-meta">${escapeHtml(OBJECT_CONFIG[objectType]?.label || objectType)} ${escapeHtml(id)}</div>
   `;
+}
+
+function objectPopupOptions(objectType) {
+  const options = {
+    autoClose: false,
+    closeOnClick: false,
+    closeButton: true,
+  };
+  if (objectType !== "Station") return options;
+  return {
+    ...options,
+    maxWidth: 320,
+    autoPanPaddingTopLeft: L.point(18, 18),
+    autoPanPaddingBottomRight: L.point(18, 18),
+  };
 }
 
 function selectFeature(objectType, feature, layerItem) {
@@ -5607,20 +5637,39 @@ async function refreshImpactAnalysisForTimeline() {
 function setImpactAnalysisLoading(hour, validAt = null, mode = "time_slice") {
   const panel = document.getElementById("impactPanel");
   panel?.classList.add("is-loading");
+  const count = document.getElementById("impactCount");
   const time = document.getElementById("impactTimeLabel");
   const status = document.getElementById("impactStatus");
-  if (time) time.textContent = mode === "envelope"
-    ? "未来24小时 · 最大包络"
-    : formatHydrodynamicTimeLabel(hour, validAt);
-  if (status) status.textContent = mode === "envelope"
-    ? "正在计算未来24小时最大包络的受影响对象..."
-    : "正在计算当前预测时刻的受影响对象...";
+  if (count) count.textContent = "--";
+  setImpactScopeLabel(time, hour, validAt, mode === "envelope");
+  if (status) {
+    status.textContent = "分析中";
+    status.title = mode === "envelope"
+      ? "正在计算未来24小时最大包络的受影响对象"
+      : "正在计算当前预测时刻的受影响对象";
+  }
 }
 
 function setImpactAnalysisError(error) {
   document.getElementById("impactPanel")?.classList.remove("is-loading");
   const status = document.getElementById("impactStatus");
-  if (status) status.textContent = `影响分析失败：${String(error?.message || error)}`;
+  if (status) {
+    status.textContent = "分析失败";
+    status.title = `影响分析失败：${String(error?.message || error)}`;
+  }
+}
+
+function setImpactScopeLabel(element, hour, validAt, envelope = false) {
+  if (!element) return;
+  if (envelope) {
+    element.textContent = "24h 最大包络";
+    element.title = "分析范围：未来24小时最大淹没包络";
+    return;
+  }
+  const offset = `+${formatHydrodynamicHour(hour)}h`;
+  const actual = formatForecastActualTime(validAt);
+  element.textContent = actual ? `${offset} · ${actual}` : offset;
+  element.title = `分析范围：${formatHydrodynamicTimeLabel(hour, validAt)}`;
 }
 
 function renderImpactAnalysisResult(result) {
@@ -5696,16 +5745,19 @@ function renderImpactList(result, impacts) {
   const list = document.getElementById("impactList");
   if (!panel || !count || !time || !status || !list) return;
   panel.classList.remove("is-loading");
-  count.textContent = String(impacts.length);
-  time.textContent = result?.time_h == null
-    ? "未来24小时 · 最大包络"
-    : formatHydrodynamicTimeLabel(result.time_h, result.analysis_time_at);
-  status.textContent = impacts.length
+  count.textContent = `${impacts.length} 个`;
+  setImpactScopeLabel(
+    time,
+    result?.time_h,
+    result?.analysis_time_at,
+    result?.time_h == null,
+  );
+  status.textContent = impacts.length ? "已分析" : "未发现";
+  status.title = impacts.length
     ? `按水深与风险排序，共 ${impacts.length} 个对象`
     : (result?.time_h == null
       ? "未来24小时最大包络未发现受影响对象"
       : "当前预测时刻未发现受影响对象");
-  setSituationSummary(`${time.textContent} · 受影响对象 ${impacts.length} 个`);
   list.innerHTML = "";
   impacts.forEach((impact) => {
     const key = impactObjectKey(impact);
@@ -5743,7 +5795,6 @@ async function focusImpactObject(impact) {
   const key = impactObjectKey(impact);
   const focusSeq = ++state.impactFocusSeq;
   if (state.selectedImpactLayerKey && state.selectedImpactKey !== key) {
-    removeLayer(state.selectedImpactLayerKey);
     state.selectedImpactLayerKey = null;
   }
   state.selectedImpactKey = key;
@@ -5812,7 +5863,6 @@ function clearImpactObjectSelection(options = {}) {
   const selectedKey = state.selectedImpactKey;
   state.selectedImpactKey = null;
   state.impactFocusSeq += 1;
-  state.map?.closePopup();
   if (options.removeLayer && state.selectedImpactLayerKey) {
     const key = state.selectedImpactLayerKey;
     state.selectedImpactLayerKey = null;

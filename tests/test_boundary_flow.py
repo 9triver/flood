@@ -899,11 +899,24 @@ class InundationMapEventTest(unittest.TestCase):
             {"event_type": "InundationGenerated", "event_id": "evt_test"},
         )
 
+        self.assertIn("接收“预测淹没结果生成事件”后台领域事件", prompt)
+        self.assertIn("面向用户的结论必须使用中文名称", prompt)
         self.assertIn("forecast_cell_count>0", prompt)
         self.assertIn("必须调用一次 ui_set_inundation_alert", prompt)
         self.assertIn("不执行对象级影响分析", prompt)
         self.assertIn('"object_type": "HydrodynamicGridCell"', prompt)
         self.assertIn("只有用户在普通对话中明确请求时才可展示", prompt)
+
+    def test_forecast_event_policy_does_not_promise_automatic_impact_analysis(self):
+        prompt = OntologyPromptBuilder(ONTOLOGY, FunctionRegistry()).build_event_prompt(
+            "FloodForecastRequired",
+            {"event_type": "FloodForecastRequired", "event_id": "evt_test"},
+        )
+
+        self.assertIn("接收“洪水预测请求事件”后台领域事件", prompt)
+        self.assertIn("后续预测淹没结果生成事件也不自动执行", prompt)
+        self.assertIn("需用户明确提出后分析", prompt)
+        self.assertNotIn("后续淹没结果事件将执行", prompt)
 
     def test_only_hydrodynamic_actions_reach_automatic_frontend_stream(self):
         event = {

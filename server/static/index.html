@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>珊瑚河洪水应急预警智能体</title>
     <link rel="stylesheet" href="/vendor/leaflet/leaflet.css?v=1.9.4" />
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/styles.css?v=5" />
   </head>
   <body>
     <div class="app-shell">
@@ -135,7 +135,16 @@
             </button>
             <div class="situation-heading">
               <strong>态势工作台</strong>
-              <span id="situationSummary">等待演进数据</span>
+              <div class="situation-summary" id="situationSummary" aria-live="polite">
+                <span class="situation-summary-item">
+                  <b>演进</b>
+                  <span id="situationEvolutionSummary">等待数据</span>
+                </span>
+                <span class="situation-summary-item">
+                  <b>预测</b>
+                  <span id="situationForecastSummary">未加载</span>
+                </span>
+              </div>
             </div>
             <div class="situation-playback-controls" aria-label="演进控制">
               <div class="playback-source-control" id="playbackSourceControl">
@@ -188,11 +197,8 @@
               </button>
             </div>
             <div class="hydro-timeline is-hidden" id="hydroTimeline" aria-label="预测淹没时间轴">
-              <button class="icon-button" id="hydroPlayBtn" type="button" title="播放预测过程" aria-label="播放预测过程">
-                <i data-lucide="play"></i>
-              </button>
-              <button class="icon-button hydro-envelope-toggle" id="hydroEnvelopeBtn" type="button" title="显示未来24小时最大淹没包络" aria-label="显示未来24小时最大淹没包络" aria-pressed="false">
-                <i data-lucide="layers"></i>
+              <button class="icon-button" id="hydroPlayBtn" type="button" title="逐帧预览预测结果" aria-label="逐帧预览预测结果">
+                <i data-lucide="activity"></i>
               </button>
               <span class="hydro-timeline-caption">预测时刻</span>
               <input id="hydroTimeSlider" type="range" min="0" max="0" value="0" step="1" aria-label="预测时刻" />
@@ -202,9 +208,16 @@
           <div class="situation-workbench-body">
             <section class="telemetry-panel situation-pane map-draggable-panel" id="telemetryPanel" aria-label="演进数据">
               <header class="telemetry-header panel-drag-handle" data-panel-drag-handle title="拖动演进数据">
-                <div>
+                <div class="telemetry-header-context">
                   <div class="telemetry-title">演进数据 <span>MOCK</span></div>
-                  <time id="telemetryTime">--</time>
+                  <div class="telemetry-time-context telemetry-current-time">
+                    <span>当前演进时刻</span>
+                    <time id="telemetryTime">--</time>
+                  </div>
+                  <div class="telemetry-time-context telemetry-forecast-window">
+                    <span>未来24小时预测</span>
+                    <small id="telemetryForecastWindow">等待预测窗口</small>
+                  </div>
                 </div>
                 <div class="telemetry-header-actions">
                   <span class="telemetry-state" id="telemetryState">待机</span>
@@ -215,15 +228,23 @@
                 </div>
               </header>
               <div class="telemetry-forecast-strip" aria-label="未来24小时关键预测">
-                <div class="telemetry-forecast-head">
-                  <strong>未来24小时关键预测</strong>
-                  <small id="telemetryForecastWindow">等待预测窗口</small>
-                </div>
                 <div class="telemetry-forecast-metrics">
-                  <div><span>边界总流量峰值</span><strong id="forecastFlowPeak">--</strong><small id="forecastFlowPeakTime">m³/s</small></div>
-                  <div><span>首次超过 230</span><strong id="forecastFlowThresholdTime">--</strong><small>阈值 230 m³/s</small></div>
-                  <div><span>水库最高水位</span><strong id="forecastReservoirPeak">--</strong><small id="forecastReservoirPeakTime">m</small></div>
-                  <div class="forecast-alert-summary"><span>水库最高预警</span><strong id="forecastReservoirAlert">--</strong><small id="forecastReservoirAlertTime"></small></div>
+                  <div>
+                    <span>流量峰值</span>
+                    <div class="telemetry-forecast-value"><strong id="forecastFlowPeak">--</strong><small id="forecastFlowPeakTime">m³/s</small></div>
+                  </div>
+                  <div>
+                    <span>首次超 230</span>
+                    <div class="telemetry-forecast-value"><strong id="forecastFlowThresholdTime">--</strong><small>阈值 230 m³/s</small></div>
+                  </div>
+                  <div>
+                    <span>最高水位</span>
+                    <div class="telemetry-forecast-value"><strong id="forecastReservoirPeak">--</strong><small id="forecastReservoirPeakTime">m</small></div>
+                  </div>
+                  <div class="forecast-alert-summary">
+                    <span>最高预警</span>
+                    <div class="telemetry-forecast-value"><strong id="forecastReservoirAlert">--</strong><small id="forecastReservoirAlertTime"></small></div>
+                  </div>
                 </div>
               </div>
               <div class="telemetry-overview">
@@ -281,11 +302,14 @@
             <header class="impact-panel-header panel-drag-handle" data-panel-drag-handle title="拖动受影响对象">
               <div>
                 <strong>受影响对象</strong>
-                <span id="impactStatus">等待水动力结果</span>
+                <div class="impact-panel-context">
+                  <span id="impactTimeLabel" title="当前影响分析范围">--</span>
+                  <span aria-hidden="true">·</span>
+                  <span id="impactStatus">等待结果</span>
+                </div>
               </div>
               <div class="impact-panel-meta">
-                <time id="impactTimeLabel">--</time>
-                <output id="impactCount">0</output>
+                <output id="impactCount" aria-label="当前分析范围内的受影响对象数">0 个</output>
                 <span class="panel-drag-grip" aria-hidden="true"><i data-lucide="grip-horizontal"></i></span>
                 <button class="icon-button" id="impactFloatBtn" type="button" title="浮动受影响对象" aria-label="浮动受影响对象">
                   <i data-lucide="picture-in-picture-2"></i>
@@ -382,6 +406,6 @@
     <script src="/vendor/lucide.js?v=2"></script>
     <script src="/map-symbols.js?v=3"></script>
     <script src="/vendor/marked/marked.min.js?v=12.0.2"></script>
-    <script src="/app.js"></script>
+    <script src="/app.js?v=5"></script>
   </body>
 </html>

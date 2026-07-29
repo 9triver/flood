@@ -50,6 +50,8 @@ class StaticAssetTest(unittest.TestCase):
     def test_frontend_libraries_are_served_locally(self):
         index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
+        self.assertIn('/styles.css?v=5', index)
+        self.assertIn('/app.js?v=5', index)
         self.assertIn('/vendor/leaflet/leaflet.css?v=1.9.4', index)
         self.assertIn('/vendor/leaflet/leaflet.js?v=1.9.4', index)
         self.assertIn('/vendor/marked/marked.min.js?v=12.0.2', index)
@@ -89,6 +91,20 @@ class StaticAssetTest(unittest.TestCase):
         self.assertIsNotNone(school_color)
         self.assertIsNotNone(hospital_color)
         self.assertNotEqual(school_color.group(1), hospital_color.group(1))
+
+    def test_domain_object_popups_remain_open_until_user_closes_them(self):
+        app = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("function objectPopupOptions(objectType)", app)
+        self.assertIn("autoClose: false", app)
+        self.assertIn("closeOnClick: false", app)
+        self.assertIn("closeButton: true", app)
+        self.assertIn("objectPopupOptions(objectType)", app)
+        self.assertIn('objectPopupOptions("Reservoir")', app)
+        self.assertIn('objectPopupOptions("River")', app)
+        self.assertIn("function syncStationPopupOpenState()", app)
+        self.assertNotIn("state.map?.closePopup();", app)
+        self.assertNotIn("removeLayer(state.selectedImpactLayerKey);", app)
 
     def test_station_types_use_distinct_local_map_symbols(self):
         app = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
@@ -158,7 +174,8 @@ class StaticAssetTest(unittest.TestCase):
         self.assertIn(".station-rainfall-chart rect.is-forecast {", styles)
         self.assertIn(".station-rainfall-now {", styles)
         self.assertIn('state.map.on("popupopen", (event) => {', app)
-        self.assertIn('classList.toggle("is-station-popup-open", isStationRainfall)', app)
+        self.assertIn("function syncStationPopupOpenState()", app)
+        self.assertIn("window.requestAnimationFrame(syncStationPopupOpenState)", app)
         self.assertIn("function keepPopupInsideMap(popup)", app)
         self.assertIn(".map-stage.is-station-popup-open .conclusion-toast-region {", styles)
         self.assertIn("autoPanPaddingTopLeft: L.point(18, 18)", app)
@@ -230,11 +247,12 @@ class StaticAssetTest(unittest.TestCase):
         self.assertNotIn("state.rainfallForecast", map_rainfall)
         self.assertIn('function interpolateTimedPoint(series, validAt, numericFields)', app)
         self.assertIn('mode: envelope ? "envelope" : "time_slice"', app)
-        self.assertIn('function setHydrodynamicEnvelopeMode()', app)
         self.assertIn('params.set("time_h", String(timeline.current_hydrodynamic_time_h))', app)
-        self.assertIn('id="hydroEnvelopeBtn"', index)
-        self.assertIn('aria-pressed="false"', index)
-        self.assertIn('.hydro-envelope-toggle[aria-pressed="true"]', styles)
+        self.assertNotIn('id="hydroEnvelopeBtn"', index)
+        self.assertNotIn('function setHydrodynamicEnvelopeMode()', app)
+        self.assertNotIn('.hydro-envelope-toggle', styles)
+        self.assertIn('data-lucide="activity"', index)
+        self.assertIn('逐帧预览预测结果', index)
 
     def test_situation_workbench_combines_current_and_future_context(self):
         app = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
@@ -247,10 +265,72 @@ class StaticAssetTest(unittest.TestCase):
         self.assertIn('flow-history-line is-forecast', app)
         self.assertIn('flow-history-now', app)
         self.assertIn('flow-history-threshold', app)
-        self.assertIn('未来24小时关键预测', index)
+        self.assertIn('未来24小时预测', index)
         self.assertIn('四边界流量 · 实况 / 预测', index)
+        self.assertEqual(4, index.count('class="telemetry-forecast-value"'))
+        self.assertIn('class="telemetry-header-context"', index)
+        self.assertIn('class="telemetry-time-context telemetry-forecast-window"', index)
+        self.assertNotIn('class="telemetry-forecast-head"', index)
+        self.assertIn('function forecastAlertSummaryLabel(alert, hasAssessment)', app)
         self.assertIn('.telemetry-forecast-strip {', styles)
+        self.assertNotIn('.telemetry-forecast-head {', styles)
+        self.assertIn('grid-template-columns: repeat(4, minmax(0, 1fr));', styles)
+        self.assertIn('.telemetry-forecast-value {', styles)
         self.assertIn('.flow-history-line.is-forecast {', styles)
+
+    def test_situation_workbench_labels_time_and_impact_scope(self):
+        app = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        styles = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn('<span>当前演进时刻</span>', index)
+        self.assertIn('class="impact-panel-context"', index)
+        self.assertIn('title="当前影响分析范围"', index)
+        self.assertIn('id="situationEvolutionSummary"', index)
+        self.assertIn('id="situationForecastSummary"', index)
+        self.assertIn('当前分析范围内的受影响对象数', index)
+        self.assertIn('id="impactCount"', index)
+        self.assertIn('>0 个</output>', index)
+        self.assertIn('return actual ? `预测 ${offset} · ${actual}`', app)
+        self.assertIn('count.textContent = `${impacts.length} 个`;', app)
+        self.assertIn('count.textContent = "--";', app)
+        self.assertIn('function setImpactScopeLabel(', app)
+        self.assertIn('function renderSituationSummary()', app)
+        self.assertIn('function evolutionPlaybackStatusLabel()', app)
+        self.assertNotIn('function setSituationSummary(', app)
+        self.assertIn('status.textContent = "分析中";', app)
+        self.assertIn('status.textContent = impacts.length ? "已分析" : "未发现";', app)
+        self.assertNotIn(
+            'setSituationSummary(`${time.textContent} · 受影响对象', app,
+        )
+        timeline_start = app.index("function setHydrodynamicTimelineIndex(index)")
+        timeline_end = app.index(
+            "\nfunction toggleHydrodynamicTimelinePlayback", timeline_start,
+        )
+        self.assertNotIn("telemetryTime", app[timeline_start:timeline_end])
+        observation_start = app.index("function renderMockObservation(event)")
+        observation_end = app.index("\nfunction clearMockTelemetry", observation_start)
+        self.assertIn("telemetryTime", app[observation_start:observation_end])
+        self.assertIn('.telemetry-time-context {', styles)
+        self.assertIn('.situation-summary {', styles)
+        self.assertIn('.impact-panel-context {', styles)
+        self.assertIn(
+            'minmax(120px, 1fr) auto minmax(400px, 640px)', styles,
+        )
+        self.assertIn(
+            '34px auto minmax(180px, 1fr) minmax(132px, auto)', styles,
+        )
+        responsive_start = styles.index("@container (max-width: 1120px)")
+        responsive_end = styles.index(
+            "@container (max-width: 900px)", responsive_start,
+        )
+        self.assertNotIn(
+            ".playback-toggle-copy", styles[responsive_start:responsive_end],
+        )
+        for label in (
+            "开始演进", "继续演进", "暂停演进", "事件处理中", "开始新演进",
+        ):
+            self.assertIn(label, app)
 
     def test_map_management_omits_internal_supporting_layers(self):
         app = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
