@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 import threading
 import time
@@ -17,11 +18,15 @@ class HydrodynamicGridCacheTest(unittest.TestCase):
         with hydrodynamic_grid._DEPTH_CACHE_LOCK:
             hydrodynamic_grid._DEPTH_CACHE.clear()
             hydrodynamic_grid._DEPTH_LOADS.clear()
+        with hydrodynamic_grid._TILE_CACHE_LOCK:
+            hydrodynamic_grid._TILE_CACHE.clear()
 
     def tearDown(self):
         with hydrodynamic_grid._DEPTH_CACHE_LOCK:
             hydrodynamic_grid._DEPTH_CACHE.clear()
             hydrodynamic_grid._DEPTH_LOADS.clear()
+        with hydrodynamic_grid._TILE_CACHE_LOCK:
+            hydrodynamic_grid._TILE_CACHE.clear()
 
     def test_max_depth_cache_keeps_only_positive_cells(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -178,6 +183,48 @@ class HydrodynamicGridCacheTest(unittest.TestCase):
                 stats = hydrodynamic_grid.forecast_stats("latest")
 
         self.assertEqual(rainfall_series, stats["rainfall_series"])
+
+    def test_wet_tile_queries_only_forecast_cells(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "mesh.sqlite"
+            lon, lat = 111.25, 24.4
+            z = 13
+            x, y = hydrodynamic_grid.lonlat_to_tile(lon, lat, z)
+            with sqlite3.connect(db_path) as conn:
+                conn.execute(
+                    """
+                    create table cells(
+                        cell_id integer primary key,
+                        min_lon real, min_lat real, max_lon real, max_lat real,
+                        lon1 real, lat1 real, lon2 real, lat2 real, lon3 real, lat3 real
+                    )
+                    """
+                )
+                conn.executemany(
+                    "insert into cells values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        (1, lon - 0.001, lat - 0.001, lon + 0.001, lat + 0.001,
+                         lon - 0.001, lat - 0.001, lon + 0.001, lat - 0.001, lon, lat + 0.001),
+                        (2, 120.0, 30.0, 120.01, 30.01,
+                         120.0, 30.0, 120.01, 30.0, 120.0, 30.01),
+                    ],
+                )
+            store = hydrodynamic_grid.HydrodynamicMeshStore(db_path)
+            depth_entry = {
+                "stat_key": (1, 1),
+                "depths": {1: 0.4, 2: 0.8},
+                "time_h": 1.0,
+                "time_index": 1,
+            }
+            with patch.object(store, "ensure_ready"), patch.object(
+                hydrodynamic_grid,
+                "forecast_depth_entry",
+                return_value=depth_entry,
+            ), patch.object(store, "_tile_rows") as full_tile_rows:
+                tile = store.tile(z, x, y, wet_only=True, time_h=1.0)
+
+        full_tile_rows.assert_not_called()
+        self.assertEqual([1], [cell[0] for cell in tile["cells"]])
 
     @staticmethod
     def _run_concurrently(call):

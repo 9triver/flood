@@ -10,6 +10,27 @@ STATIC_DIR = PROJECT_DIR / "server" / "static"
 
 
 class StaticAssetTest(unittest.TestCase):
+    def test_product_title_is_consistent(self):
+        index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        app = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        title = "基于大模型的水路联动应急智能体集群应用"
+
+        self.assertIn(f"<title>{title}</title>", index)
+        self.assertIn(f'content="{title}"', index)
+        self.assertIn("document.title = state.bootstrap.title", app)
+
+    def test_hydrodynamic_timeline_avoids_redundant_work(self):
+        app = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("initialFilters.time_h = formatHydrodynamicHour", app)
+        self.assertIn("hydrodynamicFilterSignature(this.options.resultFilters)", app)
+        self.assertIn("this._abortPendingTileRequests();", app)
+        self.assertIn("signal: controller.signal", app)
+        self.assertIn("scheduleHydrodynamicTimelineIndex", app)
+        self.assertIn("if (timeline.layer?.isLoading?.()) return;", app)
+        self.assertIn("if (state.hydrodynamicTimeline.playing) return;", app)
+        self.assertIn("bounds: hydrodynamicLayerBounds(state.hydrodynamicResultMeta, true)", app)
+
     def test_playback_processing_is_driven_by_backend_runtime_state(self):
         app = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
         index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
@@ -51,7 +72,7 @@ class StaticAssetTest(unittest.TestCase):
         index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
         self.assertIn('/styles.css?v=5', index)
-        self.assertIn('/app.js?v=5', index)
+        self.assertIn('/app.js?v=6', index)
         self.assertIn('/vendor/leaflet/leaflet.css?v=1.9.4', index)
         self.assertIn('/vendor/leaflet/leaflet.js?v=1.9.4', index)
         self.assertIn('/vendor/marked/marked.min.js?v=12.0.2', index)

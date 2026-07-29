@@ -25,16 +25,13 @@ def build_hydrodynamic_action_plan(
     if is_hydrodynamic_result_request(object_type, filters):
         result_filters = hydrodynamic_result_filters(object_type, filters)
         return HydrodynamicActionPlan(
-            actions=[
-                {"type": "show_hydrodynamic_mesh", "fit": False},
-                {
-                    "type": "apply_hydrodynamic_result",
-                    "filters": result_filters,
-                    "label": label,
-                    "fit": False,
-                    "refresh": refresh,
-                },
-            ],
+            actions=[{
+                "type": "apply_hydrodynamic_result",
+                "filters": result_filters,
+                "label": label,
+                "fit": False,
+                "refresh": refresh,
+            }],
             object_type="HydrodynamicGridCell",
             filters=result_filters,
         )

@@ -99,7 +99,7 @@ class MapActionBuilderTest(unittest.TestCase):
         }, {"HydrodynamicGridCell"}))
 
         self.assertEqual(
-            ["show_hydrodynamic_mesh", "apply_hydrodynamic_result"],
+            ["apply_hydrodynamic_result"],
             [action["type"] for action in result["map_actions"]],
         )
         self.assertEqual("12", result["result_cards"][0]["value"])

@@ -53,7 +53,7 @@ class FloodDomainService:
     def bootstrap(self, *, llm_enabled: bool) -> dict[str, Any]:
         return {
             "domain": self.ontology.name,
-            "title": "珊瑚河洪水应急预警智能体",
+            "title": "基于大模型的水路联动应急智能体集群应用",
             "mappable": list_mappable_objects(self.resolver),
             "counts": {
                 "school": self.resolver.count(

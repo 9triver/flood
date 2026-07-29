@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import mimetypes
 import sys
@@ -249,9 +250,15 @@ class Handler(BaseHTTPRequestHandler):
         tile_crs = (params.get("tile_crs") or ["wgs84"])[0]
         data = APP.hydrodynamic_grid_tile(z, x, y, forecast_id, wet_only, time_h, tile_crs)
         body = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        use_gzip = len(body) >= 1024 and "gzip" in self.headers.get("Accept-Encoding", "").lower()
+        if use_gzip:
+            body = gzip.compress(body, compresslevel=5)
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "public, max-age=300")
+        self.send_header("Vary", "Accept-Encoding")
+        if use_gzip:
+            self.send_header("Content-Encoding", "gzip")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

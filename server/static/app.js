@@ -123,6 +123,7 @@ const state = {
     forecastTime: null,
     validFrom: null,
     validTo: null,
+    seekTimer: null,
     timer: null,
     playing: false,
   },
@@ -133,6 +134,7 @@ const state = {
   selectedImpactLayerKey: null,
   impactFocusSeq: 0,
   impactRefreshTimer: null,
+  impactRefreshController: null,
   impactRefreshSeq: 0,
   mapLayoutFrame: null,
   mapLayoutTimer: null,
@@ -700,6 +702,7 @@ function gcjTransformLng(x, y) {
 async function bootstrap() {
   const res = await fetch("/api/bootstrap");
   state.bootstrap = await res.json();
+  if (state.bootstrap.title) document.title = state.bootstrap.title;
   state.workspaceId = state.bootstrap.workspace_id || null;
   updateMapContentContext();
   renderObjectList();
@@ -922,7 +925,10 @@ function bindEvents() {
   document.getElementById("playbackAutoPauseSwitch").addEventListener("change", updatePlaybackAutoPause);
   document.getElementById("hydroPlayBtn").addEventListener("click", toggleHydrodynamicTimelinePlayback);
   document.getElementById("hydroTimeSlider").addEventListener("input", (event) => {
-    setHydrodynamicTimelineIndex(Number(event.target.value || 0));
+    scheduleHydrodynamicTimelineIndex(Number(event.target.value || 0));
+  });
+  document.getElementById("hydroTimeSlider").addEventListener("change", (event) => {
+    flushHydrodynamicTimelineIndex(Number(event.target.value || 0));
   });
   document.querySelectorAll("[data-basemap]").forEach((button) => {
     button.addEventListener("click", () => setBasemap(button.dataset.basemap));
@@ -1380,6 +1386,9 @@ async function showHydrodynamicMesh(options = {}) {
     resultFilters,
     renderMode: "mesh",
     minTileZoom: Math.max(state.hydrodynamicGridMeta?.min_tile_zoom || 13, 15),
+    bounds: hydrodynamicLayerBounds(state.hydrodynamicGridMeta),
+    noWrap: true,
+    updateWhenIdle: true,
   }).addTo(state.map);
   state.layerGroups.set(key, layer);
   state.layerMeta.set(key, {
@@ -1423,15 +1432,31 @@ async function applyHydrodynamicResult(options = {}) {
   }
   state.hydrodynamicResultMeta = resultMeta;
   const resultVersion = String(resultMeta?.forecast?.result_version || "");
+  const forecast = resultMeta?.forecast || {};
+  const initialSteps = hydrodynamicTimelineSteps(forecast);
+  const initialHours = initialSteps.map((step) => step.hour);
+  const initialIndex = resolveHydrodynamicTimelineIndex(
+    initialHours,
+    resultVersion,
+    key,
+    timelineSelection,
+  );
+  const initialFilters = hydrodynamicTileFilters(filters, resultVersion);
+  if (initialHours.length) {
+    initialFilters.time_h = formatHydrodynamicHour(initialHours[initialIndex]);
+  }
   const layer = L.gridLayer.hydrodynamicGrid({
     tileSize: 256,
     opacity: 1,
     pane: "overlayPane",
-    resultFilters: hydrodynamicTileFilters(filters, resultVersion),
+    resultFilters: initialFilters,
     renderMode: "result",
     wetOnly: true,
     interactiveCells: true,
     minTileZoom: state.hydrodynamicResultMeta?.min_tile_zoom || 13,
+    bounds: hydrodynamicLayerBounds(state.hydrodynamicResultMeta, true),
+    noWrap: true,
+    updateWhenIdle: true,
   }).addTo(state.map);
   state.layerGroups.set(key, layer);
   state.layerMeta.set(key, {
@@ -1462,18 +1487,14 @@ function showHydrodynamicTimeline(meta, layer, key, filters, previousSelection =
     return;
   }
   const hours = steps.map((step) => step.hour);
-  stopHydrodynamicTimelinePlayback();
+  stopHydrodynamicTimelinePlayback({ refreshImpact: false });
   const resultVersion = String(forecast.result_version || "");
-  const preserveHour = Boolean(
-    previousSelection
-    && previousSelection.key === key
-    && previousSelection.resultVersion
-    && previousSelection.resultVersion === resultVersion
-    && Number.isFinite(previousSelection.hour)
+  const index = resolveHydrodynamicTimelineIndex(
+    hours,
+    resultVersion,
+    key,
+    previousSelection,
   );
-  const index = preserveHour
-    ? nearestHydrodynamicHourIndex(hours, previousSelection.hour)
-    : 0;
   const rainfallSeries = hydrodynamicRainfallSeries(forecast, resultVersion);
   state.hydrodynamicTimeline = {
     ...state.hydrodynamicTimeline,
@@ -1551,12 +1572,37 @@ function nearestHydrodynamicHourIndex(hours, targetHour) {
   ), 0);
 }
 
+function resolveHydrodynamicTimelineIndex(hours, resultVersion, key, previousSelection) {
+  const preserveHour = Boolean(
+    previousSelection
+    && previousSelection.key === key
+    && previousSelection.resultVersion
+    && previousSelection.resultVersion === resultVersion
+    && Number.isFinite(previousSelection.hour)
+  );
+  return preserveHour
+    ? nearestHydrodynamicHourIndex(hours, previousSelection.hour)
+    : 0;
+}
+
 function hydrodynamicTileFilters(filters, resultVersion) {
   return resultVersion ? { ...(filters || {}), result_version: resultVersion } : { ...(filters || {}) };
 }
 
+function hydrodynamicLayerBounds(meta, preferForecast = false) {
+  const bbox = (preferForecast && meta?.forecast?.bbox) || meta?.bbox;
+  const values = [bbox?.min_lat, bbox?.min_lon, bbox?.max_lat, bbox?.max_lon]
+    .map((value) => Number(value));
+  if (!bbox || values.some((value) => !Number.isFinite(value))) return undefined;
+  return L.latLngBounds([values[0], values[1]], [values[2], values[3]]);
+}
+
 function hideHydrodynamicTimeline() {
-  stopHydrodynamicTimelinePlayback();
+  stopHydrodynamicTimelinePlayback({ refreshImpact: false });
+  if (state.hydrodynamicTimeline.seekTimer) {
+    window.clearTimeout(state.hydrodynamicTimeline.seekTimer);
+    state.hydrodynamicTimeline.seekTimer = null;
+  }
   state.hydrodynamicTimeline.hours = [];
   state.hydrodynamicTimeline.mode = "time_slice";
   state.hydrodynamicTimeline.validTimes = [];
@@ -1581,6 +1627,22 @@ function hideHydrodynamicTimeline() {
       || null,
   });
   clearImpactAnalysisState();
+}
+
+function scheduleHydrodynamicTimelineIndex(index) {
+  const timeline = state.hydrodynamicTimeline;
+  if (timeline.seekTimer) window.clearTimeout(timeline.seekTimer);
+  timeline.seekTimer = window.setTimeout(() => {
+    timeline.seekTimer = null;
+    setHydrodynamicTimelineIndex(index);
+  }, 140);
+}
+
+function flushHydrodynamicTimelineIndex(index) {
+  const timeline = state.hydrodynamicTimeline;
+  if (timeline.seekTimer) window.clearTimeout(timeline.seekTimer);
+  timeline.seekTimer = null;
+  setHydrodynamicTimelineIndex(index);
 }
 
 function setHydrodynamicTimelineIndex(index) {
@@ -1627,21 +1689,26 @@ function toggleHydrodynamicTimelinePlayback() {
     return;
   }
   timeline.playing = true;
+  if (timeline.seekTimer) window.clearTimeout(timeline.seekTimer);
+  timeline.seekTimer = null;
   setHydrodynamicPlayIcon(true);
   renderSituationSummary();
   timeline.timer = window.setInterval(() => {
+    if (timeline.layer?.isLoading?.()) return;
     const next = timeline.index >= timeline.hours.length - 1 ? 0 : timeline.index + 1;
     setHydrodynamicTimelineIndex(next);
   }, 850);
 }
 
-function stopHydrodynamicTimelinePlayback() {
+function stopHydrodynamicTimelinePlayback(options = {}) {
   const timeline = state.hydrodynamicTimeline;
+  const wasPlaying = timeline.playing;
   if (timeline.timer) window.clearInterval(timeline.timer);
   timeline.timer = null;
   timeline.playing = false;
   setHydrodynamicPlayIcon(false);
   renderSituationSummary();
+  if (wasPlaying && options.refreshImpact !== false) scheduleImpactAnalysisRefresh();
 }
 
 function setHydrodynamicPlayIcon(playing) {
@@ -1727,7 +1794,9 @@ function fitHydrodynamicGrid() {
 }
 
 function fitHydrodynamicResult() {
-  const bbox = state.hydrodynamicResultMeta?.bbox || state.hydrodynamicGridMeta?.bbox;
+  const bbox = state.hydrodynamicResultMeta?.forecast?.bbox
+    || state.hydrodynamicResultMeta?.bbox
+    || state.hydrodynamicGridMeta?.bbox;
   if (!bbox) return;
   const bounds = L.latLngBounds(
     [bbox.min_lat, bbox.min_lon],
@@ -1805,6 +1874,8 @@ function clearHydrodynamicResults() {
 function clearImpactAnalysisState() {
   if (state.impactRefreshTimer) window.clearTimeout(state.impactRefreshTimer);
   state.impactRefreshTimer = null;
+  state.impactRefreshController?.abort();
+  state.impactRefreshController = null;
   state.impactRefreshSeq += 1;
   state.impactFocusSeq += 1;
   state.impactAnalysis = null;
@@ -4815,25 +4886,48 @@ async function executeActions(actions) {
   }
 }
 
+function hydrodynamicFilterSignature(filters = {}) {
+  return JSON.stringify(
+    Object.entries(filters || {})
+      .map(([name, value]) => [name, String(value)])
+      .sort(([first], [second]) => first.localeCompare(second)),
+  );
+}
+
 L.GridLayer.HydrodynamicGrid = L.GridLayer.extend({
   onAdd(map) {
+    this._pendingTileRequests ||= new Set();
     L.GridLayer.prototype.onAdd.call(this, map);
     if (this.options.interactiveCells) map.on("click", this._handleCellClick, this);
   },
 
   onRemove(map) {
     this._resultRevision = (this._resultRevision || 0) + 1;
+    this._abortPendingTileRequests();
     map.off("click", this._handleCellClick, this);
     this.clearSelection();
     L.GridLayer.prototype.onRemove.call(this, map);
   },
 
   setResultFilters(filters) {
-    this.options.resultFilters = { ...(filters || {}) };
+    const nextFilters = { ...(filters || {}) };
+    if (
+      hydrodynamicFilterSignature(this.options.resultFilters)
+      === hydrodynamicFilterSignature(nextFilters)
+    ) {
+      return this;
+    }
+    this.options.resultFilters = nextFilters;
     this._resultRevision = (this._resultRevision || 0) + 1;
+    this._abortPendingTileRequests();
     this.clearSelection();
     // GridLayer.redraw removes the current tiles before requesting replacements.
     return this.redraw();
+  },
+
+  _abortPendingTileRequests() {
+    this._pendingTileRequests?.forEach((controller) => controller.abort());
+    this._pendingTileRequests?.clear();
   },
 
   createTile(coords, done) {
@@ -4863,23 +4957,39 @@ L.GridLayer.HydrodynamicGrid = L.GridLayer.extend({
     if (this.options.wetOnly) {
       params.set("wet_only", "1");
     }
-    fetch(`/api/hydrodynamic-grid/tile?${params.toString()}`)
+    const controller = new AbortController();
+    this._pendingTileRequests ||= new Set();
+    this._pendingTileRequests.add(controller);
+    let completed = false;
+    const complete = () => {
+      if (completed) return;
+      completed = true;
+      done(null, tile);
+    };
+    fetch(`/api/hydrodynamic-grid/tile?${params.toString()}`, {
+      signal: controller.signal,
+    })
       .then((res) => {
         if (!res.ok) throw new Error(`tile ${res.status}`);
         return res.json();
       })
       .then((data) => {
-        if (requestRevision !== (this._resultRevision || 0) || !this._map) return;
+        if (requestRevision !== (this._resultRevision || 0) || !this._map) {
+          complete();
+          return;
+        }
         tile._hydrodynamicData = data;
         tile._hydrodynamicCoords = { ...coords };
         drawHydrodynamicTile(ctx, size, coords, data, this.options.renderMode || "mesh");
-        done(null, tile);
+        complete();
       })
       .catch((error) => {
-        if (requestRevision !== (this._resultRevision || 0) || !this._map) return;
-        console.warn("hydrodynamic grid tile failed", error);
-        done(null, tile);
-      });
+        if (error?.name !== "AbortError" && requestRevision === (this._resultRevision || 0) && this._map) {
+          console.warn("hydrodynamic grid tile failed", error);
+        }
+        complete();
+      })
+      .finally(() => this._pendingTileRequests?.delete(controller));
     return tile;
   },
 
@@ -5591,11 +5701,16 @@ function registerImpactAnalysisResult(result, options = {}) {
 
 function scheduleImpactAnalysisRefresh() {
   if (!["time_slice", "envelope"].includes(currentHydrodynamicTimelineContext().mode)) return;
+  if (state.hydrodynamicTimeline.playing) return;
   if (state.impactRefreshTimer) window.clearTimeout(state.impactRefreshTimer);
-  state.impactRefreshTimer = window.setTimeout(refreshImpactAnalysisForTimeline, 260);
+  state.impactRefreshController?.abort();
+  state.impactRefreshController = null;
+  state.impactRefreshSeq += 1;
+  state.impactRefreshTimer = window.setTimeout(refreshImpactAnalysisForTimeline, 600);
 }
 
 async function refreshImpactAnalysisForTimeline() {
+  state.impactRefreshTimer = null;
   const timeline = currentHydrodynamicTimelineContext();
   if (!["time_slice", "envelope"].includes(timeline.mode)) return;
   if (timeline.mode === "time_slice" && timeline.current_hydrodynamic_time_h == null) return;
@@ -5615,22 +5730,32 @@ async function refreshImpactAnalysisForTimeline() {
     params.set("time_h", String(timeline.current_hydrodynamic_time_h));
   }
   const seq = ++state.impactRefreshSeq;
+  const controller = new AbortController();
+  state.impactRefreshController?.abort();
+  state.impactRefreshController = controller;
   setImpactAnalysisLoading(
     timeline.current_hydrodynamic_time_h,
     timeline.current_hydrodynamic_valid_at,
     timeline.mode,
   );
   try {
-    const res = await fetch(`/api/impact-analysis?${params.toString()}`);
+    const res = await fetch(`/api/impact-analysis?${params.toString()}`, {
+      signal: controller.signal,
+    });
     if (!res.ok) throw new Error(await res.text());
     const result = await res.json();
     if (seq !== state.impactRefreshSeq) return;
     registerImpactAnalysisResult(result, { render: false });
     renderImpactAnalysisResult(result);
   } catch (error) {
+    if (error?.name === "AbortError") return;
     if (seq !== state.impactRefreshSeq) return;
     setImpactAnalysisError(error);
     console.warn("impact analysis refresh failed", error);
+  } finally {
+    if (state.impactRefreshController === controller) {
+      state.impactRefreshController = null;
+    }
   }
 }
 

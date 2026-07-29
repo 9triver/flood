@@ -31,6 +31,7 @@ _DEPTH_LOADS: dict[tuple[Any, ...], "_DepthLoad"] = {}
 _TILE_CACHE_LOCK = threading.Lock()
 _TILE_CACHE_MAX = 1024
 _TILE_CACHE: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
+_SQLITE_ID_BATCH_SIZE = 800
 
 
 class _DepthLoad:
@@ -58,6 +59,12 @@ class HydrodynamicMeshStore:
         with self._connect() as conn:
             mesh = {row["key"]: row["value"] for row in conn.execute("select key, value from mesh_meta")}
             forecast = forecast_stats(forecast_id)
+            if normalize_forecast_id(forecast_id) != MESH_ONLY_ID:
+                depth_entry = forecast_depth_entry(forecast_id)
+                forecast["bbox"] = self._cell_bounds(
+                    conn,
+                    depth_entry["depths"].keys(),
+                )
             return {
                 "object_type": "HydrodynamicGridCell",
                 "label": "水动力模型网格",
@@ -100,13 +107,18 @@ class HydrodynamicMeshStore:
             z, x, y, tile_crs, forecast_id, depth_entry.get("time_h"),
             bool(wet_only), depth_entry["stat_key"],
         )
-        with _TILE_CACHE_LOCK:
-            cached = _TILE_CACHE.get(cache_key)
-            if cached:
-                _TILE_CACHE.move_to_end(cache_key)
-                return cached
+        if wet_only:
+            with _TILE_CACHE_LOCK:
+                cached = _TILE_CACHE.get(cache_key)
+                if cached:
+                    _TILE_CACHE.move_to_end(cache_key)
+                    return cached
 
-        rows = self._tile_rows(z, x, y, tile_crs)
+        rows = (
+            self._wet_tile_rows(z, x, y, depths.keys(), tile_crs)
+            if wet_only
+            else self._tile_rows(z, x, y, tile_crs)
+        )
 
         cells = []
         for row in rows:
@@ -134,12 +146,87 @@ class HydrodynamicMeshStore:
             "y": y,
             "tile_crs": tile_crs,
         }
-        with _TILE_CACHE_LOCK:
-            _TILE_CACHE[cache_key] = result
-            _TILE_CACHE.move_to_end(cache_key)
-            while len(_TILE_CACHE) > _TILE_CACHE_MAX:
-                _TILE_CACHE.popitem(last=False)
+        if wet_only:
+            with _TILE_CACHE_LOCK:
+                _TILE_CACHE[cache_key] = result
+                _TILE_CACHE.move_to_end(cache_key)
+                while len(_TILE_CACHE) > _TILE_CACHE_MAX:
+                    _TILE_CACHE.popitem(last=False)
         return result
+
+    def _wet_tile_rows(
+        self,
+        z: int,
+        x: int,
+        y: int,
+        cell_ids,
+        tile_crs: str = "wgs84",
+    ) -> list[sqlite3.Row]:
+        bounds = (
+            gcj02_tile_bounds_wgs84(z, x, y)
+            if tile_crs == "gcj02"
+            else tile_bounds(z, x, y)
+        )
+        with self._connect() as conn:
+            return self._cell_rows_in_bounds(conn, cell_ids, bounds)
+
+    def _cell_rows_in_bounds(
+        self,
+        conn: sqlite3.Connection,
+        cell_ids,
+        bounds: tuple[float, float, float, float],
+    ) -> list[sqlite3.Row]:
+        min_lon, min_lat, max_lon, max_lat = bounds
+        rows: list[sqlite3.Row] = []
+        for batch in batched_cell_ids(cell_ids):
+            placeholders = ",".join("?" for _ in batch)
+            rows.extend(conn.execute(
+                f"""
+                select cell_id, lon1, lat1, lon2, lat2, lon3, lat3
+                from cells
+                where cell_id in ({placeholders})
+                  and max_lon >= ?
+                  and min_lon <= ?
+                  and max_lat >= ?
+                  and min_lat <= ?
+                """,
+                (*batch, min_lon, max_lon, min_lat, max_lat),
+            ).fetchall())
+        rows.sort(key=lambda row: int(row["cell_id"]))
+        return rows
+
+    def _cell_bounds(self, conn: sqlite3.Connection, cell_ids) -> dict[str, float] | None:
+        bounds = None
+        for batch in batched_cell_ids(cell_ids):
+            placeholders = ",".join("?" for _ in batch)
+            row = conn.execute(
+                f"""
+                select min(min_lon), min(min_lat), max(max_lon), max(max_lat)
+                from cells
+                where cell_id in ({placeholders})
+                """,
+                batch,
+            ).fetchone()
+            if not row or row[0] is None:
+                continue
+            current = tuple(float(value) for value in row)
+            if bounds is None:
+                bounds = current
+            else:
+                bounds = (
+                    min(bounds[0], current[0]),
+                    min(bounds[1], current[1]),
+                    max(bounds[2], current[2]),
+                    max(bounds[3], current[3]),
+                )
+        if bounds is None:
+            return None
+        return {
+            "min_lon": bounds[0],
+            "min_lat": bounds[1],
+            "max_lon": bounds[2],
+            "max_lat": bounds[3],
+        }
 
     def _tile_rows(self, z: int, x: int, y: int,
                    tile_crs: str = "wgs84") -> list[sqlite3.Row]:
@@ -324,6 +411,17 @@ class HydrodynamicMeshStore:
 
 
 STORE = HydrodynamicMeshStore()
+
+
+def batched_cell_ids(cell_ids):
+    batch: list[int] = []
+    for cell_id in cell_ids:
+        batch.append(int(cell_id))
+        if len(batch) == _SQLITE_ID_BATCH_SIZE:
+            yield tuple(batch)
+            batch = []
+    if batch:
+        yield tuple(batch)
 
 
 def hydrodynamic_grid_stats(forecast_id: str = LATEST_FORECAST_ID) -> dict[str, Any]:

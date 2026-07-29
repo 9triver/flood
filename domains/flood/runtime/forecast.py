@@ -499,14 +499,10 @@ def forecast_cells_from_hydrodynamic_mesh(depths: dict[int, float],
     cells = []
     with sqlite3.connect(MESH_DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "select cell_id, lon1, lat1, lon2, lat2, lon3, lat3 from cells order by cell_id"
-        )
-        for index, row in enumerate(rows, 1):
+        rows = mesh_rows_for_depths(conn, depths)
+        for row in rows:
             mesh_cell_id = int(row["cell_id"])
             depth_m = float(depths.get(mesh_cell_id) or 0)
-            if depth_m < 0.04:
-                continue
             coordinates = [
                 [float(row["lon1"]), float(row["lat1"])],
                 [float(row["lon2"]), float(row["lat2"])],
@@ -558,12 +554,8 @@ def forecast_cell_summary_from_hydrodynamic_mesh(
     total_area_m2 = 0.0
     with sqlite3.connect(MESH_DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "select cell_id, lon1, lat1, lon2, lat2, lon3, lat3 from cells order by cell_id"
-        )
+        rows = mesh_rows_for_depths(conn, depths)
         for row in rows:
-            if float(depths.get(int(row["cell_id"])) or 0) < 0.04:
-                continue
             count += 1
             total_area_m2 += triangle_area_m2([
                 [float(row["lon1"]), float(row["lat1"])],
@@ -574,6 +566,31 @@ def forecast_cell_summary_from_hydrodynamic_mesh(
         "forecast_cell_count": count,
         "inundated_area_km2": round(total_area_m2 / 1_000_000, 4),
     }
+
+
+def mesh_rows_for_depths(
+    conn: sqlite3.Connection,
+    depths: dict[int, float],
+) -> list[sqlite3.Row]:
+    cell_ids = sorted(
+        int(cell_id)
+        for cell_id, depth in depths.items()
+        if float(depth or 0) >= 0.04
+    )
+    rows: list[sqlite3.Row] = []
+    for start in range(0, len(cell_ids), 800):
+        batch = cell_ids[start:start + 800]
+        placeholders = ",".join("?" for _ in batch)
+        rows.extend(conn.execute(
+            f"""
+            select cell_id, lon1, lat1, lon2, lat2, lon3, lat3
+            from cells
+            where cell_id in ({placeholders})
+            order by cell_id
+            """,
+            batch,
+        ).fetchall())
+    return rows
 
 
 def cached_forecast_cells(filters: dict[str, Any]) -> list[dict[str, Any]]:
