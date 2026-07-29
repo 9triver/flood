@@ -19,6 +19,24 @@ class StaticAssetTest(unittest.TestCase):
         self.assertIn(f'content="{title}"', index)
         self.assertIn("document.title = state.bootstrap.title", app)
 
+    def test_launch_cover_introduces_product_and_opens_workbench(self):
+        index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        app = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        styles = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn('class="launch-cover" id="launchCover"', index)
+        self.assertIn('id="launchCoverTitle"', index)
+        self.assertIn("基于大模型的水路联动", index)
+        self.assertIn("应急智能体集群应用", index)
+        self.assertIn('id="enterWorkbenchBtn"', index)
+        self.assertIn('id="coverReturnBtn"', index)
+        self.assertIn('id="appShell" inert', index)
+        self.assertIn("function initLaunchCover()", app)
+        self.assertIn('appShell.inert = visible;', app)
+        self.assertIn('state.map?.invalidateSize({ animate: false });', app)
+        self.assertIn(".launch-network {", styles)
+        self.assertIn("@media (prefers-reduced-motion: reduce)", styles)
+
     def test_hydrodynamic_timeline_avoids_redundant_work(self):
         app = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
 
@@ -30,6 +48,22 @@ class StaticAssetTest(unittest.TestCase):
         self.assertIn("if (timeline.layer?.isLoading?.()) return;", app)
         self.assertIn("if (state.hydrodynamicTimeline.playing) return;", app)
         self.assertIn("bounds: hydrodynamicLayerBounds(state.hydrodynamicResultMeta, true)", app)
+
+    def test_issued_directives_open_in_read_only_editor(self):
+        app = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        styles = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn('data-view-directive="${escapeHtml(directive.directive_id || "")}"', app)
+        self.assertNotIn('<details class="directive-history-item">', app)
+        self.assertNotIn("directive-history-detail", app)
+        self.assertIn("function openIssuedDirective(directiveId)", app)
+        self.assertIn("setDirectiveEditorReadOnly(true);", app)
+        self.assertIn("document.getElementById(id).readOnly = readOnly", app)
+        self.assertIn('document.getElementById("directivePriority").disabled = readOnly', app)
+        self.assertIn('document.getElementById("directiveIssueBtn").hidden = readOnly', app)
+        self.assertIn('id="directiveCopyBtn" type="button" hidden', index)
+        self.assertIn(".directive-draft-toast.is-readonly", styles)
 
     def test_playback_processing_is_driven_by_backend_runtime_state(self):
         app = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
@@ -71,8 +105,8 @@ class StaticAssetTest(unittest.TestCase):
     def test_frontend_libraries_are_served_locally(self):
         index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
-        self.assertIn('/styles.css?v=5', index)
-        self.assertIn('/app.js?v=6', index)
+        self.assertIn('/styles.css?v=9', index)
+        self.assertIn('/app.js?v=8', index)
         self.assertIn('/vendor/leaflet/leaflet.css?v=1.9.4', index)
         self.assertIn('/vendor/leaflet/leaflet.js?v=1.9.4', index)
         self.assertIn('/vendor/marked/marked.min.js?v=12.0.2', index)

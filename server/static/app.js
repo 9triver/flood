@@ -290,11 +290,13 @@ const DEFAULT_OBJECT_LAYERS = [
 ];
 
 document.addEventListener("DOMContentLoaded", async () => {
+  initLaunchCover();
   initMap();
   bindEvents();
   initDraggableMapPanels();
   initAgentResize();
   initBoundaryFlowHistoryChart();
+  renderIcons();
   await bootstrap();
   await refreshDirectiveHistory();
   await loadDefaultObjectLayers();
@@ -302,6 +304,33 @@ document.addEventListener("DOMContentLoaded", async () => {
   await refreshPlaybackStatus();
   renderIcons();
 });
+
+function initLaunchCover() {
+  const cover = document.getElementById("launchCover");
+  const appShell = document.getElementById("appShell");
+  const enterButton = document.getElementById("enterWorkbenchBtn");
+  const returnButton = document.getElementById("coverReturnBtn");
+  if (!cover || !appShell || !enterButton || !returnButton) return;
+
+  const setVisible = (visible, { focus = true } = {}) => {
+    cover.classList.toggle("is-dismissed", !visible);
+    cover.setAttribute("aria-hidden", String(!visible));
+    document.body.classList.toggle("is-cover-visible", visible);
+    appShell.inert = visible;
+    if (visible) {
+      if (focus) window.requestAnimationFrame(() => enterButton.focus({ preventScroll: true }));
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      state.map?.invalidateSize({ animate: false });
+      if (focus) returnButton.focus({ preventScroll: true });
+    });
+  };
+
+  enterButton.addEventListener("click", () => setVisible(false));
+  returnButton.addEventListener("click", () => setVisible(true));
+  setVisible(true, { focus: true });
+}
 
 async function loadDefaultObjectLayers() {
   for (const layer of DEFAULT_OBJECT_LAYERS) {
@@ -955,10 +984,13 @@ function bindEvents() {
   });
   document.getElementById("directivePriority").addEventListener("change", syncDirectiveDraft);
   document.getElementById("directiveCancelBtn").addEventListener("click", clearDirectiveDraft);
+  document.getElementById("directiveCopyBtn").addEventListener("click", () => {
+    copyDirectiveToDraft(state.directiveDraft?.directiveId);
+  });
   document.getElementById("directiveIssueBtn").addEventListener("click", issueDirective);
   document.getElementById("directiveHistoryList").addEventListener("click", (event) => {
-    const button = event.target.closest("[data-copy-directive]");
-    if (button) copyDirectiveToDraft(button.dataset.copyDirective);
+    const item = event.target.closest("[data-view-directive]");
+    if (item) openIssuedDirective(item.dataset.viewDirective);
   });
   document.getElementById("chatLog").addEventListener("click", (event) => {
     if (event.target.closest("[data-open-directive-editor]")) {
@@ -2341,24 +2373,16 @@ function renderDirectiveHistory() {
   }
   const priorityLabels = { normal: "普通", urgent: "紧急", critical: "特急" };
   list.innerHTML = state.directives.map((directive) => `
-    <details class="directive-history-item">
-      <summary>
+    <button class="directive-history-item" type="button" data-view-directive="${escapeHtml(directive.directive_id || "")}" aria-label="查看已发指令：${escapeHtml(directive.title || "未命名指令")}">
+      <span class="directive-history-copy">
         <span class="directive-history-title">${escapeHtml(directive.title || "未命名指令")}</span>
         <span class="directive-history-meta">
           ${escapeHtml(directive.directive_id || "")} · ${escapeHtml(priorityLabels[directive.priority] || directive.priority || "紧急")} · ${escapeHtml(formatDirectiveTime(directive.issued_at))}<br>
           接收对象：${escapeHtml(directive.recipients || "--")}
         </span>
-      </summary>
-      <div class="directive-history-detail">
-        <div class="markdown-body">${renderMarkdown(directive.content || "")}</div>
-        <div class="directive-history-meta">
-          演进时刻：${escapeHtml(formatMockTime(directive.simulation_time))} · 预测版本：${escapeHtml(formatForecastVersion(directive.forecast_version))}
-        </div>
-        <button class="directive-secondary-button directive-copy-button" type="button" data-copy-directive="${escapeHtml(directive.directive_id || "")}">
-          <i data-lucide="copy"></i><span>复制为新初稿</span>
-        </button>
-      </div>
-    </details>
+      </span>
+      <i data-lucide="file-text" aria-hidden="true"></i>
+    </button>
   `).join("");
   renderIcons();
 }
@@ -2370,7 +2394,9 @@ function openDirectiveDraft(draft) {
     recipients: String(draft.recipients || ""),
     priority: ["normal", "urgent", "critical"].includes(draft.priority) ? draft.priority : "urgent",
     workspaceId: state.workspaceId,
+    readOnly: false,
   };
+  setDirectiveEditorReadOnly(false);
   document.getElementById("directiveTitle").value = state.directiveDraft.title;
   document.getElementById("directiveContent").value = state.directiveDraft.content;
   document.getElementById("directiveRecipients").value = state.directiveDraft.recipients;
@@ -2381,6 +2407,48 @@ function openDirectiveDraft(draft) {
   showDirectiveDraftToast();
 }
 
+function openIssuedDirective(directiveId) {
+  const directive = state.directives.find((item) => item.directive_id === directiveId);
+  if (!directive) return;
+  state.directiveDraft = {
+    directiveId: String(directive.directive_id || ""),
+    title: String(directive.title || ""),
+    content: String(directive.content || ""),
+    recipients: String(directive.recipients || ""),
+    priority: ["normal", "urgent", "critical"].includes(directive.priority)
+      ? directive.priority
+      : "urgent",
+    workspaceId: String(directive.workspace_id || state.workspaceId || ""),
+    simulationTime: directive.simulation_time || null,
+    forecastVersion: directive.forecast_version || null,
+    issuedAt: directive.issued_at || null,
+    readOnly: true,
+  };
+  setDirectiveEditorReadOnly(true);
+  document.getElementById("directiveTitle").value = state.directiveDraft.title;
+  document.getElementById("directiveContent").value = state.directiveDraft.content;
+  document.getElementById("directiveRecipients").value = state.directiveDraft.recipients;
+  document.getElementById("directivePriority").value = state.directiveDraft.priority;
+  setDirectiveToastError("");
+  renderDirectiveContext();
+  showDirectiveDraftToast();
+}
+
+function setDirectiveEditorReadOnly(readOnly) {
+  const toast = document.getElementById("directiveDraftToast");
+  toast.classList.toggle("is-readonly", readOnly);
+  document.querySelector("#directiveDraftHeading span").textContent = readOnly
+    ? "已发应急指令"
+    : "应急指令初稿";
+  ["directiveTitle", "directiveRecipients", "directiveContent"].forEach((id) => {
+    document.getElementById(id).readOnly = readOnly;
+  });
+  document.getElementById("directivePriority").disabled = readOnly;
+  document.getElementById("directiveCancelBtn").textContent = readOnly ? "关闭" : "取消";
+  document.getElementById("directiveCopyBtn").hidden = !readOnly;
+  document.getElementById("directiveIssueBtn").hidden = readOnly;
+}
+
 function showDirectiveDraftToast() {
   if (!state.directiveDraft) return;
   const toast = document.getElementById("directiveDraftToast");
@@ -2388,13 +2456,16 @@ function showDirectiveDraftToast() {
   toast.classList.remove("is-visible");
   window.requestAnimationFrame(() => {
     toast.classList.add("is-visible");
-    document.getElementById("directiveTitle").focus({ preventScroll: true });
+    const focusTarget = state.directiveDraft?.readOnly
+      ? document.getElementById("directiveCancelBtn")
+      : document.getElementById("directiveTitle");
+    focusTarget.focus({ preventScroll: true });
     clampConclusionToastsToMap();
   });
 }
 
 function syncDirectiveDraft() {
-  if (!state.directiveDraft) return;
+  if (!state.directiveDraft || state.directiveDraft.readOnly) return;
   state.directiveDraft = {
     ...state.directiveDraft,
     title: document.getElementById("directiveTitle").value,
@@ -2410,6 +2481,7 @@ function clearDirectiveDraft() {
   document.getElementById("directiveContent").value = "";
   document.getElementById("directiveRecipients").value = "";
   document.getElementById("directivePriority").value = "urgent";
+  setDirectiveEditorReadOnly(false);
   setDirectiveToastError("");
   const toast = document.getElementById("directiveDraftToast");
   toast.classList.remove("is-visible");
@@ -2423,6 +2495,7 @@ function clearDirectiveDraft() {
 }
 
 async function refreshDirectiveContext() {
+  if (state.directiveDraft?.readOnly) return;
   try {
     const response = await fetch("/api/autonomy/status");
     if (!response.ok) return;
@@ -2438,6 +2511,20 @@ async function refreshDirectiveContext() {
 
 function renderDirectiveContext(status = {}) {
   const workspaceElement = document.getElementById("directiveContextWorkspace");
+  if (state.directiveDraft?.readOnly) {
+    workspaceElement.textContent = "已发出";
+    workspaceElement.title = [
+      state.directiveDraft.directiveId,
+      formatDirectiveTime(state.directiveDraft.issuedAt),
+    ].filter(Boolean).join(" · ");
+    document.getElementById("directiveContextTime").textContent = formatMockTime(
+      state.directiveDraft.simulationTime,
+    );
+    document.getElementById("directiveContextForecast").textContent = formatForecastVersion(
+      state.directiveDraft.forecastVersion,
+    );
+    return;
+  }
   workspaceElement.textContent = "当前演进";
   workspaceElement.removeAttribute("title");
   document.getElementById("directiveContextTime").textContent = formatMockTime(status.observed_at);
@@ -2465,7 +2552,7 @@ function setDirectiveToastError(message) {
 }
 
 async function issueDirective() {
-  if (!state.directiveDraft) return;
+  if (!state.directiveDraft || state.directiveDraft.readOnly) return;
   if (!validateDirectiveDraft()) return;
   setDirectiveToastError("");
   const button = document.getElementById("directiveIssueBtn");
