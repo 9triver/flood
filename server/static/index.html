@@ -6,53 +6,29 @@
     <title>基于大模型的水路联动应急智能体集群应用</title>
     <meta name="application-name" content="基于大模型的水路联动应急智能体集群应用" />
     <link rel="stylesheet" href="/vendor/leaflet/leaflet.css?v=1.9.4" />
-    <link rel="stylesheet" href="/styles.css?v=9" />
+    <link rel="stylesheet" href="/styles.css?v=11" />
   </head>
   <body class="is-cover-visible">
-    <section class="launch-cover" id="launchCover" aria-labelledby="launchCoverTitle" aria-modal="true" role="dialog">
+    <section class="launch-cover" id="launchCover" aria-labelledby="launchCoverTitle" aria-modal="true" role="dialog" tabindex="-1">
       <div class="launch-cover-ambient" aria-hidden="true">
         <span class="launch-cover-glow launch-cover-glow-one"></span>
         <span class="launch-cover-glow launch-cover-glow-two"></span>
-        <svg class="launch-cover-contours" viewBox="0 0 1440 900" preserveAspectRatio="none">
-          <path d="M-40 190C146 118 254 243 430 181S733 55 916 137s284 192 566 49" />
-          <path d="M-58 246C137 169 286 310 469 232S754 113 933 194s296 191 560 60" />
-          <path d="M-34 703c177-99 313 19 486-58s308-179 487-88 302 205 543 107" />
-          <path d="M-20 772c181-89 302 18 473-56s310-164 497-75 305 181 528 100" />
-        </svg>
       </div>
 
       <header class="launch-cover-header">
-        <div class="launch-cover-identity">
-          <span class="launch-cover-logo" aria-hidden="true"><i data-lucide="brain-circuit"></i></span>
-          <span>
-            <strong>珊瑚河流域</strong>
-            <small>智能应急协同平台</small>
-          </span>
-        </div>
-        <span class="launch-cover-demo"><i></i> DEMO SYSTEM</span>
+        <span class="launch-cover-demo"><i></i>智能体集群就绪</span>
       </header>
 
       <div class="launch-cover-main">
         <div class="launch-cover-copy">
-          <div class="launch-cover-eyebrow"><span></span>大模型驱动的流域应急协同应用</div>
+          <div class="launch-cover-eyebrow">智能防洪 · 水路协同</div>
           <h1 id="launchCoverTitle">
             <span>基于大模型的水路联动</span>
             <strong>应急智能体集群应用</strong>
           </h1>
-          <p>面向流域洪涝应急处置，融合实时监测、水动力预测、风险影响分析、态势演进与多智能体协同，辅助实现从风险研判到应急指令下达的闭环决策。</p>
+          <p>让水情与路网在智能体协同下，形成从洪水预测到应急处置的完整闭环。</p>
           <div class="launch-cover-capabilities" aria-label="核心能力">
-            <article>
-              <i data-lucide="activity"></i>
-              <span><strong>洪水预测</strong><small>多源感知与水动力演算</small></span>
-            </article>
-            <article>
-              <i data-lucide="map"></i>
-              <span><strong>影响研判</strong><small>水情与路网联动分析</small></span>
-            </article>
-            <article>
-              <i data-lucide="workflow"></i>
-              <span><strong>协同处置</strong><small>智能体集群闭环调度</small></span>
-            </article>
+            <span>洪水预测</span><i></i><span>影响研判</span><i></i><span>协同处置</span>
           </div>
           <button class="launch-cover-enter" id="enterWorkbenchBtn" type="button">
             <span>进入态势工作台</span>
@@ -60,69 +36,8 @@
           </button>
         </div>
 
-        <div class="launch-network" aria-label="水路联动智能体集群示意图">
-          <div class="launch-network-map" aria-hidden="true">
-            <svg viewBox="0 0 620 560" preserveAspectRatio="xMidYMid meet">
-              <defs>
-                <linearGradient id="coverRiverGradient" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0" stop-color="#52c7dc" />
-                  <stop offset="1" stop-color="#287fb0" />
-                </linearGradient>
-                <filter id="coverRiverGlow" x="-20%" y="-20%" width="140%" height="140%">
-                  <feGaussianBlur stdDeviation="4" result="blur" />
-                  <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-                </filter>
-              </defs>
-              <path class="launch-basin" d="M99 125c45-76 144-91 219-63 70 26 103 12 160 63 53 47 69 121 44 182-24 58-2 106-60 150-57 43-130 34-192 37-75 4-148-10-186-72-35-57-13-107-20-164-7-52 4-91 35-133Z" />
-              <path class="launch-road" d="M96 351c84-24 152-11 214 22 58 31 127 37 207 1" />
-              <path class="launch-road launch-road-secondary" d="M190 89c25 77 27 154 4 231-14 46-3 98 38 159" />
-              <path class="launch-river-glow" d="M392 66c-43 54-20 89-71 123-50 34-29 78-85 105-45 21-38 64-81 94-24 17-28 55-54 83" />
-              <path class="launch-river" d="M392 66c-43 54-20 89-71 123-50 34-29 78-85 105-45 21-38 64-81 94-24 17-28 55-54 83" />
-              <path class="launch-river-branch" d="M319 190c47 20 84 6 117-35M236 294c45-3 71 17 101 53M156 387c39 2 68 19 86 54" />
-              <circle class="launch-map-point" cx="393" cy="66" r="5" />
-              <circle class="launch-map-point" cx="321" cy="189" r="5" />
-              <circle class="launch-map-point" cx="236" cy="294" r="5" />
-              <circle class="launch-map-point" cx="155" cy="388" r="5" />
-            </svg>
-          </div>
-          <svg class="launch-network-links" viewBox="0 0 620 560" preserveAspectRatio="none" aria-hidden="true">
-            <path d="M310 279C220 230 189 175 146 134" />
-            <path d="M310 279C409 222 434 171 485 135" />
-            <path d="M310 279C231 347 190 390 151 433" />
-            <path d="M310 279C401 348 445 394 486 437" />
-          </svg>
-          <div class="launch-agent launch-agent-center">
-            <span><i data-lucide="brain-circuit"></i></span>
-            <strong>协同决策智能体</strong>
-            <small>研判 · 编排 · 调度</small>
-          </div>
-          <div class="launch-agent launch-agent-one">
-            <span><i data-lucide="database"></i></span>
-            <strong>感知智能体</strong>
-            <small>雨水情监测</small>
-          </div>
-          <div class="launch-agent launch-agent-two">
-            <span><i data-lucide="activity"></i></span>
-            <strong>预测智能体</strong>
-            <small>洪水演算</small>
-          </div>
-          <div class="launch-agent launch-agent-three">
-            <span><i data-lucide="map"></i></span>
-            <strong>路网智能体</strong>
-            <small>通行影响分析</small>
-          </div>
-          <div class="launch-agent launch-agent-four">
-            <span><i data-lucide="file-text"></i></span>
-            <strong>处置智能体</strong>
-            <small>指令协同</small>
-          </div>
-          <span class="launch-network-status"><i></i>智能体集群在线</span>
-        </div>
       </div>
 
-      <footer class="launch-cover-flow" aria-label="业务闭环">
-        <span>实时监测</span><i></i><span>洪水预测</span><i></i><span>态势推演</span><i></i><span>联动处置</span><i></i><span>指令下达</span>
-      </footer>
     </section>
 
     <div class="app-shell" id="appShell" inert>
@@ -530,6 +445,6 @@
     <script src="/vendor/lucide.js?v=2"></script>
     <script src="/map-symbols.js?v=3"></script>
     <script src="/vendor/marked/marked.min.js?v=12.0.2"></script>
-    <script src="/app.js?v=8"></script>
+    <script src="/app.js?v=10"></script>
   </body>
 </html>

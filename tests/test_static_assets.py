@@ -32,9 +32,19 @@ class StaticAssetTest(unittest.TestCase):
         self.assertIn('id="coverReturnBtn"', index)
         self.assertIn('id="appShell" inert', index)
         self.assertIn("function initLaunchCover()", app)
+        self.assertIn("function fitWatershedForLaunchCover", app)
+        self.assertIn("paddingTopLeft: [leftPadding, 64]", app)
+        self.assertIn("paddingBottomRight: [48, 48]", app)
+        self.assertIn("fitWatershedForLaunchCover(false);", app)
+        self.assertIn("state.baseBounds.getCenter()", app)
+        self.assertIn("fittedZoom + 0.25", app)
+        self.assertIn("zoomSnap: 0.25", app)
+        self.assertIn("objectType === \"Watershed\" && state.launchCoverVisible", app)
+        self.assertIn("fitWatershedForLaunchCover(true, { animate: false });", app)
         self.assertIn('appShell.inert = visible;', app)
         self.assertIn('state.map?.invalidateSize({ animate: false });', app)
-        self.assertIn(".launch-network {", styles)
+        self.assertNotIn('class="launch-network"', index)
+        self.assertIn("智能体集群就绪", index)
         self.assertIn("@media (prefers-reduced-motion: reduce)", styles)
 
     def test_hydrodynamic_timeline_avoids_redundant_work(self):
@@ -105,8 +115,8 @@ class StaticAssetTest(unittest.TestCase):
     def test_frontend_libraries_are_served_locally(self):
         index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
-        self.assertIn('/styles.css?v=9', index)
-        self.assertIn('/app.js?v=8', index)
+        self.assertIn('/styles.css?v=11', index)
+        self.assertIn('/app.js?v=10', index)
         self.assertIn('/vendor/leaflet/leaflet.css?v=1.9.4', index)
         self.assertIn('/vendor/leaflet/leaflet.js?v=1.9.4', index)
         self.assertIn('/vendor/marked/marked.min.js?v=12.0.2', index)

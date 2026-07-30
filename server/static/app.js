@@ -34,6 +34,8 @@ const state = {
   selected: null,
   bootstrap: null,
   baseBounds: null,
+  launchCoverVisible: true,
+  launchCoverLayoutTimer: null,
   sessionId: getSessionId(),
   workspaceId: null,
   runtimeStatus: {},
@@ -313,23 +315,84 @@ function initLaunchCover() {
   if (!cover || !appShell || !enterButton || !returnButton) return;
 
   const setVisible = (visible, { focus = true } = {}) => {
+    state.launchCoverVisible = visible;
     cover.classList.toggle("is-dismissed", !visible);
     cover.setAttribute("aria-hidden", String(!visible));
     document.body.classList.toggle("is-cover-visible", visible);
     appShell.inert = visible;
     if (visible) {
-      if (focus) window.requestAnimationFrame(() => enterButton.focus({ preventScroll: true }));
+      window.requestAnimationFrame(() => {
+        fitWatershedForLaunchCover(true);
+        if (focus) cover.focus({ preventScroll: true });
+      });
       return;
     }
     window.requestAnimationFrame(() => {
       state.map?.invalidateSize({ animate: false });
+      fitWatershedForLaunchCover(false);
       if (focus) returnButton.focus({ preventScroll: true });
     });
   };
 
   enterButton.addEventListener("click", () => setVisible(false));
   returnButton.addEventListener("click", () => setVisible(true));
+  window.addEventListener("resize", () => {
+    if (!state.launchCoverVisible) return;
+    if (state.launchCoverLayoutTimer) window.clearTimeout(state.launchCoverLayoutTimer);
+    state.launchCoverLayoutTimer = window.setTimeout(() => {
+      state.launchCoverLayoutTimer = null;
+      fitWatershedForLaunchCover(true, { animate: false });
+    }, 120);
+  });
   setVisible(true, { focus: true });
+}
+
+function fitWatershedForLaunchCover(visible, { animate = true } = {}) {
+  if (!state.map || !state.baseBounds?.isValid()) return;
+  const mapElement = document.getElementById("map");
+  const mapRect = mapElement?.getBoundingClientRect();
+  if (!mapRect?.width || !mapRect?.height) return;
+
+  state.map.invalidateSize({ pan: false, animate: false });
+  const fitOptions = {
+    animate,
+    duration: animate ? 0.65 : 0,
+    easeLinearity: 0.22,
+  };
+  if (!visible) {
+    const workbenchPadding = L.point(56, 56);
+    const fittedZoom = Math.floor(state.map.getBoundsZoom(
+      state.baseBounds.pad(0.04),
+      false,
+      workbenchPadding,
+    ));
+    state.map.setView(
+      state.baseBounds.getCenter(),
+      fittedZoom + 0.25,
+      fitOptions,
+    );
+    return;
+  }
+
+  if (mapRect.width < 861) {
+    state.map.fitBounds(state.baseBounds.pad(0.08), {
+      ...fitOptions,
+      padding: [34, 34],
+    });
+    return;
+  }
+
+  const copyRect = document.querySelector(".launch-cover-copy")?.getBoundingClientRect();
+  const copyRight = copyRect?.right || mapRect.left + mapRect.width * 0.5;
+  const leftPadding = Math.round(Math.min(
+    mapRect.width * 0.58,
+    Math.max(mapRect.width * 0.48, copyRight - mapRect.left + 44),
+  ));
+  state.map.fitBounds(state.baseBounds.pad(0.04), {
+    ...fitOptions,
+    paddingTopLeft: [leftPadding, 64],
+    paddingBottomRight: [48, 48],
+  });
 }
 
 async function loadDefaultObjectLayers() {
@@ -342,6 +405,7 @@ function initMap() {
   state.map = L.map("map", {
     crs: AMAP_CRS,
     zoomControl: false,
+    zoomSnap: 0.25,
     preferCanvas: true,
   }).setView([24.4, 111.35], 10);
   state.map.attributionControl.setPrefix(false);
@@ -1387,7 +1451,13 @@ async function loadObject(objectType, filters = {}, options = {}) {
   setObjectButtonActive(objectType, true);
   syncFilteredLayerButtons();
   if (objectType === "Watershed") state.baseBounds = layer.getBounds();
-  if (options.fit) fitLayer(layer);
+  if (options.fit) {
+    if (objectType === "Watershed" && state.launchCoverVisible) {
+      fitWatershedForLaunchCover(true, { animate: false });
+    } else {
+      fitLayer(layer);
+    }
+  }
   updateMapContentContext();
   return layer;
 }
