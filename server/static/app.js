@@ -321,6 +321,7 @@ function initLaunchCover() {
     document.body.classList.toggle("is-cover-visible", visible);
     appShell.inert = visible;
     if (visible) {
+      collapseWorkbenchForLaunchCover();
       window.requestAnimationFrame(() => {
         fitWatershedForLaunchCover(true);
         if (focus) cover.focus({ preventScroll: true });
@@ -345,6 +346,17 @@ function initLaunchCover() {
     }, 120);
   });
   setVisible(true, { focus: true });
+}
+
+function collapseWorkbenchForLaunchCover() {
+  const workbench = document.getElementById("situationWorkbench");
+  if (workbench && !workbench.classList.contains("is-collapsed")) {
+    setTelemetryPanelOpen(false);
+  }
+  const appShell = document.getElementById("appShell");
+  if (appShell?.classList.contains("is-agent-open")) {
+    setAgentDrawerOpen(false);
+  }
 }
 
 function fitWatershedForLaunchCover(visible, { animate = true } = {}) {
