@@ -49,7 +49,7 @@ class StaticAssetTest(unittest.TestCase):
         self.assertIn('state.map?.invalidateSize({ animate: false });', app)
         self.assertNotIn('class="launch-network"', index)
         self.assertIn("智能体集群就绪", index)
-        self.assertIn('/app.js?v=11', index)
+        self.assertIn('/app.js?v=12', index)
         self.assertIn("@media (prefers-reduced-motion: reduce)", styles)
 
     def test_hydrodynamic_timeline_avoids_redundant_work(self):
@@ -121,7 +121,8 @@ class StaticAssetTest(unittest.TestCase):
         index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
         self.assertIn('/styles.css?v=11', index)
-        self.assertIn('/app.js?v=11', index)
+        self.assertIn('/app.js?v=12', index)
+
         self.assertIn('/vendor/leaflet/leaflet.css?v=1.9.4', index)
         self.assertIn('/vendor/leaflet/leaflet.js?v=1.9.4', index)
         self.assertIn('/vendor/marked/marked.min.js?v=12.0.2', index)
@@ -142,6 +143,15 @@ class StaticAssetTest(unittest.TestCase):
         )
         for relative_path in expected_files:
             self.assertTrue((STATIC_DIR / relative_path).is_file(), relative_path)
+
+    def test_domain_os_products_can_drive_existing_gis_views(self):
+        app = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("await startDomainOSBridge();", app)
+        self.assertIn('new EventSource(`/api/domain/events/stream?', app)
+        self.assertIn('filters: { product_id: selected }', app)
+        self.assertIn("setHydrodynamicEnvelopeView();", app)
+        self.assertIn("assessment_product_id: selected", app)
 
     def test_impact_list_reuses_domain_map_symbols(self):
         app = (STATIC_DIR / "app.js").read_text(encoding="utf-8")

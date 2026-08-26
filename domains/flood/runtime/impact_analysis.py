@@ -38,6 +38,44 @@ def analyze_inundation_impacts(
 ) -> dict[str, Any]:
     forecast_key = LATEST_FORECAST_ID if forecast_id in ("", "latest") else forecast_id
     analysis_time_h = coerce_time_h(time_h)
+    cell_filters: dict[str, Any] = {"forecast_id": forecast_key}
+    if analysis_time_h is not None:
+        cell_filters["time_h"] = analysis_time_h
+    cells = (
+        query_forecast_cells(resolver, cell_filters)
+        if resolve_target_types(target_type)
+        else []
+    )
+    return analyze_inundation_cells(
+        resolver,
+        cells,
+        forecast_id=forecast_key,
+        target_type=target_type,
+        min_depth_m=min_depth_m,
+        max_distance_m=max_distance_m,
+        time_h=analysis_time_h,
+        bridge_influence_radius_m=bridge_influence_radius_m,
+    )
+
+
+def analyze_inundation_cells(
+    resolver,
+    cells: list[dict[str, Any]],
+    *,
+    forecast_id: str,
+    target_type: str = "all",
+    min_depth_m: float = 0.15,
+    max_distance_m: float = 10.0,
+    time_h: float | None = None,
+    bridge_influence_radius_m: float = BRIDGE_INFLUENCE_RADIUS_M,
+    time_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Analyze explicit forecast cells without relying on a latest workspace."""
+
+    forecast_key = str(forecast_id or "").strip()
+    if not forecast_key:
+        raise ValueError("forecast_id must not be empty")
+    analysis_time_h = coerce_time_h(time_h)
     target_types = resolve_target_types(target_type)
     if not target_types:
         return {
@@ -49,15 +87,11 @@ def analyze_inundation_impacts(
             "summary": {},
             "total_impacts": 0,
             "impacts": [],
-            **analysis_time_fields(forecast_key, analysis_time_h),
+            **_time_fields(forecast_key, analysis_time_h, time_context),
         }
 
-    cell_filters: dict[str, Any] = {"forecast_id": forecast_key}
-    if analysis_time_h is not None:
-        cell_filters["time_h"] = analysis_time_h
-    cells = query_forecast_cells(resolver, cell_filters)
     if not cells:
-        time_fields = analysis_time_fields(forecast_key, analysis_time_h)
+        time_fields = _time_fields(forecast_key, analysis_time_h, time_context)
         return {
             "status": "no_forecast_cells",
             "forecast_id": forecast_key,
@@ -121,7 +155,7 @@ def analyze_inundation_impacts(
     )
     summary = summarize_impacts(target_types, impacts)
     actual_time_h = actual_cell_time_h(cells, analysis_time_h)
-    time_fields = analysis_time_fields(resolved_forecast_id, actual_time_h)
+    time_fields = _time_fields(resolved_forecast_id, actual_time_h, time_context)
     return {
         "status": "completed",
         "forecast_id": resolved_forecast_id,
@@ -139,6 +173,21 @@ def analyze_inundation_impacts(
         "total_impacts": len(impacts),
         "basis": analysis_basis(actual_time_h, time_fields.get("analysis_time_at")),
         "impacts": impacts,
+    }
+
+
+def _time_fields(
+    forecast_id: str,
+    time_h: float | None,
+    time_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if time_context is None:
+        return analysis_time_fields(forecast_id, time_h)
+    return {
+        "forecast_time": time_context.get("forecast_time"),
+        "valid_from": time_context.get("valid_from"),
+        "valid_to": time_context.get("valid_to"),
+        "analysis_time_at": time_context.get("analysis_time_at"),
     }
 
 

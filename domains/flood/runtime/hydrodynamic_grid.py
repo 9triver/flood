@@ -154,6 +154,118 @@ class HydrodynamicMeshStore:
                     _TILE_CACHE.popitem(last=False)
         return result
 
+    def meta_from_depths(
+        self,
+        forecast: dict[str, Any],
+        depths: dict[int, float],
+    ) -> dict[str, Any]:
+        """Build the legacy GIS metadata DTO from an explicit depth source."""
+        self.ensure_ready()
+        with self._connect() as conn:
+            mesh = {
+                row["key"]: row["value"]
+                for row in conn.execute("select key, value from mesh_meta")
+            }
+            selected_forecast = dict(forecast)
+            selected_forecast["bbox"] = self._cell_bounds(conn, depths.keys())
+            return {
+                "object_type": "HydrodynamicGridCell",
+                "label": "水动力模型网格",
+                "feature_count": int(mesh.get("feature_count", 0)),
+                "geometry_type": "Polygon",
+                "source_crs": mesh.get("source_crs", "EPSG:4546"),
+                "map_crs": mesh.get("map_crs", "EPSG:4326"),
+                "min_tile_zoom": MIN_TILE_ZOOM,
+                "supported_tile_zooms": list(SUPPORTED_TILE_ZOOMS),
+                "bbox": {
+                    "min_lon": float(mesh.get("min_lon", 0)),
+                    "min_lat": float(mesh.get("min_lat", 0)),
+                    "max_lon": float(mesh.get("max_lon", 0)),
+                    "max_lat": float(mesh.get("max_lat", 0)),
+                },
+                "mesh_path": str(self.db_path.relative_to(PROJECT_DIR)),
+                "source_paths": {
+                    "grid": str(GT_PATH.relative_to(PROJECT_DIR)) if GT_PATH.exists() else "",
+                },
+                "forecast": selected_forecast,
+            }
+
+    def tile_from_depths(
+        self,
+        z: int,
+        x: int,
+        y: int,
+        depths: dict[int, float],
+        *,
+        source_id: str,
+        result_version: str,
+        wet_only: bool = False,
+        time_h: float | None = None,
+        time_index: int | None = None,
+        tile_crs: str = "wgs84",
+    ) -> dict[str, Any]:
+        """Render a tile without resolving a forecast through Workspace."""
+        self.ensure_ready()
+        if z < MIN_TILE_ZOOM:
+            return {
+                "cells": [],
+                "too_coarse": True,
+                "min_tile_zoom": MIN_TILE_ZOOM,
+            }
+        selected_source = str(source_id or "").strip()
+        if not selected_source:
+            raise ValueError("source_id is required")
+        selected_crs = normalize_tile_crs(tile_crs)
+        cache_key = (
+            "explicit", z, x, y, selected_crs, selected_source,
+            time_h, bool(wet_only), str(result_version or ""),
+        )
+        if wet_only:
+            with _TILE_CACHE_LOCK:
+                cached = _TILE_CACHE.get(cache_key)
+                if cached:
+                    _TILE_CACHE.move_to_end(cache_key)
+                    return cached
+
+        rows = (
+            self._wet_tile_rows(z, x, y, depths.keys(), selected_crs)
+            if wet_only
+            else self._tile_rows(z, x, y, selected_crs)
+        )
+        cells = []
+        for row in rows:
+            depth = depths.get(int(row["cell_id"]), 0.0)
+            if wet_only and depth <= 0:
+                continue
+            cells.append([
+                row["cell_id"],
+                round(depth, 4),
+                round(row["lon1"], 7),
+                round(row["lat1"], 7),
+                round(row["lon2"], 7),
+                round(row["lat2"], 7),
+                round(row["lon3"], 7),
+                round(row["lat3"], 7),
+            ])
+        result = {
+            "cells": cells,
+            "count": len(cells),
+            "forecast_id": selected_source,
+            "time_h": time_h,
+            "time_index": time_index,
+            "z": z,
+            "x": x,
+            "y": y,
+            "tile_crs": selected_crs,
+        }
+        if wet_only:
+            with _TILE_CACHE_LOCK:
+                _TILE_CACHE[cache_key] = result
+                _TILE_CACHE.move_to_end(cache_key)
+                while len(_TILE_CACHE) > _TILE_CACHE_MAX:
+                    _TILE_CACHE.popitem(last=False)
+        return result
+
     def _wet_tile_rows(
         self,
         z: int,
@@ -413,6 +525,11 @@ class HydrodynamicMeshStore:
 STORE = HydrodynamicMeshStore()
 
 
+def ensure_hydrodynamic_mesh() -> Path:
+    STORE.ensure_ready()
+    return MESH_DB_PATH
+
+
 def batched_cell_ids(cell_ids):
     batch: list[int] = []
     for cell_id in cell_ids:
@@ -434,6 +551,40 @@ def hydrodynamic_grid_tile(z: int, x: int, y: int,
                            time_h: float | None = None,
                            tile_crs: str = "wgs84") -> dict[str, Any]:
     return STORE.tile(z, x, y, forecast_id, wet_only, time_h, tile_crs)
+
+
+def hydrodynamic_grid_stats_from_depths(
+    forecast: dict[str, Any],
+    depths: dict[int, float],
+) -> dict[str, Any]:
+    return STORE.meta_from_depths(forecast, depths)
+
+
+def hydrodynamic_grid_tile_from_depths(
+    z: int,
+    x: int,
+    y: int,
+    depths: dict[int, float],
+    *,
+    source_id: str,
+    result_version: str,
+    wet_only: bool = False,
+    time_h: float | None = None,
+    time_index: int | None = None,
+    tile_crs: str = "wgs84",
+) -> dict[str, Any]:
+    return STORE.tile_from_depths(
+        z,
+        x,
+        y,
+        depths,
+        source_id=source_id,
+        result_version=result_version,
+        wet_only=wet_only,
+        time_h=time_h,
+        time_index=time_index,
+        tile_crs=tile_crs,
+    )
 
 
 def query_hydrodynamic_cells(filters: dict[str, Any] | None = None,

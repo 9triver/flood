@@ -26,15 +26,30 @@ from server.directives import DirectiveStore  # noqa: E402
 from server.events import EventRuntime  # noqa: E402
 from server.flood_app import FloodApp  # noqa: E402
 from server.serialization import format_sse  # noqa: E402
+from domain_os import (  # noqa: E402
+    DomainControlConflict,
+    DomainRecordNotFound,
+    DomainRuntimeError,
+    SqliteDomainStore,
+)
+from server.domain_api import DomainApiUnavailable  # noqa: E402
+from server.domain_runtime_host import (  # noqa: E402
+    DomainRuntimeHost,
+    DomainRuntimeHostError,
+)
+from server.domain_playback import DomainPlaybackController  # noqa: E402
 from domains.flood.runtime.playback_sources import (  # noqa: E402
     MAX_PLAYBACK_SOURCE_BYTES,
+    PlaybackSourceRegistry,
     PlaybackSourceValidationError,
 )
 
 
 APP = FloodApp()
 RUNS = AgentRunManager(APP)
-EVENT_RUNTIME = EventRuntime(APP)
+PLAYBACK_SOURCES = PlaybackSourceRegistry()
+EVENT_RUNTIME = EventRuntime(APP, PLAYBACK_SOURCES)
+AUTONOMY_RUNTIME: EventRuntime | DomainPlaybackController = EVENT_RUNTIME
 DIRECTIVES = DirectiveStore()
 
 
@@ -51,9 +66,23 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/autonomy/stream":
                 return self._autonomy_stream(parsed.query)
             if parsed.path == "/api/autonomy/status":
-                return self._json(EVENT_RUNTIME.status())
+                return self._json(AUTONOMY_RUNTIME.status())
+            if parsed.path == "/api/domain/projections":
+                return self._domain_projections(parsed.query)
+            if parsed.path == "/api/domain/products":
+                return self._domain_products(parsed.query)
+            if parsed.path == "/api/domain/product":
+                return self._domain_product(parsed.query)
+            if parsed.path == "/api/domain/commands":
+                return self._domain_commands(parsed.query)
+            if parsed.path == "/api/domain/command":
+                return self._domain_command(parsed.query)
+            if parsed.path == "/api/domain/events":
+                return self._domain_events(parsed.query)
+            if parsed.path == "/api/domain/events/stream":
+                return self._domain_event_stream(parsed.query)
             if parsed.path == "/api/autonomy/sources":
-                return self._json(EVENT_RUNTIME.list_playback_sources())
+                return self._json(AUTONOMY_RUNTIME.list_playback_sources())
             if parsed.path == "/api/directives":
                 return self._json(DIRECTIVES.list_issued())
             if parsed.path == "/api/agent/runs/active":
@@ -71,6 +100,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._static(parsed.path)
         except ValueError as exc:
             return self._json({"error": str(exc)}, status=400)
+        except DomainRecordNotFound as exc:
+            return self._json({"error": str(exc)}, status=404)
+        except DomainApiUnavailable as exc:
+            return self._json({"error": str(exc)}, status=503)
         except Exception as exc:
             return self._json({"error": str(exc)}, status=500)
 
@@ -93,23 +126,37 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/autonomy/sources":
                 return self._upload_playback_source(parsed.query)
             payload = self._read_json()
+            if parsed.path == "/api/domain/intents":
+                return self._json(APP.submit_domain_intent(payload), status=201)
+            command_action = _domain_command_action(parsed.path)
+            if command_action is not None:
+                command_id, action = command_action
+                if action == "approve":
+                    return self._json(APP.approve_domain_command(
+                        command_id,
+                        payload,
+                    ))
+                return self._json(APP.reject_domain_command(
+                    command_id,
+                    payload,
+                ))
             if parsed.path == "/api/autonomy/start":
-                return self._json(EVENT_RUNTIME.start_playback(
+                return self._json(AUTONOMY_RUNTIME.start_playback(
                     payload.get("speed_multiplier", 20),
                     payload.get("source_id"),
                 ))
             if parsed.path == "/api/autonomy/stop":
-                return self._json(EVENT_RUNTIME.stop_playback())
+                return self._json(AUTONOMY_RUNTIME.stop_playback())
             if parsed.path == "/api/autonomy/pause":
-                return self._json(EVENT_RUNTIME.pause_playback())
+                return self._json(AUTONOMY_RUNTIME.pause_playback())
             if parsed.path == "/api/autonomy/resume":
-                return self._json(EVENT_RUNTIME.resume_playback(payload.get("speed_multiplier", 1)))
+                return self._json(AUTONOMY_RUNTIME.resume_playback(payload.get("speed_multiplier", 1)))
             if parsed.path == "/api/autonomy/step":
-                return self._json(EVENT_RUNTIME.step_playback())
+                return self._json(AUTONOMY_RUNTIME.step_playback())
             if parsed.path == "/api/autonomy/speed":
-                return self._json(EVENT_RUNTIME.set_playback_speed(payload.get("speed_multiplier", 1)))
+                return self._json(AUTONOMY_RUNTIME.set_playback_speed(payload.get("speed_multiplier", 1)))
             if parsed.path == "/api/autonomy/auto-pause":
-                return self._json(EVENT_RUNTIME.set_auto_pause(
+                return self._json(AUTONOMY_RUNTIME.set_auto_pause(
                     payload.get("auto_pause_enabled"),
                 ))
             if parsed.path == "/api/agent/confirm":
@@ -117,7 +164,7 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/directives":
                 return self._issue_directive(payload)
             if parsed.path == "/api/autonomy/reset":
-                return self._json(EVENT_RUNTIME.restart_playback(
+                return self._json(AUTONOMY_RUNTIME.restart_playback(
                     payload.get("speed_multiplier", 20),
                     payload.get("source_id"),
                 ))
@@ -126,6 +173,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": RUNS.cancel(run_id), "run_id": run_id})
             return self._json({"error": "not found"}, status=404)
         except ValueError as exc:
+            return self._json({"error": str(exc)}, status=400)
+        except DomainRecordNotFound as exc:
+            return self._json({"error": str(exc)}, status=404)
+        except DomainControlConflict as exc:
+            return self._json({"error": str(exc)}, status=409)
+        except DomainApiUnavailable as exc:
+            return self._json({"error": str(exc)}, status=503)
+        except DomainRuntimeHostError as exc:
+            return self._json({"error": str(exc)}, status=503)
+        except TimeoutError as exc:
+            return self._json({"error": str(exc)}, status=504)
+        except DomainRuntimeError as exc:
             return self._json({"error": str(exc)}, status=400)
         except Exception as exc:
             return self._json({"error": str(exc)}, status=500)
@@ -189,7 +248,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _issue_directive(self, payload: dict[str, Any]):
         try:
-            directive = DIRECTIVES.issue(payload, EVENT_RUNTIME.status())
+            directive = DIRECTIVES.issue(payload, AUTONOMY_RUNTIME.status())
         except ValueError as exc:
             return self._json({"error": str(exc)}, status=400)
         EVENT_RUNTIME.publish_directive_issued(directive)
@@ -200,7 +259,7 @@ class Handler(BaseHTTPRequestHandler):
         filename = (params.get("filename") or [""])[0]
         try:
             content = self._read_bytes(MAX_PLAYBACK_SOURCE_BYTES)
-            result = EVENT_RUNTIME.upload_playback_source(filename, content)
+            result = AUTONOMY_RUNTIME.upload_playback_source(filename, content)
         except PlaybackSourceValidationError as exc:
             status = 413 if "5 MB" in str(exc) else 400
             return self._json({"error": str(exc)}, status=status)
@@ -209,7 +268,69 @@ class Handler(BaseHTTPRequestHandler):
     def _autonomy_stream(self, query: str):
         params = parse_qs(query)
         interval = max(5, int((params.get("interval") or ["5"])[0] or 5))
-        return self._sse(EVENT_RUNTIME.stream(interval))
+        return self._sse(AUTONOMY_RUNTIME.stream(interval))
+
+    def _domain_projections(self, query: str):
+        params = parse_qs(query)
+        return self._json(APP.domain_api.projections(
+            resource_id=(params.get("resource_id") or [None])[0],
+            resource_type=(params.get("resource_type") or [None])[0],
+        ))
+
+    def _domain_products(self, query: str):
+        params = parse_qs(query)
+        return self._json(APP.domain_api.products(
+            product_type=(params.get("product_type") or [None])[0],
+            subject_id=(params.get("subject_id") or [None])[0],
+            offset=int((params.get("offset") or ["0"])[0]),
+            limit=int((params.get("limit") or ["100"])[0]),
+        ))
+
+    def _domain_product(self, query: str):
+        params = parse_qs(query)
+        return self._json(APP.domain_api.product(
+            (params.get("product_id") or [""])[0],
+        ))
+
+    def _domain_commands(self, query: str):
+        params = parse_qs(query)
+        return self._json(APP.domain_api.commands(
+            state=(params.get("state") or [None])[0],
+            resource_id=(params.get("resource_id") or [None])[0],
+            actor_id=(params.get("actor_id") or [None])[0],
+            capability_id=(params.get("capability_id") or [None])[0],
+            offset=int((params.get("offset") or ["0"])[0]),
+            limit=int((params.get("limit") or ["100"])[0]),
+        ))
+
+    def _domain_command(self, query: str):
+        params = parse_qs(query)
+        return self._json(APP.domain_api.command(
+            (params.get("command_id") or [""])[0],
+        ))
+
+    def _domain_events(self, query: str):
+        params = parse_qs(query)
+        return self._json(APP.domain_api.events(
+            after=int((params.get("after") or ["0"])[0]),
+            event_type=(params.get("event_type") or [None])[0],
+            subject_id=(params.get("subject_id") or [None])[0],
+            limit=int((params.get("limit") or ["100"])[0]),
+        ))
+
+    def _domain_event_stream(self, query: str):
+        params = parse_qs(query)
+        after = (params.get("after") or [self.headers.get("Last-Event-ID", "0")])[0]
+        heartbeat = max(
+            1.0,
+            min(60.0, float((params.get("heartbeat") or ["15"])[0])),
+        )
+        return self._sse(APP.domain_api.stream_events(
+            after=int(after or 0),
+            event_type=(params.get("event_type") or [None])[0],
+            subject_id=(params.get("subject_id") or [None])[0],
+            heartbeat_seconds=heartbeat,
+        ))
 
     def _geojson(self, query: str):
         params = parse_qs(query)
@@ -245,10 +366,20 @@ class Handler(BaseHTTPRequestHandler):
         except (TypeError, ValueError):
             return self._json({"error": "z, x and y are required integers"}, status=400)
         forecast_id = self._hydrodynamic_result_id(params)
+        product_id = self._domain_forecast_product_id(params)
         wet_only = str((params.get("wet_only") or [""])[0]).lower() in {"1", "true", "yes", "on"}
         time_h = _coerce_optional_float((params.get("time_h") or [""])[0])
         tile_crs = (params.get("tile_crs") or ["wgs84"])[0]
-        data = APP.hydrodynamic_grid_tile(z, x, y, forecast_id, wet_only, time_h, tile_crs)
+        data = APP.hydrodynamic_grid_tile(
+            z,
+            x,
+            y,
+            forecast_id,
+            wet_only,
+            time_h,
+            tile_crs,
+            domain_product_id=product_id,
+        )
         body = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         use_gzip = len(body) >= 1024 and "gzip" in self.headers.get("Accept-Encoding", "").lower()
         if use_gzip:
@@ -266,12 +397,22 @@ class Handler(BaseHTTPRequestHandler):
     def _hydrodynamic_grid_meta(self, query: str):
         params = parse_qs(query)
         forecast_id = self._hydrodynamic_result_id(params)
-        return self._json(APP.hydrodynamic_grid_stats(forecast_id))
+        return self._json(APP.hydrodynamic_grid_stats(
+            forecast_id,
+            domain_product_id=self._domain_forecast_product_id(params),
+        ))
 
     def _impact_analysis(self, query: str):
         params = parse_qs(query)
+        forecast_id = (params.get("forecast_id") or ["latest"])[0]
+        assessment_product_id = (
+            params.get("assessment_product_id") or [None]
+        )[0]
+        forecast_product_id = (
+            forecast_id if _is_domain_forecast_product_id(forecast_id) else None
+        )
         result = APP.analyze_inundation_impacts(
-            forecast_id=(params.get("forecast_id") or ["latest"])[0],
+            forecast_id=forecast_id,
             target_type=(params.get("target_type") or ["all"])[0],
             min_depth_m=_coerce_float((params.get("min_depth_m") or ["0.15"])[0], 0.15),
             max_distance_m=_coerce_float((params.get("max_distance_m") or ["10"])[0], 10.0),
@@ -282,6 +423,8 @@ class Handler(BaseHTTPRequestHandler):
                 ])[0],
                 BRIDGE_INFLUENCE_RADIUS_M,
             ),
+            assessment_product_id=assessment_product_id,
+            forecast_product_id=forecast_product_id,
         )
         return self._json(result)
 
@@ -290,6 +433,16 @@ class Handler(BaseHTTPRequestHandler):
         if result:
             return result
         return (params.get("forecast_id") or ["latest"])[0]
+
+    def _domain_forecast_product_id(
+        self,
+        params: dict[str, list[str]],
+    ) -> str | None:
+        explicit = (params.get("product_id") or [""])[0]
+        if explicit:
+            return explicit
+        selected = self._hydrodynamic_result_id(params)
+        return selected if _is_domain_forecast_product_id(selected) else None
 
     def _object(self, query: str):
         params = parse_qs(query)
@@ -375,15 +528,78 @@ def _coerce_float(value: str, default: float) -> float:
         return default
 
 
+def _is_domain_forecast_product_id(value: str) -> bool:
+    return str(value or "").startswith("water.flood.forecast/")
+
+
+def _domain_command_action(path: str) -> tuple[str, str] | None:
+    parts = path.strip("/").split("/")
+    if (
+        len(parts) == 5
+        and parts[:3] == ["api", "domain", "commands"]
+        and parts[3]
+        and parts[4] in {"approve", "reject"}
+    ):
+        return unquote(parts[3]), parts[4]
+    return None
+
+
 def main():
+    global AUTONOMY_RUNTIME
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument(
+        "--domain-database",
+        type=Path,
+        help="Serve persisted Domain OS projections, products and events.",
+    )
     args = parser.parse_args()
+    domain_host = None
+    domain_playback = None
+    server = None
+    try:
+        if args.domain_database is not None:
+            if not args.domain_database.is_file():
+                parser.error(f"Domain OS database not found: {args.domain_database}")
+            from domains.flood.impact_domain import (  # noqa: PLC0415
+                create_flood_impact_domain_system,
+            )
 
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"Flood server running at http://{args.host}:{args.port}")
-    server.serve_forever()
+            def create_hosted_domain_system():
+                store = SqliteDomainStore(args.domain_database)
+                try:
+                    system = create_flood_impact_domain_system(store=store)
+                except BaseException:
+                    store.close()
+                    raise
+                return system, store.close
+
+            domain_host = DomainRuntimeHost(create_hosted_domain_system)
+            domain_host.start()
+            APP.attach_domain_runtime(
+                domain_host.read_model,
+                command_runner=domain_host.call,
+                control_target=domain_host.runtime,
+            )
+            domain_playback = DomainPlaybackController(
+                domain_host,
+                PLAYBACK_SOURCES,
+            )
+            AUTONOMY_RUNTIME = domain_playback
+
+        server = ThreadingHTTPServer((args.host, args.port), Handler)
+        print(f"Flood server running at http://{args.host}:{args.port}")
+        server.serve_forever()
+    finally:
+        if server is not None:
+            server.server_close()
+        if domain_playback is not None:
+            domain_playback.close()
+        APP.close_domain_api()
+        if domain_host is not None:
+            domain_host.stop()
 
 
 if __name__ == "__main__":

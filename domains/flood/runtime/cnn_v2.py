@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import atexit
 import csv
+import hashlib
 import json
 import os
 import queue
+import re
 import subprocess
 import shutil
 import sys
@@ -262,8 +264,12 @@ _CNN_WORKER = _CnnWorker()
 atexit.register(_CNN_WORKER.close)
 
 
-def run_cnn_v2_forecast(boundary_flow: dict[str, Any],
-                        target_depth_path: Path) -> dict[str, Any]:
+def run_cnn_v2_forecast(
+    boundary_flow: dict[str, Any],
+    target_depth_path: Path,
+    *,
+    working_dir: Path | None = None,
+) -> dict[str, Any]:
     total_started = time.perf_counter()
     if not MODEL_SCRIPT.exists():
         return {"error": f"missing CNN_V2.py: {rel(MODEL_SCRIPT)}"}
@@ -278,8 +284,8 @@ def run_cnn_v2_forecast(boundary_flow: dict[str, Any],
     if not summary:
         return {"error": "missing boundary flow summary"}
 
-    case_name = str(summary.get("boundary_flow_id") or "latest")
-    run_dir = workspace_dir(create=True) / "cnn_v2" / "latest"
+    case_name = _model_case_name(summary.get("boundary_flow_id"))
+    run_dir = working_dir or workspace_dir(create=True) / "cnn_v2" / "latest"
     test_dir = run_dir / "TEST"
     case_dir = test_dir / case_name
     output_dir = run_dir / "OUTPUT"
@@ -473,6 +479,16 @@ def cnn_python() -> str:
     if configured:
         return configured
     return sys.executable
+
+
+def _model_case_name(value: Any) -> str:
+    raw = str(value or "latest")
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", raw).strip("._-")
+    safe = safe[:96].rstrip("._-") or "case"
+    if safe == raw:
+        return safe
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+    return f"{safe}-{digest}"
 
 
 def cnn_device() -> str:

@@ -47,6 +47,11 @@ const state = {
   pendingQuestion: null,
   inundationAlertActive: false,
   autonomyStream: null,
+  domainOSStream: null,
+  domainOSCursor: 0,
+  domainOSEventChain: Promise.resolve(),
+  domainOSForecastProductId: null,
+  domainOSImpactProductId: null,
   eventMarkers: new Map(),
   hydrodynamicGridMeta: null,
   hydrodynamicResultMeta: null,
@@ -302,6 +307,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   await bootstrap();
   await refreshDirectiveHistory();
   await loadDefaultObjectLayers();
+  await startDomainOSBridge();
   startAutonomyStream();
   await refreshPlaybackStatus();
   renderIcons();
@@ -1795,6 +1801,31 @@ function setHydrodynamicTimelineIndex(index) {
   scheduleImpactAnalysisRefresh();
 }
 
+function setHydrodynamicEnvelopeView() {
+  const timeline = state.hydrodynamicTimeline;
+  if (!timeline.layer || !timeline.key) return;
+  stopHydrodynamicTimelinePlayback({ refreshImpact: false });
+  timeline.mode = "envelope";
+  const filters = { ...(timeline.baseFilters || {}) };
+  if (timeline.resultVersion) filters.result_version = timeline.resultVersion;
+  timeline.layer.setResultFilters(filters);
+  const slider = document.getElementById("hydroTimeSlider");
+  const label = document.getElementById("hydroTimeLabel");
+  if (slider) slider.disabled = false;
+  if (label) {
+    label.textContent = "24h 最大包络";
+    label.title = "未来24小时最大预测淹没包络";
+  }
+  setMapTimeContext({
+    mode: "envelope",
+    currentAt: timeline.forecastTime,
+    validAt: null,
+    hour: null,
+  });
+  renderSituationSummary();
+  scheduleImpactAnalysisRefresh();
+}
+
 function toggleHydrodynamicTimelinePlayback() {
   const timeline = state.hydrodynamicTimeline;
   if (!timeline.layer || !timeline.hours.length) return;
@@ -2029,7 +2060,12 @@ function startAutonomyStream() {
   es.addEventListener("runtime_status", (event) => {
     const data = parseEvent(event);
     acceptWorkspace(data.workspace_id);
-    if (["等待水文事件", "等待边界流量事件", "等待启动边界流量回放"].includes(data.label)) return;
+    if ([
+      "等待水文事件",
+      "等待边界流量事件",
+      "等待启动边界流量回放",
+      "等待启动 Domain OS 演进",
+    ].includes(data.label)) return;
     if (data.speed_multiplier) setPlaybackSpeedControl(data.speed_multiplier);
     updateTelemetryRuntimeStatus(data);
     addTrace("AUTO", data.label || "事件运行时", data.detail || "");
@@ -2080,6 +2116,113 @@ function startAutonomyStream() {
     state.autonomyStream = null;
     window.setTimeout(startAutonomyStream, 5000);
   };
+}
+
+async function startDomainOSBridge() {
+  if (!state.bootstrap?.domain_os_query_enabled) return;
+  try {
+    const events = await fetch("/api/domain/events?after=0&limit=1");
+    if (!events.ok) throw new Error(await events.text());
+    const eventPage = await events.json();
+    state.domainOSCursor = Number(eventPage.head_cursor || 0);
+    await restoreLatestDomainOSProducts();
+    connectDomainOSEvents();
+  } catch (error) {
+    console.warn("Domain OS bridge initialization failed", error);
+  }
+}
+
+async function restoreLatestDomainOSProducts() {
+  const forecast = await latestDomainOSProduct("water.flood.forecast");
+  if (!forecast?.product_id) return;
+  await showDomainOSForecast(forecast.product_id);
+  const impact = await latestDomainOSProduct(
+    "water.flood.impact-assessment",
+    (product) => (
+      (product.input_refs || []).includes(forecast.product_id)
+      && product.data?.parameters?.time_h == null
+    ),
+  );
+  if (impact?.product_id) await showDomainOSImpact(impact.product_id);
+}
+
+async function latestDomainOSProduct(productType, predicate = () => true) {
+  const params = new URLSearchParams({ product_type: productType, limit: "100" });
+  const response = await fetch(`/api/domain/products?${params.toString()}`);
+  if (!response.ok) throw new Error(await response.text());
+  let page = await response.json();
+  if (Number(page.total || 0) > Number(page.limit || 100)) {
+    params.set(
+      "offset",
+      String(Math.max(0, Number(page.total) - Number(page.limit || 100))),
+    );
+    const tailResponse = await fetch(`/api/domain/products?${params.toString()}`);
+    if (!tailResponse.ok) throw new Error(await tailResponse.text());
+    page = await tailResponse.json();
+  }
+  return (page.items || []).filter(predicate).at(-1) || null;
+}
+
+function connectDomainOSEvents() {
+  state.domainOSStream?.close();
+  const params = new URLSearchParams({ after: String(state.domainOSCursor || 0) });
+  const stream = new EventSource(`/api/domain/events/stream?${params.toString()}`);
+  state.domainOSStream = stream;
+  stream.addEventListener("domain_event", (event) => {
+    const data = parseEvent(event);
+    state.domainOSCursor = Number(data.cursor || state.domainOSCursor || 0);
+    state.domainOSEventChain = state.domainOSEventChain.then(
+      () => handleDomainOSEvent(data),
+    );
+  });
+  stream.addEventListener("heartbeat", (event) => {
+    const data = parseEvent(event);
+    state.domainOSCursor = Number(data.cursor || state.domainOSCursor || 0);
+  });
+  stream.onerror = () => {
+    console.warn("Domain OS event stream disconnected; EventSource will retry");
+  };
+}
+
+async function handleDomainOSEvent(event) {
+  try {
+    const productId = String(event?.data?.product_id || "");
+    if (event?.event_type === "water.flood.forecast.generated" && productId) {
+      await showDomainOSForecast(productId);
+    }
+    if (
+      event?.event_type === "water.flood.impact-assessment.generated"
+      && productId
+    ) {
+      await showDomainOSImpact(productId);
+    }
+  } catch (error) {
+    console.warn("Domain OS event could not update GIS", error);
+  }
+}
+
+async function showDomainOSForecast(productId) {
+  const selected = String(productId || "");
+  if (!selected || state.domainOSForecastProductId === selected) return;
+  state.domainOSImpactProductId = null;
+  await showHydrodynamicMesh({ fit: false });
+  await applyHydrodynamicResult({
+    filters: { product_id: selected },
+    label: OBJECT_CONFIG.ForecastResult.label,
+    buttonType: "ForecastResult",
+  });
+  state.domainOSForecastProductId = selected;
+  setHydrodynamicEnvelopeView();
+}
+
+async function showDomainOSImpact(productId) {
+  const selected = String(productId || "");
+  if (!selected || state.domainOSImpactProductId === selected) return;
+  const params = new URLSearchParams({ assessment_product_id: selected });
+  const response = await fetch(`/api/impact-analysis?${params.toString()}`);
+  if (!response.ok) throw new Error(await response.text());
+  state.domainOSImpactProductId = selected;
+  registerImpactAnalysisResult(await response.json());
 }
 
 async function refreshPlaybackStatus() {
@@ -5911,6 +6054,10 @@ async function refreshImpactAnalysisForTimeline() {
     const res = await fetch(`/api/impact-analysis?${params.toString()}`, {
       signal: controller.signal,
     });
+    if (res.status === 404 && isDomainOSForecastProductId(forecastId)) {
+      if (seq === state.impactRefreshSeq) setImpactAnalysisUnavailable();
+      return;
+    }
     if (!res.ok) throw new Error(await res.text());
     const result = await res.json();
     if (seq !== state.impactRefreshSeq) return;
@@ -5951,6 +6098,21 @@ function setImpactAnalysisError(error) {
     status.textContent = "分析失败";
     status.title = `影响分析失败：${String(error?.message || error)}`;
   }
+}
+
+function setImpactAnalysisUnavailable() {
+  document.getElementById("impactPanel")?.classList.remove("is-loading");
+  const count = document.getElementById("impactCount");
+  const status = document.getElementById("impactStatus");
+  if (count) count.textContent = "--";
+  if (status) {
+    status.textContent = "未生成";
+    status.title = "当前预测时刻尚无对应的版本化影响评估产品";
+  }
+}
+
+function isDomainOSForecastProductId(value) {
+  return String(value || "").startsWith("water.flood.forecast/");
 }
 
 function setImpactScopeLabel(element, hour, validAt, envelope = false) {

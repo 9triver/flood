@@ -4,9 +4,15 @@ import json
 from typing import Any
 
 
-def format_sse(event: str, data: dict[str, Any]) -> bytes:
+def format_sse(
+    event: str,
+    data: dict[str, Any],
+    *,
+    event_id: str | None = None,
+) -> bytes:
     payload = json.dumps(data, ensure_ascii=False)
-    return f"event: {event}\ndata: {payload}\n\n".encode("utf-8")
+    identifier = f"id: {event_id}\n" if event_id is not None else ""
+    return f"{identifier}event: {event}\ndata: {payload}\n\n".encode("utf-8")
 
 
 def parse_json_object(value: Any) -> dict[str, Any] | None:

@@ -1,12 +1,14 @@
 """Public API for the agent-oriented domain operating system prototype."""
 
 from .contracts import DomainPolicy, DomainStore, InfrastructureDriver, ObservationSink
+from .control import DomainControlConflict, DomainControlModel, DomainControlService
 from .models import (
     Capability,
     CapabilityRisk,
     Command,
     CommandResult,
     CommandState,
+    DerivedProduct,
     DomainEvent,
     DriverHealth,
     Intent,
@@ -20,6 +22,18 @@ from .models import (
 )
 from .policy import RiskBasedPolicy
 from .persistence import DomainPersistenceError, SqliteDomainStore
+from .query import (
+    command_to_dict,
+    DomainQueryError,
+    DomainQueryService,
+    DomainReadModel,
+    DomainRecordNotFound,
+    event_to_dict,
+    intent_to_dict,
+    product_to_dict,
+    projected_value_to_dict,
+    resource_to_dict,
+)
 from .runtime import DomainRuntime, DomainRuntimeError
 from .transports import (
     InMemoryMqttTransport,
@@ -34,8 +48,16 @@ __all__ = [
     "Command",
     "CommandResult",
     "CommandState",
+    "DerivedProduct",
+    "DomainControlConflict",
+    "DomainControlModel",
+    "DomainControlService",
     "DomainEvent",
     "DomainPolicy",
+    "DomainQueryError",
+    "DomainQueryService",
+    "DomainReadModel",
+    "DomainRecordNotFound",
     "DomainRuntime",
     "DomainRuntimeError",
     "DomainPersistenceError",
@@ -55,6 +77,12 @@ __all__ = [
     "Resource",
     "RiskBasedPolicy",
     "SqliteDomainStore",
+    "command_to_dict",
+    "event_to_dict",
+    "intent_to_dict",
     "new_id",
+    "product_to_dict",
+    "projected_value_to_dict",
+    "resource_to_dict",
     "utc_now",
 ]

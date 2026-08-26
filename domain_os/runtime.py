@@ -11,6 +11,7 @@ from .models import (
     Capability,
     Command,
     CommandState,
+    DerivedProduct,
     DomainEvent,
     Intent,
     Observation,
@@ -52,7 +53,10 @@ class DomainRuntime:
         self._observations: list[Observation] = []
         self._observation_ids: set[str] = set()
         self._projections: dict[str, dict[str, ProjectedValue]] = {}
+        self._projection_epochs: dict[str, str] = {}
+        self._projection_epoch_history: dict[str, set[str]] = {}
         self._commands: dict[str, Command] = {}
+        self._products: dict[str, DerivedProduct] = {}
         self._events: list[DomainEvent] = []
         self._subscribers: list[tuple[str | None, EventHandler]] = []
         self._started = False
@@ -177,6 +181,27 @@ class DomainRuntime:
         except KeyError as exc:
             raise DomainRuntimeError(f"unknown command: {command_id}") from exc
 
+    def products(
+        self,
+        *,
+        product_type: str | None = None,
+        subject_id: str | None = None,
+    ) -> tuple[DerivedProduct, ...]:
+        values = tuple(self._products.values())
+        if product_type is not None:
+            values = tuple(
+                item for item in values if item.product_type == product_type
+            )
+        if subject_id is not None:
+            values = tuple(item for item in values if item.subject_id == subject_id)
+        return values
+
+    def product(self, product_id: str) -> DerivedProduct:
+        try:
+            return self._products[product_id]
+        except KeyError as exc:
+            raise DomainRuntimeError(f"unknown product: {product_id}") from exc
+
     def subscribe(
         self,
         handler: EventHandler,
@@ -239,7 +264,77 @@ class DomainRuntime:
         )
         await self._reconcile(observation.resource_id)
 
+    async def record_product(self, product: DerivedProduct) -> DerivedProduct:
+        if not self._started:
+            raise DomainRuntimeError("domain runtime is not started")
+        current = self._products.get(product.product_id)
+        if current is not None:
+            if current == product:
+                return current
+            raise DomainRuntimeError(
+                f"product id already exists with different content: {product.product_id}"
+            )
+        if self.store is not None:
+            self.store.append_product(self.domain_id, product)
+        self._products[product.product_id] = product
+        await self._emit(
+            "domain.product.recorded",
+            product.subject_id,
+            {
+                "product_id": product.product_id,
+                "product_type": product.product_type,
+                "producer_id": product.producer_id,
+                "input_refs": list(product.input_refs),
+                "valid_from": (
+                    product.valid_from.isoformat()
+                    if product.valid_from is not None
+                    else None
+                ),
+                "valid_to": (
+                    product.valid_to.isoformat()
+                    if product.valid_to is not None
+                    else None
+                ),
+                "artifact_names": sorted(product.artifacts),
+            },
+            correlation_id=product.correlation_id,
+            causation_id=product.causation_id or product.product_id,
+        )
+        return product
+
+    async def publish_event(
+        self,
+        event_type: str,
+        subject_id: str,
+        data: Mapping[str, Any],
+        *,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> DomainEvent:
+        if not self._started:
+            raise DomainRuntimeError("domain runtime is not started")
+        return await self._emit(
+            event_type,
+            subject_id,
+            data,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
     async def submit_intent(self, intent: Intent) -> Command:
+        existing = next(
+            (
+                command for command in self._commands.values()
+                if command.intent.intent_id == intent.intent_id
+            ),
+            None,
+        )
+        if existing is not None:
+            if existing.intent == intent:
+                return existing
+            raise DomainRuntimeError(
+                f"intent id already exists with different content: {intent.intent_id}"
+            )
         resource = self.resource(intent.resource_id)
         if intent.capability_id not in resource.capabilities:
             raise DomainRuntimeError(
@@ -305,6 +400,44 @@ class DomainRuntime:
         )
         return await self._dispatch(command)
 
+    async def reject(
+        self,
+        command_id: str,
+        *,
+        rejector_id: str,
+        reason: str,
+    ) -> Command:
+        command = self.command(command_id)
+        if command.state is not CommandState.PENDING_APPROVAL:
+            raise DomainRuntimeError(
+                f"command is not pending approval: {command.command_id}"
+            )
+        rejector = str(rejector_id or "").strip()
+        if not rejector:
+            raise ValueError("rejector_id must not be empty")
+        rejection_reason = str(reason or "").strip()
+        if not rejection_reason:
+            raise ValueError("rejection reason must not be empty")
+        rejected = command.transition(
+            CommandState.REJECTED,
+            rejected_by=rejector,
+            rejection_reason=rejection_reason,
+        )
+        self._save_command(rejected)
+        await self._emit(
+            "domain.command.rejected",
+            rejected.intent.resource_id,
+            {
+                "command_id": rejected.command_id,
+                "intent_id": rejected.intent.intent_id,
+                "rejected_by": rejector,
+                "reason": rejection_reason,
+            },
+            correlation_id=rejected.intent.correlation_id,
+            causation_id=rejected.intent.intent_id,
+        )
+        return rejected
+
     async def _dispatch(self, command: Command) -> Command:
         driver = self._drivers[command.driver_id]
         command = command.transition(
@@ -331,16 +464,23 @@ class DomainRuntime:
             self._save_command(failed)
             await self._command_event(failed)
             return failed
+        for product in result.products:
+            await self.record_product(product)
         state = (
             CommandState.ACKNOWLEDGED
             if result.expected_state
             else CommandState.CONFIRMED
         )
+        output = dict(result.output)
+        if result.products:
+            output["product_ids"] = [
+                product.product_id for product in result.products
+            ]
         updated = command.transition(
             state,
             external_id=result.external_id,
             expected_state=result.expected_state,
-            output=result.output,
+            output=output,
         )
         self._save_command(updated)
         await self._command_event(updated)
@@ -375,6 +515,7 @@ class DomainRuntime:
         observations = self.store.load_observations(self.domain_id)
         commands = self.store.load_commands(self.domain_id)
         events = self.store.load_events(self.domain_id)
+        products = self.store.load_products(self.domain_id)
 
         for observation in observations:
             self.resource(observation.resource_id)
@@ -407,10 +548,33 @@ class DomainRuntime:
                 recovered.append(command)
             self._commands[command.command_id] = command
 
+        for product in products:
+            if product.product_id in self._products:
+                raise DomainRuntimeError(
+                    f"duplicate persisted product: {product.product_id}"
+                )
+            self._products[product.product_id] = product
+
         self._events.extend(events)
         return tuple(recovered)
 
     def _apply_projection(self, observation: Observation) -> bool:
+        epoch = str(
+            observation.attributes.get("projection_epoch") or ""
+        ).strip()
+        current_epoch = self._projection_epochs.get(observation.resource_id)
+        if epoch and epoch != current_epoch:
+            if observation.quality is ObservationQuality.BAD:
+                return False
+            seen_epochs = self._projection_epoch_history.setdefault(
+                observation.resource_id,
+                set(),
+            )
+            if epoch in seen_epochs:
+                return False
+            seen_epochs.add(epoch)
+            self._projection_epochs[observation.resource_id] = epoch
+            self._projections[observation.resource_id] = {}
         current = self._projections.setdefault(observation.resource_id, {}).get(
             observation.metric
         )
@@ -464,7 +628,7 @@ class DomainRuntime:
         *,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> None:
+    ) -> DomainEvent:
         event = DomainEvent(
             event_id=new_id("event"),
             event_type=event_type,
@@ -483,3 +647,4 @@ class DomainRuntime:
             result = handler(event)
             if inspect.isawaitable(result):
                 await result
+        return event

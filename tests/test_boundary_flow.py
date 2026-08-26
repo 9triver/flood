@@ -889,6 +889,7 @@ class InundationMapEventTest(unittest.TestCase):
         policy = ONTOLOGY.event_policies["InundationGenerated"]
 
         self.assertIn("ui_set_inundation_alert", policy.allowed_tools)
+        self.assertIn("domain_get_product", policy.allowed_tools)
         self.assertNotIn("analyze_inundation_impacts", policy.allowed_tools)
         self.assertNotIn("analyze_inundation_impacts", policy.required_functions)
         self.assertIn(policy.automatic_map.tool, ONTOLOGY.presentation_tools)
@@ -903,6 +904,7 @@ class InundationMapEventTest(unittest.TestCase):
         self.assertIn("面向用户的结论必须使用中文名称", prompt)
         self.assertIn("forecast_cell_count>0", prompt)
         self.assertIn("必须调用一次 ui_set_inundation_alert", prompt)
+        self.assertIn("不得用最新产品补配当前事件", prompt)
         self.assertIn("不执行对象级影响分析", prompt)
         self.assertIn('"object_type": "HydrodynamicGridCell"', prompt)
         self.assertIn("只有用户在普通对话中明确请求时才可展示", prompt)

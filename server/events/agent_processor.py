@@ -130,9 +130,7 @@ class EventAgentProcessor:
             return {}
         session_id = f"event-{event['event_id']}"
         policy = self.app.ontology.event_policies["FloodForecastRequired"]
-        prompt = self.app.agent.harness.ont.build_event_prompt(
-            "FloodForecastRequired", event,
-        )
+        prompt = self._build_event_prompt("FloodForecastRequired", event)
         agent_result: dict[str, Any] = {}
         reasoning_chunks: list[str] = []
         text_chunks: list[str] = []
@@ -205,9 +203,7 @@ class EventAgentProcessor:
             return {}
         session_id = f"event-{event['event_id']}"
         policy = self.app.ontology.event_policies["InundationGenerated"]
-        prompt = self.app.agent.harness.ont.build_event_prompt(
-            "InundationGenerated", event,
-        )
+        prompt = self._build_event_prompt("InundationGenerated", event)
         return self._run_agent_for_followup_event(
             prompt,
             session_id,
@@ -217,6 +213,25 @@ class EventAgentProcessor:
             map_event_filter=lambda map_event: filter_event_map_event(
                 map_event, policy.automatic_map,
             ),
+        )
+
+    def _build_event_prompt(
+        self,
+        event_type: str,
+        event: dict[str, Any],
+    ) -> str:
+        prompt_event = event
+        context_builder = getattr(self.app, "domain_event_context", None)
+        if callable(context_builder):
+            domain_context = context_builder(event)
+            if domain_context:
+                prompt_event = {
+                    **event,
+                    "domain_os_context": domain_context,
+                }
+        return self.app.agent.harness.ont.build_event_prompt(
+            event_type,
+            prompt_event,
         )
 
     def _record_forecast_policy_result(

@@ -13,6 +13,7 @@ from typing import Any
 from .models import (
     Command,
     CommandState,
+    DerivedProduct,
     DomainEvent,
     Intent,
     Observation,
@@ -64,10 +65,20 @@ class SqliteDomainStore:
                 UNIQUE (domain_id, event_id)
             );
 
+            CREATE TABLE IF NOT EXISTS domain_products (
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                domain_id TEXT NOT NULL,
+                product_id TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                UNIQUE (domain_id, product_id)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_domain_observations_domain
                 ON domain_observations (domain_id, sequence);
             CREATE INDEX IF NOT EXISTS idx_domain_events_domain
                 ON domain_events (domain_id, sequence);
+            CREATE INDEX IF NOT EXISTS idx_domain_products_domain
+                ON domain_products (domain_id, sequence);
             """
         )
         self._connection.commit()
@@ -110,6 +121,18 @@ class SqliteDomainStore:
             (domain_id,),
         ).fetchall()
         return tuple(_event_from_dict(_json_load(row[0])) for row in rows)
+
+    def load_products(self, domain_id: str) -> tuple[DerivedProduct, ...]:
+        rows = self._connection.execute(
+            """
+            SELECT payload
+              FROM domain_products
+             WHERE domain_id = ?
+             ORDER BY sequence
+            """,
+            (domain_id,),
+        ).fetchall()
+        return tuple(_product_from_dict(_json_load(row[0])) for row in rows)
 
     def append_observation(
         self,
@@ -176,6 +199,25 @@ class SqliteDomainStore:
         except sqlite3.IntegrityError as exc:
             raise DomainPersistenceError(
                 f"duplicate persisted event: {event.event_id}"
+            ) from exc
+
+    def append_product(self, domain_id: str, product: DerivedProduct) -> None:
+        try:
+            with self._connection:
+                self._connection.execute(
+                    """
+                    INSERT INTO domain_products (domain_id, product_id, payload)
+                    VALUES (?, ?, ?)
+                    """,
+                    (
+                        domain_id,
+                        product.product_id,
+                        _json_dump(_product_to_dict(product)),
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise DomainPersistenceError(
+                f"duplicate persisted product: {product.product_id}"
             ) from exc
 
 
@@ -271,6 +313,8 @@ def _command_to_dict(command: Command) -> dict[str, Any]:
         "updated_at": command.updated_at.isoformat(),
         "policy_reason": command.policy_reason,
         "approved_by": command.approved_by,
+        "rejected_by": command.rejected_by,
+        "rejection_reason": command.rejection_reason,
         "dispatched_at": (
             command.dispatched_at.isoformat()
             if command.dispatched_at is not None
@@ -294,6 +338,8 @@ def _command_from_dict(value: Mapping[str, Any]) -> Command:
         updated_at=_datetime(value["updated_at"]),
         policy_reason=value.get("policy_reason", ""),
         approved_by=value.get("approved_by"),
+        rejected_by=value.get("rejected_by"),
+        rejection_reason=value.get("rejection_reason"),
         dispatched_at=_datetime(dispatched_at) if dispatched_at is not None else None,
         external_id=value.get("external_id"),
         expected_state=value.get("expected_state", {}),
@@ -321,6 +367,50 @@ def _event_from_dict(value: Mapping[str, Any]) -> DomainEvent:
         subject_id=value["subject_id"],
         occurred_at=_datetime(value["occurred_at"]),
         data=value.get("data", {}),
+        correlation_id=value.get("correlation_id"),
+        causation_id=value.get("causation_id"),
+    )
+
+
+def _product_to_dict(product: DerivedProduct) -> dict[str, Any]:
+    return {
+        "product_id": product.product_id,
+        "product_type": product.product_type,
+        "subject_id": product.subject_id,
+        "producer_id": product.producer_id,
+        "generated_at": product.generated_at.isoformat(),
+        "valid_from": (
+            product.valid_from.isoformat()
+            if product.valid_from is not None
+            else None
+        ),
+        "valid_to": (
+            product.valid_to.isoformat()
+            if product.valid_to is not None
+            else None
+        ),
+        "input_refs": list(product.input_refs),
+        "data": dict(product.data),
+        "artifacts": dict(product.artifacts),
+        "correlation_id": product.correlation_id,
+        "causation_id": product.causation_id,
+    }
+
+
+def _product_from_dict(value: Mapping[str, Any]) -> DerivedProduct:
+    valid_from = value.get("valid_from")
+    valid_to = value.get("valid_to")
+    return DerivedProduct(
+        product_id=value["product_id"],
+        product_type=value["product_type"],
+        subject_id=value["subject_id"],
+        producer_id=value["producer_id"],
+        generated_at=_datetime(value["generated_at"]),
+        valid_from=_datetime(valid_from) if valid_from is not None else None,
+        valid_to=_datetime(valid_to) if valid_to is not None else None,
+        input_refs=tuple(value.get("input_refs", ())),
+        data=value.get("data", {}),
+        artifacts=value.get("artifacts", {}),
         correlation_id=value.get("correlation_id"),
         causation_id=value.get("causation_id"),
     )

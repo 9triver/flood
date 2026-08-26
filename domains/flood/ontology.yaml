@@ -2,6 +2,13 @@ name: flood
 description: "水库下游洪水、道路桥梁、重要设施与避洪转移联动分析领域。面向珊瑚河数据，回答洪水事件中哪些道路、桥梁、设施、转移路线和安置对象受影响，以及应采取哪些封控、撤离、绕行和简报建议。"
 tool_preferences:
   generic_search: fallback_only
+runtime_tools:
+  - domain_get_projection
+  - domain_list_products
+  - domain_get_product
+  - domain_list_commands
+  - domain_get_command
+  - domain_list_events
 
 interaction_policies:
   user_chat:
@@ -134,11 +141,12 @@ event_policies:
     display_name: "洪水预测请求事件"
     role: "珊瑚河洪水应急智能体"
     description: "领域策略已根据当前时刻至 +24h 的边界流量预测窗口生成洪水预测请求。"
-    allowed_tools: [inspect, query, count, run_flood_forecast]
+    allowed_tools: [inspect, query, count, run_flood_forecast, domain_get_product, domain_get_command, domain_list_events]
     forbidden_functions: [run_emergency_cycle]
     instructions:
       - "领域策略已经完成阈值判断；当事件 forecast_trigger.should_run_forecast=true 时，必须由你调用一次 run_flood_forecast，forecast_id 使用 latest。不要只用文字说明将要预测。"
       - "事件 payload 包含当前预测时刻 observation、与触发判断完全相同的 25 点 forecast_input，以及 forecast_trigger；run_flood_forecast 会读取事件对应的稳定输入快照，CNN 计算与结果保存由该工具完成。"
+      - "如果 domain_os_context.linkage=explicit，只能按其中的具体产品或事件 ID 调用 Domain OS 只读工具核对血缘和有效时间；如果为 unlinked_legacy_event，不得用最新产品补配当前事件。"
       - "本洪水预测请求事件只负责判断并运行洪水预测，不在当前事件阶段执行对象级影响分析或防洪响应预案；预测完成后系统会另行发布预测淹没结果生成事件，由后续事件判断是否存在淹没、设置流域警戒并展示预测淹没范围。对象级影响分析在后续事件中也不会自动执行，只有用户明确提出后才执行。结论中必须写清‘当前洪水预测请求事件未执行对象级影响分析；后续预测淹没结果生成事件也不自动执行，需用户明确提出后分析’，不得声称后续事件将自动执行影响分析。"
     conclusion_fields: ["24小时预测窗口", "触发原因", "是否调用了预测模型"]
 
@@ -146,10 +154,11 @@ event_policies:
     display_name: "预测淹没结果生成事件"
     role: "珊瑚河洪水应急智能体"
     description: "水动力模型已经生成24小时预测结果，本事件负责判断预测期内是否存在淹没并表达流域警戒态势。"
-    allowed_tools: [ui_set_inundation_alert, ui_show_objects]
+    allowed_tools: [ui_set_inundation_alert, ui_show_objects, domain_get_product, domain_get_command, domain_list_events]
     forbidden_functions: [run_emergency_cycle]
     instructions:
       - "只根据事件 payload 中 CNN 预测汇总判断未来24小时是否存在淹没：forecast_cell_count>0 表示存在至少一个水深不低于0.04米的预测淹没单元，否则表示无淹没。"
+      - "如果 domain_os_context.linkage=explicit，只能按其中的具体产品或事件 ID 调用 Domain OS 只读工具核对血缘和有效时间；如果为 unlinked_legacy_event，不得用最新产品补配当前事件。"
       - "必须调用一次 ui_set_inundation_alert：存在淹没时传 active=true，无淹没时传 active=false，以确保旧警戒状态也能被清除。"
       - "本事件不执行对象级影响分析，不判断具体道路、设施、桥梁、转移路线、转移对象或安置点是否受影响；这些分析只在用户明确提出后执行。"
       - "防洪响应预案在本事件中保持切断。"

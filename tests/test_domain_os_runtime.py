@@ -210,6 +210,69 @@ class DomainOSWaterVerticalTest(unittest.IsolatedAsyncioTestCase):
             event_type="domain.observation.recorded"
         )))
 
+    async def test_duplicate_intent_id_is_idempotent_but_cannot_change_content(self):
+        intent = Intent(
+            intent_id="intent-idempotent-1",
+            actor_id="agent.water-observer",
+            resource_id=RESOURCE_ID,
+            capability_id=SET_SAMPLING_INTERVAL,
+            arguments={"seconds": 10},
+            requested_at=utc_now(),
+            rationale="Increase observation frequency",
+        )
+
+        first = await self.system.runtime.submit_intent(intent)
+        repeated = await self.system.runtime.submit_intent(intent)
+
+        self.assertEqual(first, repeated)
+        self.assertEqual(1, len(self.system.runtime.commands()))
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "intent id already exists with different content",
+        ):
+            await self.system.runtime.submit_intent(Intent(
+                intent_id=intent.intent_id,
+                actor_id=intent.actor_id,
+                resource_id=intent.resource_id,
+                capability_id=intent.capability_id,
+                arguments={"seconds": 20},
+                requested_at=intent.requested_at,
+                rationale=intent.rationale,
+            ))
+
+    async def test_operator_can_reject_pending_command_with_audit_context(self):
+        pending = await self.system.request_sampling_interval(
+            actor_id="agent.water-observer",
+            station_id=STATION_ID,
+            seconds=10,
+            rationale="Increase observation frequency",
+            correlation_id="flood-episode-rejected",
+        )
+
+        rejected = await self.system.runtime.reject(
+            pending.command_id,
+            rejector_id="operator-002",
+            reason="现场正在检修，维持当前采样频率",
+        )
+
+        self.assertEqual(CommandState.REJECTED, rejected.state)
+        self.assertEqual("operator-002", rejected.rejected_by)
+        self.assertEqual(
+            "现场正在检修，维持当前采样频率",
+            rejected.rejection_reason,
+        )
+        self.assertEqual([], self.transport.published)
+        event = self.system.runtime.events(
+            event_type="domain.command.rejected",
+        )[-1]
+        self.assertEqual("operator-002", event.data["rejected_by"])
+        self.assertEqual("flood-episode-rejected", event.correlation_id)
+        with self.assertRaisesRegex(RuntimeError, "not pending approval"):
+            await self.system.runtime.approve(
+                rejected.command_id,
+                approver_id="operator-001",
+            )
+
     async def test_preexisting_state_cannot_confirm_a_new_command(self):
         topic = f"water/stations/{STATION_ID}/telemetry"
         await self.transport.inject(

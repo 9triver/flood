@@ -9,6 +9,7 @@ from .models import (
     Capability,
     Command,
     CommandResult,
+    DerivedProduct,
     DomainEvent,
     DriverHealth,
     Intent,
@@ -58,6 +59,8 @@ class DomainStore(Protocol):
 
     def load_events(self, domain_id: str) -> tuple[DomainEvent, ...]: ...
 
+    def load_products(self, domain_id: str) -> tuple[DerivedProduct, ...]: ...
+
     def append_observation(
         self,
         domain_id: str,
@@ -67,3 +70,9 @@ class DomainStore(Protocol):
     def save_command(self, domain_id: str, command: Command) -> None: ...
 
     def append_event(self, domain_id: str, event: DomainEvent) -> None: ...
+
+    def append_product(
+        self,
+        domain_id: str,
+        product: DerivedProduct,
+    ) -> None: ...

@@ -85,6 +85,35 @@ class FakeEventApp:
         raise AssertionError("event processor must not bypass the agent tool call")
 
 
+class CapturingEventAgent:
+    def __init__(self, captured):
+        self.harness = SimpleNamespace(
+            ont=SimpleNamespace(
+                build_event_prompt=lambda event_type, event: captured.update({
+                    "event_type": event_type,
+                    "event": event,
+                }) or event_type,
+            ),
+        )
+
+    def chat_stream(self, prompt, session_id, allowed_tools):
+        return iter(())
+
+
+class DomainContextEventApp(FakeEventApp):
+    def __init__(self, captured):
+        super().__init__([])
+        self.agent = CapturingEventAgent(captured)
+
+    def domain_event_context(self, event):
+        return {
+            "domain_id": "water.flood",
+            "access": "read_only",
+            "linkage": "explicit",
+            "product_refs": [{"product_id": event["payload"]["product_id"]}],
+        }
+
+
 class EventRuntimeModuleBoundaryTest(unittest.TestCase):
     def test_sse_serialization_remains_utf8_and_json(self):
         encoded = format_sse("domain_event", {"title": "洪水事件"})
@@ -150,6 +179,31 @@ class EventRuntimeModuleBoundaryTest(unittest.TestCase):
         }, generation=1)
 
         self.assertEqual([], outputs)
+
+    def test_agent_event_prompt_includes_domain_os_references(self):
+        captured = {}
+        app = DomainContextEventApp(captured)
+        processor = EventAgentProcessor(
+            app=app,
+            playback_runner=NoopPlaybackTracker(),
+            current_generation=lambda: 1,
+            append_output=lambda name, data, generation: None,
+            publish_inundation_event=lambda event, generation: None,
+            publish_impact_event=lambda event, generation: None,
+        )
+
+        processor._run_agent_for_inundation_event({
+            "event_type": "InundationGenerated",
+            "event_id": "evt_domain",
+            "payload": {"product_id": "water.flood.forecast/run/000001"},
+        }, generation=1)
+
+        context = captured["event"]["domain_os_context"]
+        self.assertEqual("explicit", context["linkage"])
+        self.assertEqual(
+            "water.flood.forecast/run/000001",
+            context["product_refs"][0]["product_id"],
+        )
 
     def test_no_agent_forecast_event_emits_rule_trace(self):
         outputs = []

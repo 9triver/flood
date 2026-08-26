@@ -159,6 +159,71 @@ class DomainEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class DerivedProduct:
+    """Immutable output derived from facts, models, or deterministic analysis."""
+
+    product_id: str
+    product_type: str
+    subject_id: str
+    producer_id: str
+    generated_at: datetime
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    input_refs: tuple[str, ...] = ()
+    data: Mapping[str, Any] = field(default_factory=dict)
+    artifacts: Mapping[str, str] = field(default_factory=dict)
+    correlation_id: str | None = None
+    causation_id: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "product_id", _required(self.product_id, "product_id"))
+        object.__setattr__(
+            self,
+            "product_type",
+            _required(self.product_type, "product_type"),
+        )
+        object.__setattr__(self, "subject_id", _required(self.subject_id, "subject_id"))
+        object.__setattr__(self, "producer_id", _required(self.producer_id, "producer_id"))
+        object.__setattr__(
+            self,
+            "generated_at",
+            _timestamp(self.generated_at, "generated_at"),
+        )
+        if self.valid_from is not None:
+            object.__setattr__(
+                self,
+                "valid_from",
+                _timestamp(self.valid_from, "valid_from"),
+            )
+        if self.valid_to is not None:
+            object.__setattr__(
+                self,
+                "valid_to",
+                _timestamp(self.valid_to, "valid_to"),
+            )
+        if (
+            self.valid_from is not None
+            and self.valid_to is not None
+            and self.valid_to < self.valid_from
+        ):
+            raise ValueError("valid_to must not be earlier than valid_from")
+        object.__setattr__(
+            self,
+            "input_refs",
+            tuple(_required(item, "input reference") for item in self.input_refs),
+        )
+        object.__setattr__(self, "data", _mapping(self.data))
+        object.__setattr__(
+            self,
+            "artifacts",
+            MappingProxyType({
+                _required(key, "artifact name"): _required(value, "artifact reference")
+                for key, value in self.artifacts.items()
+            }),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class Intent:
     intent_id: str
     actor_id: str
@@ -199,11 +264,17 @@ class CommandResult:
     external_id: str | None = None
     output: Mapping[str, Any] = field(default_factory=dict)
     expected_state: Mapping[str, Any] = field(default_factory=dict)
+    products: tuple[DerivedProduct, ...] = ()
     error: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "output", _mapping(self.output))
         object.__setattr__(self, "expected_state", _mapping(self.expected_state))
+        object.__setattr__(self, "products", tuple(self.products))
+        if any(not isinstance(product, DerivedProduct) for product in self.products):
+            raise TypeError("command products must be DerivedProduct instances")
+        if not self.accepted and self.products:
+            raise ValueError("a rejected command result cannot contain products")
         if not self.accepted and not self.error:
             raise ValueError("a rejected command result must include an error")
 
@@ -218,6 +289,8 @@ class Command:
     updated_at: datetime
     policy_reason: str = ""
     approved_by: str | None = None
+    rejected_by: str | None = None
+    rejection_reason: str | None = None
     dispatched_at: datetime | None = None
     external_id: str | None = None
     expected_state: Mapping[str, Any] = field(default_factory=dict)

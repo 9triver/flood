@@ -106,7 +106,7 @@ class CnnV2AdapterTest(unittest.TestCase):
         }
         boundary_flow = {
             "summary": {
-                "boundary_flow_id": "test_case",
+                "boundary_flow_id": "water.flood.forecast-input/test/run",
                 "boundaries": boundaries,
             },
         }
@@ -116,17 +116,21 @@ class CnnV2AdapterTest(unittest.TestCase):
             workspace_id = manager.create()["workspace_id"]
             target = manager.path(workspace_id) / "forecasts" / "latest" / "max_depth.csv"
             commands = []
+            case_names = []
 
             def fake_run(command, **kwargs):
                 commands.append(command)
+                test_dir = Path(command[command.index("--test-dir") + 1])
+                case_name = next(path.name for path in test_dir.iterdir() if path.is_dir())
+                case_names.append(case_name)
                 output_dir = Path(command[command.index("--output-dir") + 1])
-                case_dir = output_dir / "TEST_RESULTS" / "test_case"
+                case_dir = output_dir / "TEST_RESULTS" / case_name
                 case_dir.mkdir(parents=True)
-                (case_dir / "test_case_max_depth.csv").write_text(
+                (case_dir / f"{case_name}_max_depth.csv").write_text(
                     "cell_id,max_depth\n1,0.4\n2,0.0\n",
                     encoding="utf-8",
                 )
-                (case_dir / "test_case_pred_depths.npy").write_bytes(b"test-series")
+                (case_dir / f"{case_name}_pred_depths.npy").write_bytes(b"test-series")
                 return SimpleNamespace(returncode=0, stdout="ok", stderr="")
 
             with patch.dict(os.environ, {"FLOOD_CNN_PERSISTENT_WORKER": "false"}):
@@ -140,6 +144,8 @@ class CnnV2AdapterTest(unittest.TestCase):
             self.assertTrue(target.with_name("depth_series.npy").exists())
             self.assertTrue(target.with_name("time_steps.json").exists())
             self.assertFalse((manager.path(workspace_id) / "cnn_v2" / "latest").exists())
+            self.assertEqual(1, len(case_names))
+            self.assertNotIn("/", case_names[0])
             command = commands[0]
             self.assertEqual(str(cnn_v2.WEIGHT_PATH), command[command.index("--model-path") + 1])
             self.assertEqual(
