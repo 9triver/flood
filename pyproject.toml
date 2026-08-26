@@ -1,11 +1,12 @@
 [project]
-name = "flood-emergency-agent"
+name = "agent-domain-os"
 version = "0.1.0"
-description = "基于大模型的水路联动应急智能体集群应用"
+description = "面向智能体的领域操作系统及其水利领域参考实现"
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=2.0",
     "oag",
+    "paho-mqtt>=2.1",
     "torch>=2.0",
 ]
 
@@ -16,3 +17,15 @@ dev = [
 
 [tool.uv.sources]
 oag = { path = "agent", editable = true }
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["domain_os*", "domains*", "server*"]
+namespaces = true
+
+[tool.setuptools.package-data]
+"domains.flood" = ["data/objects/*.jsonl"]
+server = ["static/**/*"]
