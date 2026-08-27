@@ -5,15 +5,11 @@ from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
-from domain_os import (
-    DomainControlModel,
-    DomainControlService,
-    DomainQueryService,
-    DomainReadModel,
-)
-
-
 PROJECT_DIR = Path(__file__).resolve().parents[1]
+
+
+class DomainApiUnavailable(RuntimeError):
+    pass
 DOMAIN_DIR = PROJECT_DIR / "domains" / "flood"
 
 sys.path.insert(0, str(PROJECT_DIR))
@@ -34,26 +30,15 @@ from server.chat.policy import build_agent_task_hint  # noqa: E402
 from server.chat.service import FloodChatService  # noqa: E402
 from server.chat.side_effects import AgentSideEffects  # noqa: E402
 from server.domain_service import FloodDomainService  # noqa: E402
-from server.domain_api import DomainApi, DomainApiUnavailable  # noqa: E402
-from server.domain_tools import (  # noqa: E402
-    build_domain_event_context,
-    register_domain_query_tools,
-)
 
 if TYPE_CHECKING:
     from server.agent_runs import AgentRun
 
 
-DomainCommandRunner = Callable[
-    [Callable[[], Awaitable[dict[str, Any]]]],
-    dict[str, Any],
-]
-
-
 class FloodApp:
     """Stable application facade for HTTP and autonomous event runtimes."""
 
-    def __init__(self, domain_runtime: DomainReadModel | None = None):
+    def __init__(self):
         self.llm_config = load_env(PROJECT_DIR / ".env")
         self.ontology, self.repository, self.registry = load_domain(DOMAIN_DIR)
         self.resolver = self.registry.get_resolver("flood_repository")
@@ -79,11 +64,7 @@ class FloodApp:
         self._chat_service = FloodChatService(
             self.agent, self.ontology, self.side_effects,
         )
-        self._domain_api: DomainApi | None = None
-        self._domain_control: DomainControlService | None = None
-        self._domain_command_runner: DomainCommandRunner | None = None
-        if domain_runtime is not None:
-            self.attach_domain_runtime(domain_runtime)
+        self._domain_api = None
 
     @property
     def llm_enabled(self) -> bool:
@@ -93,7 +74,7 @@ class FloodApp:
         return {
             **self._domain_service.bootstrap(llm_enabled=self.llm_enabled),
             "domain_os_query_enabled": self._domain_api is not None,
-            "domain_os_control_enabled": self._domain_control is not None,
+            "domain_os_control_enabled": self._domain_api is not None,
         }
 
     def autonomy_cycle(self, force_forecast: bool = False) -> dict:
@@ -197,7 +178,7 @@ class FloodApp:
         return self._chat_service.agent_session_id(session_id)
 
     @property
-    def domain_api(self) -> DomainApi:
+    def domain_api(self):
         if self._domain_api is None:
             raise DomainApiUnavailable("Domain OS query API is not configured")
         return self._domain_api
@@ -208,70 +189,24 @@ class FloodApp:
             self._domain_api.close()
         self._domain_api = api
 
-    def attach_domain_runtime(
-        self,
-        runtime: DomainReadModel,
-        *,
-        command_runner: DomainCommandRunner | None = None,
-        control_target: DomainControlModel | None = None,
-    ) -> None:
-        if self._domain_api is not None:
-            self._domain_api.close()
-        self._domain_api = DomainApi(DomainQueryService(runtime))
-        self._domain_control = (
-            DomainControlService(control_target or runtime)
-            if command_runner is not None
-            else None
-        )
-        self._domain_command_runner = command_runner
-        if self.agent is not None:
-            register_domain_query_tools(
-                self.agent.harness.tools,
-                lambda: self.domain_api.queries,
-            )
-            self.agent.harness.config.runtime_context["domain_os"] = (
-                "read-only Projection/DerivedProduct/Domain Event access enabled; "
-                "use concrete product IDs and preserve validity and lineage"
-            )
 
-    def domain_event_context(
-        self,
-        event: dict[str, Any],
-    ) -> dict[str, Any] | None:
+    def domain_event_context(self, event) -> dict[str, Any] | None:
+        return None  # dos mode: event agents read the namespace via the gateway
+
+
+    def approve_domain_command(self, command_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         if self._domain_api is None:
-            return None
-        return build_domain_event_context(self._domain_api.queries, event)
-
-    def submit_domain_intent(
-        self,
-        payload: Mapping[str, Any],
-    ) -> dict[str, Any]:
-        return self._run_domain_command(
-            lambda: self._require_domain_control().submit_intent(payload),
-        )
-
-    def approve_domain_command(
-        self,
-        command_id: str,
-        payload: Mapping[str, Any],
-    ) -> dict[str, Any]:
-        return self._run_domain_command(
-            lambda: self._require_domain_control().approve(command_id, payload),
-        )
-
-    def reject_domain_command(
-        self,
-        command_id: str,
-        payload: Mapping[str, Any],
-    ) -> dict[str, Any]:
-        return self._run_domain_command(
-            lambda: self._require_domain_control().reject(command_id, payload),
-        )
-
-    def _require_domain_control(self) -> DomainControlService:
-        if self._domain_control is None:
             raise DomainApiUnavailable("Domain OS control API is not configured")
-        return self._domain_control
+        return self._domain_api.host.kernel.approve(
+            command_id,
+            payload.get("approved_by") or "operator",
+            bool(payload.get("approved", True)),
+            str(payload.get("reason") or ""),
+        ).__dict__
+
+    def reject_domain_command(self, command_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+        return self.approve_domain_command(command_id, {**dict(payload), "approved": False})
+
 
     def _run_domain_command(
         self,

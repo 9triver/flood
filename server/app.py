@@ -26,18 +26,16 @@ from server.directives import DirectiveStore  # noqa: E402
 from server.events import EventRuntime  # noqa: E402
 from server.flood_app import FloodApp  # noqa: E402
 from server.serialization import format_sse  # noqa: E402
-from domain_os import (  # noqa: E402
-    DomainControlConflict,
-    DomainRecordNotFound,
-    DomainRuntimeError,
-    SqliteDomainStore,
-)
-from server.domain_api import DomainApiUnavailable  # noqa: E402
-from server.domain_runtime_host import (  # noqa: E402
-    DomainRuntimeHost,
-    DomainRuntimeHostError,
-)
-from server.domain_playback import DomainPlaybackController  # noqa: E402
+from server.dos_api import DosRecordNotFound as DomainRecordNotFound  # noqa: E402
+from server.flood_app import DomainApiUnavailable  # noqa: E402
+
+
+class DomainControlConflict(RuntimeError):
+    pass
+
+
+class DomainRuntimeError(RuntimeError):
+    pass
 from domains.flood.runtime.playback_sources import (  # noqa: E402
     MAX_PLAYBACK_SOURCE_BYTES,
     PlaybackSourceRegistry,
@@ -49,7 +47,7 @@ APP = FloodApp()
 RUNS = AgentRunManager(APP)
 PLAYBACK_SOURCES = PlaybackSourceRegistry()
 EVENT_RUNTIME = EventRuntime(APP, PLAYBACK_SOURCES)
-AUTONOMY_RUNTIME: EventRuntime | DomainPlaybackController = EVENT_RUNTIME
+AUTONOMY_RUNTIME = EVENT_RUNTIME
 DIRECTIVES = DirectiveStore()
 
 
@@ -176,16 +174,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": str(exc)}, status=400)
         except DomainRecordNotFound as exc:
             return self._json({"error": str(exc)}, status=404)
-        except DomainControlConflict as exc:
-            return self._json({"error": str(exc)}, status=409)
         except DomainApiUnavailable as exc:
-            return self._json({"error": str(exc)}, status=503)
-        except DomainRuntimeHostError as exc:
             return self._json({"error": str(exc)}, status=503)
         except TimeoutError as exc:
             return self._json({"error": str(exc)}, status=504)
-        except DomainRuntimeError as exc:
-            return self._json({"error": str(exc)}, status=400)
         except Exception as exc:
             return self._json({"error": str(exc)}, status=500)
 
@@ -552,61 +544,20 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument(
-        "--domain-database",
-        type=Path,
-        help="Serve persisted Domain OS projections, products and events.",
-    )
-    parser.add_argument(
-        "--legacy-domain",
-        action="store_true",
-        help="Host the legacy domain_os runtime instead of the dos kernel (default: dos).",
-    )
     args = parser.parse_args()
-    domain_host = None
-    domain_playback = None
     dos_host = None
     server = None
     try:
-        if not args.legacy_domain and args.domain_database is None:
-            import os
+        import os
 
-            from server.dos_api import DosApi
-            from server.dos_host import DosFloodHost, DosPlaybackController
+        from server.dos_api import DosApi
+        from server.dos_host import DosFloodHost, DosPlaybackController
 
-            dos_host = DosFloodHost(fake_model=os.environ.get("DOS_FAKE_MODEL") == "1")
-            dos_host.start()
-            APP.attach_dos_api(DosApi(dos_host))
-            domain_playback = DosPlaybackController(dos_host, PLAYBACK_SOURCES)
-            AUTONOMY_RUNTIME = domain_playback
-        elif args.domain_database is not None:
-            if not args.domain_database.is_file():
-                parser.error(f"Domain OS database not found: {args.domain_database}")
-            from domains.flood.impact_domain import (  # noqa: PLC0415
-                create_flood_impact_domain_system,
-            )
-
-            def create_hosted_domain_system():
-                store = SqliteDomainStore(args.domain_database)
-                try:
-                    system = create_flood_impact_domain_system(store=store)
-                except BaseException:
-                    store.close()
-                    raise
-                return system, store.close
-
-            domain_host = DomainRuntimeHost(create_hosted_domain_system)
-            domain_host.start()
-            APP.attach_domain_runtime(
-                domain_host.read_model,
-                command_runner=domain_host.call,
-                control_target=domain_host.runtime,
-            )
-            domain_playback = DomainPlaybackController(
-                domain_host,
-                PLAYBACK_SOURCES,
-            )
-            AUTONOMY_RUNTIME = domain_playback
+        dos_host = DosFloodHost(fake_model=os.environ.get("DOS_FAKE_MODEL") == "1")
+        dos_host.start()
+        APP.attach_dos_api(DosApi(dos_host))
+        domain_playback = DosPlaybackController(dos_host, PLAYBACK_SOURCES)
+        AUTONOMY_RUNTIME = domain_playback
 
         server = ThreadingHTTPServer((args.host, args.port), Handler)
         print(f"Flood server running at http://{args.host}:{args.port}")
@@ -614,11 +565,9 @@ def main():
     finally:
         if server is not None:
             server.server_close()
-        if domain_playback is not None:
-            domain_playback.close()
         APP.close_domain_api()
-        if domain_host is not None:
-            domain_host.stop()
+        if dos_host is not None:
+            dos_host.stop()
 
 
 if __name__ == "__main__":
