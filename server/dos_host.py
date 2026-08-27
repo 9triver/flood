@@ -158,8 +158,10 @@ class DosFloodHost:
                 "workspace_id": "dos",
             }
 
-    def start_playback(self, **_) -> dict[str, Any]:
+    def start_playback(self, speed_multiplier: float = 20, source_id=None, **_) -> dict[str, Any]:
         with self._lock:
+            if speed_multiplier:
+                self._speed = max(0.1, float(speed_multiplier))
             self._phase = "playing"
             self._wakeup.set()
         return self.playback_status()
@@ -195,8 +197,10 @@ class DosFloodHost:
             self._phase = "stopped"
         return self.playback_status()
 
-    def restart_playback(self, **_) -> dict[str, Any]:
+    def restart_playback(self, speed_multiplier: float = 20, source_id=None, **_) -> dict[str, Any]:
         with self._lock:
+            if speed_multiplier:
+                self._speed = max(0.1, float(speed_multiplier))
             self._index = 0
             self._phase = "playing"
             self._wakeup.set()

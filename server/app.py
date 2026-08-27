@@ -529,7 +529,9 @@ def _coerce_float(value: str, default: float) -> float:
 
 
 def _is_domain_forecast_product_id(value: str) -> bool:
-    return str(value or "").startswith("water.flood.forecast/")
+    # legacy: water.flood.forecast/<id>; dos: fcst_<seq>
+    selected = str(value or "")
+    return selected.startswith("water.flood.forecast/") or selected.startswith("fcst_")
 
 
 def _domain_command_action(path: str) -> tuple[str, str] | None:
@@ -556,9 +558,9 @@ def main():
         help="Serve persisted Domain OS projections, products and events.",
     )
     parser.add_argument(
-        "--dos",
+        "--legacy-domain",
         action="store_true",
-        help="Host the dos kernel (next-generation Domain OS) instead of the legacy runtime.",
+        help="Host the legacy domain_os runtime instead of the dos kernel (default: dos).",
     )
     args = parser.parse_args()
     domain_host = None
@@ -566,7 +568,7 @@ def main():
     dos_host = None
     server = None
     try:
-        if args.dos:
+        if not args.legacy_domain and args.domain_database is None:
             import os
 
             from server.dos_api import DosApi

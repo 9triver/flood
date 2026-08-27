@@ -114,8 +114,8 @@ class FloodApp:
         *,
         domain_product_id: str | None = None,
     ) -> dict[str, Any]:
-        if domain_product_id:
-            return self.domain_api.views.forecast_grid_meta(domain_product_id)
+        if domain_product_id or self._dos_views_active():
+            return self.domain_api.views.forecast_grid_meta(domain_product_id or forecast_id)
         return self._domain_service.hydrodynamic_grid_stats(forecast_id)
 
     def hydrodynamic_grid_tile(
@@ -130,12 +130,12 @@ class FloodApp:
         *,
         domain_product_id: str | None = None,
     ) -> dict[str, Any]:
-        if domain_product_id:
+        if domain_product_id or self._dos_views_active():
             return self.domain_api.views.forecast_grid_tile(
                 z,
                 x,
                 y,
-                domain_product_id,
+                domain_product_id or forecast_id,
                 wet_only=wet_only,
                 time_h=time_h,
                 tile_crs=tile_crs,
@@ -143,6 +143,9 @@ class FloodApp:
         return self._domain_service.hydrodynamic_grid_tile(
             z, x, y, forecast_id, wet_only, time_h, tile_crs,
         )
+
+    def _dos_views_active(self) -> bool:
+        return bool(getattr(self._domain_api, "native_forecasts", False))
 
     def analyze_inundation_impacts(
         self,
@@ -161,6 +164,12 @@ class FloodApp:
                 assessment_product_id,
             )
         if forecast_product_id:
+            if self._dos_views_active():
+                return self.domain_api.views.impact_for_forecast(
+                    forecast_product_id,
+                    target_type=target_type,
+                    time_h=time_h,
+                )
             return self.domain_api.views.impact_for_forecast(
                 forecast_product_id,
                 target_type=target_type,
