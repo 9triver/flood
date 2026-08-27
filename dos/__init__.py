@@ -31,6 +31,7 @@ from .capabilities import Capability, CapabilityError
 from .devices import Driver
 from .process import ProcessSpec, ProcessState
 from .kernel import Kernel, ActResult, FrozenPathError, PreconditionError
+from .persistence import JsonlSink, load_journal, recover
 
 __all__ = [
     "Journal",
@@ -47,4 +48,7 @@ __all__ = [
     "ActResult",
     "FrozenPathError",
     "PreconditionError",
+    "JsonlSink",
+    "load_journal",
+    "recover",
 ]
