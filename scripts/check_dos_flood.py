@@ -1,0 +1,71 @@
+"""Closed-loop demo: 感知—判断—控制—反馈 on the dos kernel.
+
+Simulates 珊瑚河 station 808J1510: telemetry arrives, the monitor process
+wakes, the level crosses the warning threshold, the process asks (via
+act(), with human approval) to tighten the sampling interval, the device
+confirms on its next uplink, and fsck commits the transaction.
+
+Run: uv run python scripts/check_dos_flood.py
+"""
+
+from __future__ import annotations
+
+import sys
+import time
+
+sys.path.insert(0, ".")
+
+from dos import Kernel
+from domains.flood.dos_instance import BASE, FAST_INTERVAL, TelemetryStationDriver, build_kernel, spawn_monitor
+
+
+def banner(text: str) -> None:
+    print(f"\n== {text} ==")
+
+
+def main() -> int:
+    kernel = build_kernel(clock=lambda: time.time())
+    driver = kernel.drivers["station-808J1510"]
+    events: list[str] = []
+
+    cap = kernel.grant(BASE, {"read", "set_interval"}, granted_by="demo-boot", description="水位站运行操作")
+    spawn_monitor(kernel, cap.token, events)
+
+    banner("1. 感知：正常水位遥测")
+    kernel.interrupt(driver.device_id, {"level_m": 1.8, "ts": time.time()})
+    kernel.pump()
+    print(f"  level={kernel.read(f'{BASE}/level').value}m  status={kernel.read('/hydro/shanhu/views/level_status').value}")
+    assert kernel.read("/hydro/shanhu/views/level_status").value == "normal"
+
+    banner("2. 判断：水位越过警戒，监视进程唤醒并申请加密采样（特权 → 审批）")
+    kernel.interrupt(driver.device_id, {"level_m": 3.5, "ts": time.time()})
+    kernel.pump()
+    print(f"  events: {events}")
+    pending = kernel.consistency.pending()
+    assert len(pending) == 1 and pending[0].state == "awaiting_approval"
+    txn_id = pending[0].txn_id
+    print(f"  txn {txn_id} awaiting approval (action=set_interval → {FAST_INTERVAL}s)")
+
+    banner("3. 控制：人工批准，命令下发")
+    result = kernel.approve(txn_id, approved_by="值班员-陈", decision=True, reason="汛情加密观测")
+    print(f"  state={result.state}")
+    assert result.state == "dispatched"
+
+    banner("4. 反馈：下一帧遥测携带新采样间隔，fsck 提交事务")
+    kernel.interrupt(driver.device_id, {"level_m": 3.6, "ts": time.time()})
+    kernel.pump()
+    txn = kernel.txn(txn_id)
+    print(f"  txn state={txn.state}  sample_interval={kernel.read(f'{BASE}/sample_interval').value}s")
+    assert txn.state == "committed"
+
+    banner("5. 审计：journal 全程可回放")
+    for record in kernel.journal.replay():
+        label = record.payload.get("event") or record.kind
+        print(f"  #{record.seq:>3} {record.kind:<11} {label} { {k: v for k, v in record.payload.items() if k not in ('event',)} }")
+
+    print("\nOK: dos kernel closed loop verified (感知→判断→控制→反馈)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
