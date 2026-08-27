@@ -39,7 +39,7 @@ from pathlib import Path
 
 sys.path.insert(0, ".")
 
-from dos import JsonlSink, Journal
+from dos import JsonlSink, Journal, mount_assessments, spawn_observer_watchdog
 from dos.gateway import DosGateway
 from dos.mcp_server import build_mcp_server
 from dos.mqtt import InMemoryMqttBus
@@ -49,6 +49,7 @@ from domains.flood.dos_instance import STATION, build_mqtt_kernel, spawn_monitor
 
 PREFIX = "water"
 BASE_TS = 1_800_000_000.0
+ASSESSMENTS = "/hydro/shanhu/assessments"
 
 
 def telemetry(message_id: str, observed_at: float, metrics: dict) -> bytes:
@@ -99,16 +100,27 @@ def main() -> int:
         forecast_runner = fake_forecast_runner
     mount_forecast(kernel, forecast_runner)
     mount_impact(kernel, fake_impact_runner)
+    mount_assessments(kernel, ASSESSMENTS)
 
     monitor_cap = kernel.grant(f"/hydro/shanhu/stations/{STATION}", {"set_sampling_interval"}, "server-boot")
     forecast_cap = kernel.grant("/hydro/shanhu/forecasts", {"run_forecast"}, "server-boot")
     impact_cap = kernel.grant("/hydro/shanhu/impacts", {"analyze_impact"}, "server-boot")
+    assessment_cap = kernel.grant(ASSESSMENTS, {"file_assessment"}, "server-boot")
     kernel_events: list[str] = []
     spawn_monitor(kernel, monitor_cap.token, sink=kernel_events)
     spawn_forecast_trigger(kernel, forecast_cap.token, sink=kernel_events)
     spawn_impact_auto(kernel, impact_cap.token, targets=[{"type": "bridge", "id": "bridge-1"}, {"type": "point", "id": "village-a"}], sink=kernel_events)
 
     stop = threading.Event()
+    gateway = DosGateway(kernel, allow_act_grant=os.environ.get("DOS_ACT_GRANT", "1") == "1")
+
+    # 看守进程：常驻 agent 失联即立案
+    spawn_observer_watchdog(
+        kernel, assessment_cap.token, gateway,
+        expected={"duty-agent": 120.0},
+        check_every=15.0, alert_cooldown=300.0,
+        assessments_base=ASSESSMENTS, sink=kernel_events,
+    )
 
     def publish(topic: str, payload: bytes) -> None:
         bus.inject(topic, payload)
@@ -161,18 +173,66 @@ def main() -> int:
     pump_thread = threading.Thread(target=kernel.run, kwargs={"idle_seconds": 0.05}, daemon=True, name="dos-pump")
     pump_thread.start()
 
+    def duty_agent() -> None:
+        """常驻值班研判 agent（演示）：进程是条件反射，它是第一个理解反射结果的人。
+
+        无状态纪律：不记"上次处理到哪"——读自己立过的最新 situation 评估，
+        若其引用的预测与当前 latest 一致即不重复立案。"""
+        session = gateway.open_session(
+            "duty-agent",
+            read_scopes=("/hydro/shanhu",),
+            act_prefix=ASSESSMENTS,
+            act_actions=["file_assessment"],
+        )
+        sid = session.session_id
+        forecast_latest = "/hydro/shanhu/forecasts/latest"
+        situation_latest = f"{ASSESSMENTS}/by-kind/situation/latest"
+        while not stop.is_set():
+            try:
+                current = gateway.try_read(sid, forecast_latest)
+                generation = current["generation"] if current else -1
+                gateway.wait_for_change(sid, [forecast_latest], {forecast_latest: generation}, timeout=10.0)
+                snap = gateway.try_read(sid, forecast_latest)
+                if snap is None or not snap["value"].get("id"):
+                    continue
+                forecast_id = snap["value"]["id"]
+                prior = gateway.try_read(sid, situation_latest)
+                if prior is not None and prior["value"].get("refs", {}).get("forecast_id") == forecast_id:
+                    continue  # 已对这份预测立过案
+                meta = gateway.try_read(sid, f"/hydro/shanhu/forecasts/{forecast_id}") or {"value": {}}
+                impact = gateway.try_read(sid, "/hydro/shanhu/impacts/latest") or {"value": {}}
+                stats = (meta.get("value") or {}).get("stats") or {}
+                summary = (impact.get("value") or {}).get("id", "评估进行中")
+                gateway.act(
+                    sid, f"{ASSESSMENTS}/latest", "file_assessment",
+                    {
+                        "kind": "situation",
+                        "title": f"态势研判：{forecast_id}",
+                        "content": {
+                            "summary": f"边界总量越阈，模型湿润单元 {stats.get('wet_cells')}、最大水深 {stats.get('max_depth_m')}m；标准影响评估：{summary}。建议关注高危对象。",
+                            "model": (meta.get("value") or {}).get("model", {}),
+                        },
+                        "refs": {"forecast_id": forecast_id, "impact_id": (impact.get("value") or {}).get("id")},
+                        "author": "duty-agent",
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001 — 值守循环不许死
+                print(f"[dos-mcp-server] duty-agent cycle error: {exc}", file=sys.stderr)
+                stop.wait(5.0)
+
+    threading.Thread(target=duty_agent, daemon=True, name="dos-duty-agent").start()
+
     def shutdown() -> None:
         stop.set()
         kernel.stop()
 
     atexit.register(shutdown)
 
-    gateway = DosGateway(kernel, allow_act_grant=os.environ.get("DOS_ACT_GRANT", "1") == "1")
     server = build_mcp_server(gateway, name="dos-flood")
     print(
         f"[dos-mcp-server] journal={journal_path} model={'CNN_V2' if real_model else 'fake'}\n"
-        f"[dos-mcp-server] stations={sorted(stations)} processes=[level-monitor, forecast-trigger, impact-auto]\n"
-        f"[dos-mcp-server] world paths: /hydro/shanhu/{{stations,views,forecasts,impacts}}",
+        f"[dos-mcp-server] stations={sorted(stations)} processes=[level-monitor, forecast-trigger, impact-auto, observer-watchdog]\n"
+        f"[dos-mcp-server] standing agents=[duty-agent] world paths: /hydro/shanhu/{{stations,views,forecasts,impacts,assessments}}",
         file=sys.stderr,
     )
     server.run("stdio")

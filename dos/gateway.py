@@ -45,6 +45,13 @@ class GatewaySession:
     has_act: bool
 
 
+@dataclass
+class _SessionEntry:
+    session: GatewaySession
+    token: str
+    last_used: float
+
+
 def _in_scope(path: str, scopes: tuple[str, ...]) -> bool:
     for scope in scopes:
         scope = scope.rstrip("/")
@@ -56,10 +63,11 @@ def _in_scope(path: str, scopes: tuple[str, ...]) -> bool:
 
 
 class DosGateway:
-    def __init__(self, kernel: Kernel, *, allow_act_grant: bool = True):
+    def __init__(self, kernel: Kernel, *, allow_act_grant: bool = True, idle_ttl: Optional[float] = None):
         self.kernel = kernel
         self.allow_act_grant = allow_act_grant
-        self._sessions: dict[str, tuple[GatewaySession, str]] = {}  # id -> (session, cap token)
+        self.idle_ttl = idle_ttl  # standing sessions stay alive by being used
+        self._sessions: dict[str, _SessionEntry] = {}
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------- sessions
@@ -87,29 +95,60 @@ class DosGateway:
             has_act=has_act,
         )
         with self._lock:
-            self._sessions[session.session_id] = (session, token)
+            self._sessions[session.session_id] = _SessionEntry(session, token, time.time())
         return session
 
     def close_session(self, session_id: str) -> None:
         with self._lock:
             entry = self._sessions.pop(session_id, None)
-        if entry is not None and entry[1]:
-            self.kernel.caps.revoke(entry[1])
+        if entry is not None and entry.token:
+            self.kernel.caps.revoke(entry.token)
 
     def session(self, session_id: str) -> GatewaySession:
         entry = self._sessions.get(session_id)
         if entry is None:
             raise GatewayError(f"unknown session: {session_id}")
-        return entry[0]
+        entry.last_used = time.time()  # liveness: any syscall counts as activity
+        return entry.session
+
+    def activity(self) -> list[dict]:
+        """Liveness snapshot of all open sessions (does not touch them)."""
+        now = time.time()
+        with self._lock:
+            entries = list(self._sessions.values())
+        return [
+            {
+                "session_id": e.session.session_id,
+                "principal": e.session.principal,
+                "has_act": e.session.has_act,
+                "idle_seconds": round(now - e.last_used, 1),
+            }
+            for e in entries
+        ]
+
+    def reap_idle(self) -> list[str]:
+        """Close sessions idle beyond idle_ttl (revoking their capabilities).
+        Returns the closed session ids.  A no-op when idle_ttl is unset."""
+        if self.idle_ttl is None:
+            return []
+        now = time.time()
+        closed: list[str] = []
+        with self._lock:
+            for sid in [s for s, e in self._sessions.items() if now - e.last_used > self.idle_ttl]:
+                entry = self._sessions.pop(sid)
+                closed.append(sid)
+                if entry.token:
+                    self.kernel.caps.revoke(entry.token)
+        return closed
 
     def _token_for(self, session_id: str) -> str:
         entry = self._sessions.get(session_id)
         if entry is None:
             raise GatewayError(f"unknown session: {session_id}")
-        session, token = entry
-        if session.has_act and not token:
+        entry.last_used = time.time()
+        if entry.session.has_act and not entry.token:
             raise GatewayError("session capability was revoked")
-        return token
+        return entry.token
 
     # -------------------------------------------------------------- syscalls
 

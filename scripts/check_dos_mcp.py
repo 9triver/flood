@@ -125,6 +125,22 @@ async def run() -> int:
             )
             print(f"  impact {impact['value']['id']}: {detail['value']['summary']}")
 
+            banner("5b. 常驻值班 agent 已在 T0 立下态势研判（进程是条件反射，它是第一个理解的人）")
+            for _ in range(100):
+                situation = await client.call(
+                    "read_path", session=session,
+                    path="/hydro/shanhu/assessments/by-kind/situation/latest",
+                )
+                if situation is not None and situation["value"].get("refs", {}).get("forecast_id") == latest["value"]["id"]:
+                    break
+                await asyncio.sleep(0.2)
+            filed = await client.call(
+                "read_path", session=session,
+                path=f"/hydro/shanhu/assessments/{situation['value']['id']}",
+            )
+            print(f"  assessment {filed['value']['id']} by {filed['value']['author']}: {filed['value']['title']}")
+            print(f"  {filed['value']['content']['summary']}")
+
             banner("6. 镜像与 watch：查历史、等世界变化")
             rows = await client.call(
                 "history", session=session,

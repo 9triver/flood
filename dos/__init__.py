@@ -33,6 +33,7 @@ from .process import ProcessSpec, ProcessState
 from .kernel import Kernel, ActResult, FrozenPathError, PreconditionError, InvalidActionError
 from .persistence import JsonlSink, load_journal, recover
 from .history import ObservationHistory, Sample
+from .assessment import AssessmentDevice, FILE_ASSESSMENT, mount_assessments, spawn_observer_watchdog
 from .gateway import DosGateway, GatewaySession, GatewayError, ReadScopeError
 
 __all__ = [
@@ -56,6 +57,10 @@ __all__ = [
     "recover",
     "ObservationHistory",
     "Sample",
+    "AssessmentDevice",
+    "FILE_ASSESSMENT",
+    "mount_assessments",
+    "spawn_observer_watchdog",
     "DosGateway",
     "GatewaySession",
     "GatewayError",
