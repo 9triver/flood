@@ -304,6 +304,34 @@ class TestProcesses(unittest.TestCase):
         kernel.pump()
         self.assertEqual(order, ["high", "low"])
 
+    def test_timer_wake_source(self):
+        now = {"t": 1000.0}
+        kernel = Kernel(clock=lambda: now["t"])
+        runs: list[float] = []
+        proc = kernel.spawn(
+            ProcessSpec(
+                name="periodic",
+                watches=(),
+                handler=lambda ctx: runs.append(ctx.kernel.clock()),
+                every_seconds=60.0,
+            )
+        )
+        kernel.pump()
+        self.assertEqual(runs, [])  # first due is at register + every
+        now["t"] += 59.0
+        kernel.pump()
+        self.assertEqual(runs, [])  # not due yet
+        now["t"] += 2.0  # 1000 + 61 >= due 1060
+        kernel.pump()
+        self.assertEqual(runs, [1061.0])
+        now["t"] += 10.0
+        kernel.pump()
+        self.assertEqual(len(runs), 1)  # next due at 1061 + 60
+        now["t"] += 55.0
+        kernel.pump()
+        self.assertEqual(len(runs), 2)
+        self.assertEqual(proc.state.value, "idle")
+
     def test_budget_overrun_marks_failure_and_kernel_survives(self):
         import time as _time
 

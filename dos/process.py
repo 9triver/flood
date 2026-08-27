@@ -77,6 +77,7 @@ class ProcessSpec:
     budget_seconds: float = 10.0  # per-run time budget; overrun = failure
     restart_limit: int = 3
     backoff_seconds: float = 0.0
+    every_seconds: Optional[float] = None  # timer wake source (periodic)
     description: str = ""
 
 
@@ -90,6 +91,7 @@ class Process:
     last_run_ts: Optional[float] = None
     _wake_pending: bool = False
     _not_ready_until: float = 0.0
+    _next_due: float = 0.0
 
 
 class Scheduler:
@@ -103,6 +105,8 @@ class Scheduler:
 
     def register(self, spec: ProcessSpec, namespace) -> Process:
         proc = Process(spec=spec)
+        if spec.every_seconds:
+            proc._next_due = self._clock() + spec.every_seconds
         self._processes[spec.name] = proc
 
         def on_commit(snapshot) -> None:
@@ -135,10 +139,20 @@ class Scheduler:
             self._cycle_lock.release()
 
     def _run_cycle(self, ctx_factory: Callable[[Process], ProcessContext]) -> list[str]:
+        now = self._clock()
         runnable = [p for p in self._processes.values() if p._wake_pending and p.state is not ProcessState.FAILED]
+        runnable_ids = {id(p) for p in runnable}
+        for proc in self._processes.values():  # timer wake source
+            if (
+                proc.spec.every_seconds
+                and proc.state is not ProcessState.FAILED
+                and now >= proc._next_due
+            ):
+                proc._wake_pending = True
+                if id(proc) not in runnable_ids:
+                    runnable.append(proc)
         runnable.sort(key=lambda p: -p.spec.priority)
         ran: list[str] = []
-        now = self._clock()
         for proc in runnable:
             proc._wake_pending = False
             if proc.state is ProcessState.BACKOFF and now < proc._not_ready_until:
@@ -160,6 +174,8 @@ class Scheduler:
                     proc._not_ready_until = now + proc.spec.backoff_seconds
             proc.runs += 1
             proc.last_run_ts = now
+            if proc.spec.every_seconds:
+                proc._next_due = now + proc.spec.every_seconds
         return ran
 
     def _run_one(self, proc: Process, ctx: ProcessContext) -> Optional[str]:

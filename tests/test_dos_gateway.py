@@ -109,6 +109,18 @@ class TestWatchLongPoll(unittest.TestCase):
         self.assertGreaterEqual(time.time() - started, 0.25)
         self.assertEqual(result["changed"], {})
 
+    def test_empty_paths_is_a_pure_timed_wait(self):
+        """No watched paths -> wake exactly at the timeout (an observer
+        agent's periodic tick)."""
+        gw = make_gateway()
+        session = gw.open_session("observer")
+        started = time.time()
+        result = gw.wait_for_change(session.session_id, [], {}, timeout=0.2)
+        elapsed = time.time() - started
+        self.assertGreaterEqual(elapsed, 0.19)
+        self.assertLess(elapsed, 1.0)
+        self.assertEqual(result, {"changed": {}, "generations": {}})
+
     def test_watch_scope_enforced(self):
         gw = make_gateway()
         session = gw.open_session("scoped", read_scopes=("/plant",))
