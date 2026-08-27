@@ -74,6 +74,7 @@ class Namespace:
         self._nodes: dict[str, _Node] = {}
         self._watchers: list[tuple[str, Callable[[Snapshot], None]]] = []
         self._invalidations: list[str] = []
+        self.watch_errors: list[str] = []
 
     # ---------------------------------------------------------------- state
 
@@ -94,7 +95,10 @@ class Namespace:
         snapshot = node.snapshot(path)
         for sub, cb in list(self._watchers):
             if _matches(sub, path):
-                cb(snapshot)
+                try:
+                    cb(snapshot)
+                except Exception as exc:  # watchers must never corrupt the commit path
+                    self.watch_errors.append(f"{path}: {type(exc).__name__}: {exc}")
         return advanced
 
     def read(self, path: str) -> Snapshot:

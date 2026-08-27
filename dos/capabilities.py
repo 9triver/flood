@@ -47,6 +47,11 @@ class CapabilityRegistry:
         self._by_token[cap.token] = cap
         return cap
 
+    def register(self, cap: Capability) -> Capability:
+        """Re-register an existing capability verbatim (journal replay)."""
+        self._by_token[cap.token] = cap
+        return cap
+
     def revoke(self, token: str) -> None:
         self._by_token.pop(token, None)
 

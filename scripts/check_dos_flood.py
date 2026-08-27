@@ -28,7 +28,7 @@ def main() -> int:
     driver = kernel.drivers["station-808J1510"]
     events: list[str] = []
 
-    cap = kernel.grant(BASE, {"read", "set_interval"}, granted_by="demo-boot", description="水位站运行操作")
+    cap = kernel.grant(BASE, {"set_interval"}, granted_by="demo-boot", description="水位站采样配置操作")
     spawn_monitor(kernel, cap.token, events)
 
     banner("1. 感知：正常水位遥测")
@@ -45,6 +45,13 @@ def main() -> int:
     assert len(pending) == 1 and pending[0].state == "awaiting_approval"
     txn_id = pending[0].txn_id
     print(f"  txn {txn_id} awaiting approval (action=set_interval → {FAST_INTERVAL}s)")
+
+    banner("2b. 幂等：审批挂起期间又一帧遥测，监视进程重试 act → 复用同一事务")
+    kernel.interrupt(driver.device_id, {"level_m": 3.55, "ts": time.time()})
+    kernel.pump()
+    print(f"  events: {events[-2:]}")
+    assert len(kernel.consistency.pending()) == 1, "重试不得产生第二个事务"
+    assert kernel.txn(txn_id).state == "awaiting_approval"
 
     banner("3. 控制：人工批准，命令下发")
     result = kernel.approve(txn_id, approved_by="值班员-陈", decision=True, reason="汛情加密观测")

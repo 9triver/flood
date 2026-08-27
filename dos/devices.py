@@ -32,6 +32,7 @@ class PendingTxn:
     opened_seq: int = 0
     dispatched_seq: int = 0
     deadline: Optional[float] = None
+    approval_deadline: Optional[float] = None
     approval: Optional[dict] = None
     error: Optional[str] = None
     outcome_seq: Optional[int] = None
@@ -43,6 +44,7 @@ class PendingTxn:
 
 class Driver(ABC):
     device_id: str = ""
+    kernel = None  # set by attach()
 
     # privileged actions require approval (privilege escalation) before dispatch
     privileged_actions: frozenset[str] = frozenset()

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 import unittest
 from typing import Optional
 
@@ -16,6 +18,7 @@ from dos import (
     Snapshot,
 )
 from dos.devices import PendingTxn
+from dos.persistence import JsonlSink, load_journal, recover
 
 
 class ValveDriver(Driver):
@@ -191,6 +194,75 @@ class TestActSyscall(unittest.TestCase):
         kernel.consistency.thaw("/plant/valve-1", "manual inspection done")
         self.assertIsNone(kernel.consistency.is_frozen("/plant/valve-1"))
 
+    def test_act_idempotent_reuse_of_inflight_txn(self):
+        kernel = make_kernel()
+        kernel.drivers["valve-1"].privileged_actions = frozenset()
+        cap = kernel.grant("/plant/valve-1", {"close"}, "test")
+        first = kernel.act(cap.token, "/plant/valve-1", "close")
+        second = kernel.act(cap.token, "/plant/valve-1", "close")  # retry while in flight
+        self.assertEqual(first.txn_id, second.txn_id)
+        self.assertTrue(second.reused)
+        self.assertEqual(len(kernel.consistency.pending()), 1)
+
+    def test_stale_evidence_never_commits(self):
+        kernel = make_kernel()
+        kernel.drivers["valve-1"].privileged_actions = frozenset()
+        # the world already reports the target position
+        kernel.interrupt("valve-1", {"position": "closed"})
+        kernel.pump()
+        cap = kernel.grant("/plant/valve-1", {"close"}, "test")
+        kernel.drivers["valve-1"].dispatched.clear()
+        result = kernel.act(cap.token, "/plant/valve-1", "close")
+        kernel.pump()
+        # namespace value equals the target, but the evidence predates the
+        # dispatch — the txn must remain open until fresh telemetry arrives
+        self.assertEqual(kernel.txn(result.txn_id).state, "dispatched")
+        kernel.interrupt("valve-1", {"position": "closed"})
+        kernel.pump()
+        self.assertEqual(kernel.txn(result.txn_id).state, "committed")
+
+    def test_approval_timeout_fails_txn(self):
+        now = {"t": 1000.0}
+        kernel = Kernel(clock=lambda: now["t"])
+        kernel.mount("/plant", ValveDriver())
+        cap = kernel.grant("/plant/valve-1", {"close"}, "test")
+        result = kernel.act(cap.token, "/plant/valve-1", "close")  # close is privileged
+        self.assertEqual(result.state, "awaiting_approval")
+        now["t"] += 301.0  # past default_approval_timeout (300s)
+        kernel.pump()
+        self.assertEqual(kernel.txn(result.txn_id).state, "failed")
+        self.assertIn("approval timed out", kernel.txn(result.txn_id).error)
+
+
+class TestMounting(unittest.TestCase):
+    def test_duplicate_prefix_rejected(self):
+        kernel = make_kernel()
+        with self.assertRaises(RuntimeError):
+            kernel.mount("/plant", ValveDriver())
+
+    def test_longest_prefix_wins(self):
+        kernel = make_kernel()
+        specific = ValveDriver()
+        specific.device_id = "valve-1-specific"
+        kernel.mount("/plant/valve-1", specific)
+        cap = kernel.grant("/plant/valve-1", {"close"}, "test")
+        result = kernel.act(cap.token, "/plant/valve-1", "close")
+        self.assertIn(kernel.txn(result.txn_id).device_id, ("valve-1-specific",))
+        self.assertEqual(kernel.txn(result.txn_id).device_id, "valve-1-specific")
+
+
+class TestWatchIsolation(unittest.TestCase):
+    def test_watcher_exception_does_not_break_commit(self):
+        kernel = Kernel()
+
+        def boom(_snap):
+            raise RuntimeError("watcher bug")
+
+        kernel.watch("/a", boom)
+        kernel.namespace.write("/a/value", 1, source_seq=1)
+        self.assertEqual(kernel.read("/a/value").value, 1)
+        self.assertEqual(len(kernel.namespace.watch_errors), 1)
+
 
 class TestProcesses(unittest.TestCase):
     def test_wakeup_and_run(self):
@@ -228,6 +300,27 @@ class TestProcesses(unittest.TestCase):
         kernel.pump()
         self.assertEqual(order, ["high", "low"])
 
+    def test_budget_overrun_marks_failure_and_kernel_survives(self):
+        import time as _time
+
+        kernel = make_kernel()
+        side_effects: list[str] = []
+
+        def hog(ctx):
+            _time.sleep(0.3)
+            side_effects.append("done")
+
+        proc = kernel.spawn(ProcessSpec(name="hog", watches=("/plant/valve-1/position",), handler=hog, budget_seconds=0.05, restart_limit=1))
+        kernel.interrupt("valve-1", {"position": "open"})
+        stats = kernel.pump()
+        self.assertNotIn("hog", stats["ran"])
+        self.assertEqual(proc.state.value, "backoff")
+        self.assertIn("budget", proc.last_error)
+        # kernel keeps pumping regardless
+        kernel.interrupt("valve-1", {"position": "closed"})
+        kernel.pump()
+        self.assertEqual(kernel.read("/plant/valve-1/position").value, "closed")
+
 
 class TestKernelBasics(unittest.TestCase):
     def test_no_device_mounted(self):
@@ -243,6 +336,91 @@ class TestKernelBasics(unittest.TestCase):
         stats = kernel.pump()
         self.assertEqual(stats["interrupts"], 2)
         self.assertEqual(kernel.read("/plant/valve-1/position").value, "closed")
+
+
+class PathDriver(Driver):
+    """Generic driver for recovery scenarios: a value path per mount."""
+
+    def __init__(self, base: str, obey: bool = True, privileged=()):
+        self.base = base.rstrip("/")
+        self.device_id = "dev" + self.base.replace("/", "-")
+        self.obey = obey
+        self.privileged_actions = frozenset(privileged)
+        self.dispatched: list[PendingTxn] = []
+
+    def normalize(self, raw):
+        yield f"{self.base}/value", raw
+
+    def dispatch(self, txn):
+        self.dispatched.append(txn)
+
+    def verify(self, txn, read):
+        snap = read(f"{self.base}/value")
+        if snap is None:
+            return "pending"
+        return "committed" if snap.value == txn.args.get("want") else "pending"
+
+
+class TestRecovery(unittest.TestCase):
+    def _scenario(self, journal, now):
+        kernel = Kernel(journal=journal, clock=lambda: now["t"])
+        plant = PathDriver("/plant", obey=True, privileged=("reset",))
+        deaf = PathDriver("/deaf", obey=False)
+        kernel.mount("/plant", plant)
+        kernel.mount("/deaf", deaf)
+        cap = kernel.grant("/plant", {"set", "reset"}, "boot")
+        deaf_cap = kernel.grant("/deaf", {"set"}, "boot")
+
+        kernel.interrupt(plant.device_id, "ready")
+        kernel.pump()
+        committed = kernel.act(cap.token, "/plant", "set", {"want": "ready"})
+        kernel.interrupt(plant.device_id, "ready")  # fresh evidence
+        kernel.pump()
+        parked = kernel.act(cap.token, "/plant", "reset", {"want": "zero"})  # privileged → awaiting
+        lost = kernel.act(deaf_cap.token, "/deaf/value", "set", {"want": "x"})  # device never obeys
+        now["t"] += 60.0  # past deaf driver's 10s timeout
+        kernel.pump()  # → unknown + frozen
+
+        return kernel, cap, committed, parked, lost
+
+    def test_recover_rebuilds_world_caps_pending_and_freezes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "journal.jsonl")
+            now = {"t": 1000.0}
+            k1, cap, committed, parked, lost = self._scenario(
+                Journal(clock=lambda: now["t"], sink=JsonlSink(path)), now
+            )
+            # preconditions of the scenario itself
+            self.assertEqual(k1.txn(committed.txn_id).state, "committed")
+            self.assertEqual(k1.txn(parked.txn_id).state, "awaiting_approval")
+            self.assertEqual(k1.txn(lost.txn_id).state, "unknown")
+            self.assertIsNotNone(k1.consistency.is_frozen("/deaf/value"))
+
+            # reboot: same journal file, fresh kernel
+            k2 = Kernel(journal=load_journal(path), clock=lambda: 5000.0)
+            k2.mount("/plant", PathDriver("/plant", obey=True, privileged=("reset",)))
+            k2.mount("/deaf", PathDriver("/deaf", obey=False))
+            stats = recover(k2)
+
+            self.assertEqual(stats["capabilities"], 2)
+            self.assertEqual(k2.read("/plant/value").value, "ready")  # namespace rebuilt
+            self.assertEqual(k2.read("/plant/value").source_seq, k1.read("/plant/value").source_seq)
+            # capabilities survive with the same tokens
+            k2.caps.check(cap.token, "/plant", "set")
+            with self.assertRaises(CapabilityError):
+                k2.caps.check(cap.token, "/deaf", "set")
+            # transaction states survive
+            self.assertEqual(k2.txn(committed.txn_id).state, "committed")
+            self.assertEqual(k2.txn(parked.txn_id).state, "awaiting_approval")
+            self.assertGreater(k2.txn(parked.txn_id).approval_deadline, 5000.0)  # fresh grace window
+            self.assertEqual(k2.txn(lost.txn_id).state, "unknown")
+            self.assertIsNotNone(k2.consistency.is_frozen("/deaf/value"))  # freeze survives reboot
+            fresh_deaf_cap = k2.grant("/deaf", {"set"}, "reboot")
+            with self.assertRaises(FrozenPathError):
+                k2.act(fresh_deaf_cap.token, "/deaf/value", "set", {"want": "y"})
+            # and the kernel keeps working after recovery
+            r = k2.act(cap.token, "/plant", "set", {"want": "ready2"})
+            self.assertEqual(r.state, "dispatched")
 
 
 if __name__ == "__main__":
