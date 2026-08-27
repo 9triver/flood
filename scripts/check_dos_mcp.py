@@ -1,9 +1,11 @@
-"""End-to-end MCP check: a real client over stdio against the dos server.
+"""End-to-end MCP check: a real client over stdio against the full flood
+business daemon (scripts/dos_mcp_server.py).
 
-The client plays an agent (as OAG or a TS pi agent would): opens a
-scoped session, reads the world, acts (privileged → approval), approves,
-and follows the transaction to `committed` — crossing process boundaries
-over the MCP protocol the whole way.
+The client plays a 值班 agent: opens a scoped session, reads the world,
+sees the level-monitor process's approval request and resolves it, watches
+a CNN forecast land (produced by the stateless trigger process), follows
+the automatic impact sweep, and queries the mirror — all over the MCP
+protocol, across process boundaries.
 
 Run: uv run python scripts/check_dos_mcp.py
 """
@@ -23,7 +25,10 @@ from mcp.client.stdio import stdio_client
 STATION = "808J1510"
 BASE = f"/hydro/shanhu/stations/{STATION}"
 INTERVAL_PATH = f"{BASE}/sampling_interval_seconds"
+LEVEL_PATH = f"{BASE}/level_m"
 STATUS_PATH = "/hydro/shanhu/views/level_status"
+FORECAST_LATEST = "/hydro/shanhu/forecasts/latest"
+IMPACT_LATEST = "/hydro/shanhu/impacts/latest"
 
 
 def banner(text: str) -> None:
@@ -34,7 +39,7 @@ class Client:
     def __init__(self, session: ClientSession):
         self.session = session
 
-    async def call(self, tool: str, **args) -> dict:
+    async def call(self, tool: str, **args):
         result = await self.session.call_tool(tool, args)
         if getattr(result, "is_error", False):
             raise RuntimeError(f"tool {tool} failed: {[getattr(c, 'text', c) for c in result.content]}")
@@ -45,16 +50,8 @@ class Client:
         if isinstance(payload, dict) and "gateway_error" in payload:
             raise RuntimeError(f"tool {tool} failed: {payload['gateway_error']}")
         if isinstance(payload, dict) and set(payload) == {"result"}:
-            return payload["result"]  # unwrap list-returning tools
+            return payload["result"]
         return payload
-
-
-async def wait_for(predicate, label: str, timeout: float = 15.0) -> None:  # kept for callers
-    deadline = asyncio.get_event_loop().time() + timeout
-    while not predicate():
-        if asyncio.get_event_loop().time() >= deadline:
-            raise TimeoutError(f"timed out waiting for {label}")
-        await asyncio.sleep(0.1)
 
 
 async def run() -> int:
@@ -67,73 +64,90 @@ async def run() -> int:
             await raw.initialize()
             client = Client(raw)
 
-            banner("0. 工具发现：syscall 面即工具面")
+            banner("0. 工具发现")
             tools = await raw.list_tools()
-            print(f"  tools: {[t.name for t in tools.tools]}")
             names = {t.name for t in tools.tools}
-            assert {"open_session", "read_path", "act", "approve", "txn_status", "wait_for_change", "pending_approvals"} <= names
+            print(f"  tools: {sorted(names)}")
+            assert {"open_session", "read_path", "history", "act", "approve", "txn_status", "wait_for_change", "pending_approvals", "list_paths"} <= names
 
-            banner("1. 会话：以 agent 身份开读域 /hydro/shanhu + act 能力")
+            banner("1. 会话与读域")
             session = (await client.call(
                 "open_session",
-                principal="oag-agent",
+                principal="duty-agent",
                 read_scopes=["/hydro/shanhu"],
-                act_prefix=f"/hydro/shanhu/stations/{STATION}",
+                act_prefix="/hydro/shanhu/stations",
                 act_actions=["set_sampling_interval"],
             ))["session_id"]
-            print(f"  session={session}")
-
-            banner("2. 感知：读世界（越警判定为派生视图）")
-            status = await client.call("read_path", session=session, path=STATUS_PATH)
-            print(f"  level_status={status['value']} (generation={status['generation']})")
-
-            banner("3. 读域治理：越域读取被拒绝")
+            visible = await client.call("list_paths", session=session, under="/")
+            print(f"  可见路径 {len(visible)} 条，如 {visible[:3]}")
             try:
-                await client.call("read_path", session=session, path="/proc/secret")
+                await client.call("read_path", session=session, path="/etc/hostname")
                 raise AssertionError("out-of-scope read must fail")
             except RuntimeError as exc:
-                print(f"  denied as expected: {exc}")
-                assert "may not read" in str(exc)
+                print(f"  越域读取被拒: {exc}")
 
-            banner("4. 控制：act 申请加密采样（特权 → 挂起待审批）")
-            result = await client.call(
-                "act", session=session, path=INTERVAL_PATH,
-                action="set_sampling_interval", args={"seconds": 60},
-            )
-            print(f"  act -> {result}")
-            assert result["state"] == "awaiting_approval"
-
-            banner("5. 审批：值班员经审批工作清单放行")
+            banner("2. 观察世界：水位越警，监视进程已提出加密采样申请")
+            status = await client.call("read_path", session=session, path=STATUS_PATH)
+            print(f"  level_status={status['value']} (generation={status['generation']})")
             pending = await client.call("pending_approvals")
-            print(f"  pending: {pending}")
-            assert pending[0]["txn_id"] == result["txn_id"]
-            approved = await client.call(
-                "approve", txn_id=result["txn_id"], approved_by="值班员-陈",
-                decision=True, reason="MCP 冒烟加密采样",
-            )
-            print(f"  approve -> {approved}")
-            assert approved["state"] == "dispatched"
+            assert pending, "level-monitor 的申请应已在审批清单里"
+            txn_id = pending[0]["txn_id"]
+            print(f"  审批清单: {pending[0]['action']} {pending[0]['args']} → {txn_id}")
 
-            banner("6. 反馈：等遥测证据，事务提交")
-            status = await client.call("txn_status", txn_id=result["txn_id"])
-            while status["state"] not in ("committed", "failed", "unknown"):
+            banner("3. 值班 agent 代人放行（进程的待办，agent 处理）")
+            approved = await client.call("approve", txn_id=txn_id, approved_by="值班员-陈", decision=True, reason="汛情加密")
+            print(f"  approve → {approved['state']}")
+            for _ in range(100):
+                state = (await client.call("txn_status", txn_id=txn_id))["state"]
+                if state == "committed":
+                    break
                 await asyncio.sleep(0.2)
-                status = await client.call("txn_status", txn_id=result["txn_id"])
-            print(f"  txn {status['txn_id']} -> {status['state']}")
-            assert status["state"] == "committed"
+            print(f"  txn {txn_id} → {state}（下一帧遥测证实）")
+            assert state == "committed"
 
-            banner("7. watch 桥接：长轮询等 generation 前进")
-            level_path = f"{BASE}/level_m"
-            current = await client.call("read_path", session=session, path=level_path)
-            changed = await client.call(
-                "wait_for_change", session=session, paths=[level_path],
-                since={level_path: current["generation"]}, timeout=15,
+            banner("4. 补课：agent 不在场时，触发进程已把预测做完")
+            latest = await client.call("read_path", session=session, path=FORECAST_LATEST)
+            assert latest is not None and latest["value"].get("id"), "启动窗口越阈，预测应已落地"
+            meta = await client.call("read_path", session=session, path=f"/hydro/shanhu/forecasts/{latest['value']['id']}")
+            print(f"  forecast {latest['value']['id']} committed（journal 序号即身份）")
+            print(f"  输入: {meta['value']['input']}")
+            print(f"  统计: {meta['value']['stats']}")
+
+            banner("5. 自动研判：影响评估进程已跟进标准目标集")
+            for _ in range(100):
+                impact = await client.call("read_path", session=session, path=IMPACT_LATEST)
+                if impact is not None and impact["value"].get("forecast_id") == latest["value"]["id"]:
+                    break
+                await asyncio.sleep(0.2)
+            detail = await client.call(
+                "read_path", session=session,
+                path=f"/hydro/shanhu/impacts/{impact['value']['id']}",
             )
-            print(f"  changed: {changed['changed']}")
-            assert changed["changed"], "watch must observe a later frame"
+            print(f"  impact {impact['value']['id']}: {detail['value']['summary']}")
 
-    print("\nOK: dos MCP gateway verified over stdio (agent session → scoped read → privileged act → approval → committed)")
+            banner("6. 镜像与 watch：查历史、等世界变化")
+            rows = await client.call(
+                "history", session=session,
+                path="/hydro/shanhu/stations/interval1/flow_m3s", limit=3,
+            )
+            for row in rows:
+                print(f"  {datetime_str(row['observed_at'])}  flow={row['value']} m3/s")
+            level = await client.call("read_path", session=session, path=LEVEL_PATH)
+            changed = await client.call(
+                "wait_for_change", session=session, paths=[LEVEL_PATH],
+                since={LEVEL_PATH: level["generation"]}, timeout=15,
+            )
+            assert changed["changed"], "水位每 2 秒更新，watch 应很快返回"
+            print(f"  watch 观测到水位 generation 前进: {changed['changed']}")
+
+    print("\nOK: dos flood daemon verified over MCP (观察→审批→预测→研判→镜像)")
     return 0
+
+
+def datetime_str(ts: float) -> str:
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%m-%d %H:%M")
 
 
 if __name__ == "__main__":
