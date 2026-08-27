@@ -30,7 +30,7 @@ from .namespace import Namespace, Snapshot, NotFound
 from .capabilities import Capability, CapabilityError
 from .devices import Driver
 from .process import ProcessSpec, ProcessState
-from .kernel import Kernel, ActResult, FrozenPathError, PreconditionError
+from .kernel import Kernel, ActResult, FrozenPathError, PreconditionError, InvalidActionError
 from .persistence import JsonlSink, load_journal, recover
 
 __all__ = [
@@ -48,6 +48,7 @@ __all__ = [
     "ActResult",
     "FrozenPathError",
     "PreconditionError",
+    "InvalidActionError",
     "JsonlSink",
     "load_journal",
     "recover",

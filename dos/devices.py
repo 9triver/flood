@@ -76,6 +76,11 @@ class Driver(ABC):
 
     # ------------------------------------------------------------ utilities
 
+    def validate(self, path: str, action: str, args: dict) -> Optional[str]:
+        """Reject invalid act() arguments *before* a transaction is opened
+        (and before approval).  Return an error string, or None if valid."""
+        return None
+
     def on_timeout(self, txn: PendingTxn) -> str:
         """What fsck concludes when the deadline lapses without evidence."""
         return "unknown"

@@ -62,6 +62,10 @@ class PreconditionError(RuntimeError):
     pass
 
 
+class InvalidActionError(ValueError):
+    pass
+
+
 @dataclass(frozen=True)
 class ActResult:
     txn_id: str
@@ -163,6 +167,10 @@ class Kernel:
 
             cap = self.caps.check(token, path, action)
             device = self._device_for(path)
+
+            invalid = device.validate(path, action, args)
+            if invalid:
+                raise InvalidActionError(invalid)
 
             existing = self.consistency.find_pending(device.device_id, path, action, args, expect)
             if existing is not None:

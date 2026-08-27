@@ -16,7 +16,14 @@ import time
 sys.path.insert(0, ".")
 
 from dos import Kernel
-from domains.flood.dos_instance import BASE, FAST_INTERVAL, TelemetryStationDriver, build_kernel, spawn_monitor
+from domains.flood.dos_instance import (
+    FAST_INTERVAL,
+    INTERVAL_PATH,
+    STATUS_PATH,
+    TelemetryStationDriver,
+    build_kernel,
+    spawn_monitor,
+)
 
 
 def banner(text: str) -> None:
@@ -28,14 +35,14 @@ def main() -> int:
     driver = kernel.drivers["station-808J1510"]
     events: list[str] = []
 
-    cap = kernel.grant(BASE, {"set_interval"}, granted_by="demo-boot", description="水位站采样配置操作")
+    cap = kernel.grant(f"/hydro/shanhu/stations", {"set_sampling_interval"}, granted_by="demo-boot", description="水位站采样配置操作")
     spawn_monitor(kernel, cap.token, events)
 
     banner("1. 感知：正常水位遥测")
     kernel.interrupt(driver.device_id, {"level_m": 1.8, "ts": time.time()})
     kernel.pump()
-    print(f"  level={kernel.read(f'{BASE}/level').value}m  status={kernel.read('/hydro/shanhu/views/level_status').value}")
-    assert kernel.read("/hydro/shanhu/views/level_status").value == "normal"
+    print(f"  level={kernel.read('/hydro/shanhu/stations/808J1510/level_m').value}m  status={kernel.read(STATUS_PATH).value}")
+    assert kernel.read(STATUS_PATH).value == "normal"
 
     banner("2. 判断：水位越过警戒，监视进程唤醒并申请加密采样（特权 → 审批）")
     kernel.interrupt(driver.device_id, {"level_m": 3.5, "ts": time.time()})
@@ -44,7 +51,7 @@ def main() -> int:
     pending = kernel.consistency.pending()
     assert len(pending) == 1 and pending[0].state == "awaiting_approval"
     txn_id = pending[0].txn_id
-    print(f"  txn {txn_id} awaiting approval (action=set_interval → {FAST_INTERVAL}s)")
+    print(f"  txn {txn_id} awaiting approval (action=set_sampling_interval → {FAST_INTERVAL}s)")
 
     banner("2b. 幂等：审批挂起期间又一帧遥测，监视进程重试 act → 复用同一事务")
     kernel.interrupt(driver.device_id, {"level_m": 3.55, "ts": time.time()})
@@ -62,13 +69,14 @@ def main() -> int:
     kernel.interrupt(driver.device_id, {"level_m": 3.6, "ts": time.time()})
     kernel.pump()
     txn = kernel.txn(txn_id)
-    print(f"  txn state={txn.state}  sample_interval={kernel.read(f'{BASE}/sample_interval').value}s")
+    print(f"  txn state={txn.state}  sampling_interval={kernel.read(INTERVAL_PATH).value}s")
     assert txn.state == "committed"
 
     banner("5. 审计：journal 全程可回放")
     for record in kernel.journal.replay():
         label = record.payload.get("event") or record.kind
-        print(f"  #{record.seq:>3} {record.kind:<11} {label} { {k: v for k, v in record.payload.items() if k not in ('event',)} }")
+        detail = {k: v for k, v in record.payload.items() if k != "event"}
+        print(f"  #{record.seq:>3} {record.kind:<11} {label} {detail}")
 
     print("\nOK: dos kernel closed loop verified (感知→判断→控制→反馈)")
     return 0
