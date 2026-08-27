@@ -15,7 +15,7 @@ agent-plane governance lives:
 
 Bootstrap posture: ``open_session`` trusts the transport for identity.
 Real deployments front this with authenticated transport (streamable HTTP
-with OAuth headers) — see docs/domain-os/06.
+with OAuth headers) — see docs/domain-os/内核设计.md.
 """
 
 from __future__ import annotations
