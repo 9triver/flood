@@ -49,6 +49,7 @@ from typing import Callable, Optional
 from .capabilities import Capability, CapabilityError, CapabilityRegistry
 from .consistency import Consistency
 from .devices import Driver, PendingTxn
+from .history import ObservationHistory, Sample
 from .journal import Journal, Record
 from .namespace import Namespace, NotFound, Snapshot
 from .process import Process, ProcessContext, ProcessSpec, Scheduler
@@ -83,10 +84,12 @@ class Kernel:
         journal: Optional[Journal] = None,
         clock: Callable[[], float] = time.time,
         default_approval_timeout: float = 300.0,
+        history_retention_seconds: float = 7 * 24 * 3600.0,
     ):
         self.clock = clock
         self.journal = journal if journal is not None else Journal(clock=clock)
         self.namespace = Namespace()
+        self.mirror = ObservationHistory(retention_seconds=history_retention_seconds)
         self.caps = CapabilityRegistry()
         self.consistency = Consistency(self.journal, clock)
         self.scheduler = Scheduler(clock=clock)
@@ -142,6 +145,11 @@ class Kernel:
 
     def try_read(self, path: str) -> Optional[Snapshot]:
         return self.namespace.try_read(path)
+
+    def history(self, path: str, since: Optional[float] = None, until: Optional[float] = None, limit: Optional[int] = None) -> list[Sample]:
+        """Query the observation mirror: raw samples for one path ordered by
+        world time.  Aggregation over them is application logic."""
+        return self.mirror.query(path, since, until, limit)
 
     def watch(self, subscription: str, callback: Callable[[Snapshot], None]) -> Callable[[], None]:
         return self.namespace.watch(subscription, callback)
@@ -240,12 +248,22 @@ class Kernel:
 
         with self._lock:
             interrupts, self._interrupts = self._interrupts[:interrupt_limit], self._interrupts[interrupt_limit:]
-            # bottom halves
+            # bottom halves.  normalize may yield (path, value) or
+            # (path, value, observed_at) — world time rides with the frame.
             for device_id, raw in interrupts:
                 driver = self.drivers[device_id]
-                for path, value in driver.normalize(raw):
-                    record = self.journal.append("observation", {"device_id": device_id, "path": path, "value": value})
+                for item in driver.normalize(raw):
+                    if len(item) == 2:
+                        path, value, observed_at = item[0], item[1], None
+                    else:
+                        path, value, observed_at = item
+                    payload = {"device_id": device_id, "path": path, "value": value}
+                    if observed_at is not None:
+                        payload["observed_at"] = observed_at
+                    record = self.journal.append("observation", payload)
+                    world_time = observed_at if observed_at is not None else record.ts
                     self.namespace.write(path, value, source_seq=record.seq, ts=record.ts)
+                    self.mirror.append(path, value, world_time, record.seq)
                     stats["commits"] += 1
                 stats["interrupts"] += 1
 
@@ -276,7 +294,10 @@ class Kernel:
     # -------------------------------------------------------------- helpers
 
     def _dispatch(self, txn: PendingTxn, driver: Driver) -> None:
-        txn.deadline = self.clock() + driver.default_txn_timeout if driver.default_txn_timeout else None
+        timeout = driver.deadline_for(txn.action)
+        if timeout is None:
+            timeout = driver.default_txn_timeout
+        txn.deadline = self.clock() + timeout if timeout else None
         record = self.consistency.set_state(txn, "dispatched", extra={"device_id": driver.device_id})
         txn.dispatched_seq = record.seq
         driver.dispatch(txn)

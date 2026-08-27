@@ -41,6 +41,24 @@ MIN_SAMPLING_INTERVAL = 5
 MAX_SAMPLING_INTERVAL = 3600
 
 
+def _parse_observed_at(value) -> Optional[float]:
+    """World time of the frame.  Missing -> None (kernel falls back to
+    system time); present but malformed -> caller drops the frame."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return None
+    from datetime import datetime
+
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.timestamp()
+
+
 def topic_matches(topic_filter: str, topic: str) -> bool:
     filters = topic_filter.split("/")
     parts = topic.split("/")
@@ -248,7 +266,7 @@ class MqttTelemetryDriver(Driver):
 
     # ------------------------------------------------------------ top half
 
-    def normalize(self, raw: object) -> Iterable[tuple[str, object]]:
+    def normalize(self, raw: object) -> Iterable[tuple]:
         self.received += 1
         topic, payload = raw
         station = self._station_from_topic(topic)
@@ -266,6 +284,11 @@ class MqttTelemetryDriver(Driver):
             self.dropped_malformed += 1
             self.last_error = "telemetry must carry a non-empty metrics object"
             return
+        observed_at = _parse_observed_at(message.get("observed_at"))
+        if observed_at is None and message.get("observed_at") is not None:
+            self.dropped_malformed += 1
+            self.last_error = "telemetry observed_at must be ISO-8601 with timezone"
+            return
         message_id = str(message.get("message_id") or "")
         if message_id:
             if message_id in self._seen_set:
@@ -277,7 +300,10 @@ class MqttTelemetryDriver(Driver):
             self._seen_set.add(message_id)
         for metric, entry in message["metrics"].items():
             value = entry["value"] if isinstance(entry, dict) else entry
-            yield self.metric_path(station, str(metric)), value
+            if observed_at is not None:
+                yield self.metric_path(station, str(metric)), value, observed_at
+            else:
+                yield self.metric_path(station, str(metric)), value
 
     # -------------------------------------------------------------- downlink
 

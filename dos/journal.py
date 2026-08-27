@@ -25,20 +25,38 @@ class Record:
 
 
 class Journal:
-    """Monotonic, append-only log.  Records are frozen and never edited."""
+    """Monotonic, append-only log.  Records are frozen and never edited.
 
-    def __init__(self, clock: Callable[[], float] = time.time, sink: Optional[Callable[[Record], None]] = None):
+    ``hot_tail`` bounds the in-memory window (the durable sink, if any,
+    still receives every record; recovery reads the file).  The mirror
+    (dos.history) takes over recent-history queries, so the hot journal
+    only needs to serve recent audits."""
+
+    def __init__(
+        self,
+        clock: Callable[[], float] = time.time,
+        sink: Optional[Callable[[Record], None]] = None,
+        hot_tail: Optional[int] = None,
+    ):
         self._clock = clock
         self._sink = sink
+        self._hot_tail = hot_tail
         self._records: list[Record] = []
         self._seq = itertools.count(1)
 
     def append(self, kind: str, payload: dict) -> Record:
         record = Record(seq=next(self._seq), ts=self._clock(), kind=kind, payload=dict(payload))
         self._records.append(record)
+        if self._hot_tail is not None and len(self._records) > self._hot_tail:
+            del self._records[: len(self._records) - self._hot_tail]
         if self._sink is not None:
             self._sink(record)
         return record
+
+    def trim(self, keep: Optional[int] = None) -> None:
+        keep = self._hot_tail if keep is None else keep
+        if keep is not None and len(self._records) > keep:
+            del self._records[: len(self._records) - keep]
 
     def tail(self, after_seq: int = 0) -> list[Record]:
         return [r for r in self._records if r.seq > after_seq]

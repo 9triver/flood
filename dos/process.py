@@ -56,6 +56,12 @@ class ProcessContext:
     def try_read(self, path: str):
         return self.kernel.try_read(path)
 
+    def history(self, path: str, since=None, until=None, limit=None):
+        """Query the observation mirror (raw samples by world time)."""
+        if self._cancelled:
+            raise ContextCancelled(f"process {self.process.spec.name} exceeded its budget; syscall refused")
+        return self.kernel.history(path, since, until, limit)
+
     def act(self, token: str, path: str, action: str, args: Optional[dict] = None, expect: Optional[dict] = None):
         if self._cancelled:
             raise ContextCancelled(f"process {self.process.spec.name} exceeded its budget; syscall refused")

@@ -76,6 +76,11 @@ class Driver(ABC):
 
     # ------------------------------------------------------------ utilities
 
+    def deadline_for(self, action: str) -> Optional[float]:
+        """Per-action transaction deadline in seconds (e.g. long-running
+        compute jobs); None falls back to default_txn_timeout."""
+        return None
+
     def validate(self, path: str, action: str, args: dict) -> Optional[str]:
         """Reject invalid act() arguments *before* a transaction is opened
         (and before approval).  Return an error string, or None if valid."""

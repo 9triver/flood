@@ -34,7 +34,11 @@ class ValveDriver(Driver):
 
     def normalize(self, raw):
         self.position = raw["position"]
-        yield "/plant/valve-1/position", self.position
+        observed_at = raw.get("ts")
+        if observed_at is not None:
+            yield "/plant/valve-1/position", self.position, float(observed_at)
+        else:
+            yield "/plant/valve-1/position", self.position
 
     def dispatch(self, txn):
         self.dispatched.append(txn)

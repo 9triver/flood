@@ -32,6 +32,7 @@ from .devices import Driver
 from .process import ProcessSpec, ProcessState
 from .kernel import Kernel, ActResult, FrozenPathError, PreconditionError, InvalidActionError
 from .persistence import JsonlSink, load_journal, recover
+from .history import ObservationHistory, Sample
 from .gateway import DosGateway, GatewaySession, GatewayError, ReadScopeError
 
 __all__ = [
@@ -53,6 +54,8 @@ __all__ = [
     "JsonlSink",
     "load_journal",
     "recover",
+    "ObservationHistory",
+    "Sample",
     "DosGateway",
     "GatewaySession",
     "GatewayError",

@@ -62,6 +62,8 @@ def recover(kernel) -> dict:
         kind, payload = record.kind, record.payload
         if kind == "observation":
             kernel.namespace.write(payload["path"], payload["value"], source_seq=record.seq, ts=record.ts)
+            world_time = payload.get("observed_at", record.ts)
+            kernel.mirror.append(payload["path"], payload["value"], world_time, record.seq)
             stats["observations"] += 1
         elif kind == "capability" and payload.get("event") == "grant":
             kernel.caps.register(
@@ -86,8 +88,11 @@ def recover(kernel) -> dict:
         if txn.state == "awaiting_approval":
             txn.approval_deadline = now + kernel.default_approval_timeout
         elif txn.state == "dispatched" and driver is not None:
-            deadline = driver.default_txn_timeout
-            txn.deadline = now + deadline if deadline else None
+            timeout = driver.deadline_for(txn.action)
+            if timeout is None:
+                timeout = driver.default_txn_timeout
+            txn.deadline = now + timeout if timeout else None
+    kernel.journal.trim()
     return stats
 
 

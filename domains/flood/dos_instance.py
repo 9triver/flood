@@ -82,11 +82,12 @@ class TelemetryStationDriver(Driver):
         self._last_emitted_interval = None
 
     # top half: raw frame {"level_m": float, "ts": float}
-    def normalize(self, raw: object) -> Iterable[tuple[str, object]]:
-        yield LEVEL_PATH, float(raw["level_m"])
+    def normalize(self, raw: object) -> Iterable[tuple]:
+        observed_at = float(raw.get("ts") or time.time())
+        yield LEVEL_PATH, float(raw["level_m"]), observed_at
         if self.sampling_interval != self._last_emitted_interval:
             self._last_emitted_interval = self.sampling_interval
-            yield INTERVAL_PATH, self.sampling_interval
+            yield INTERVAL_PATH, self.sampling_interval, observed_at
 
     # downlink
     def dispatch(self, txn: PendingTxn) -> None:

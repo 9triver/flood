@@ -6,6 +6,7 @@ for agent runtimes (Python OAG, TS pi agent, anything with an MCP client):
     open_session(principal, read_scopes, act_prefix, act_actions)
     read_path(session, path)                -> value + generation
     list_paths(session, under)
+    history(session, path, since, until, limit) -> mirror query by world time
     act(session, path, action, args, expect) -> txn handle (state may be
                                                 awaiting_approval)
     pending_approvals()                      -> human-plane work list
@@ -85,6 +86,20 @@ def build_mcp_server(gateway: DosGateway, *, name: str = "dos", instructions: Op
     def list_paths(session: str, under: str = "/") -> list[str]:
         """List readable namespace paths under a prefix."""
         return gateway.list_paths(session, under)
+
+    @server.tool()
+    @_safe
+    def history(
+        session: str,
+        path: str,
+        since: Optional[float] = None,
+        until: Optional[float] = None,
+        limit: Optional[int] = None,
+    ) -> list[dict[str, Any]]:
+        """Query the observation mirror: raw samples of one path ordered by
+        world time (observed_at, unix seconds).  Aggregation is the
+        caller's job — the kernel mirrors reality, it does not interpret it."""
+        return gateway.history(session, path, since, until, limit)
 
     @server.tool()
     @_safe

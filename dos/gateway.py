@@ -139,6 +139,21 @@ class DosGateway:
         session = self.session(session_id)
         return [p for p in self.kernel.namespace.paths(under) if _in_scope(p, session.read_scopes)]
 
+    def history(
+        self,
+        session_id: str,
+        path: str,
+        since: Optional[float] = None,
+        until: Optional[float] = None,
+        limit: Optional[int] = None,
+    ) -> list[dict]:
+        """Query the observation mirror: raw samples by world time."""
+        self._check_read_scope(session_id, path)
+        return [
+            {"path": s.path, "observed_at": s.observed_at, "source_seq": s.source_seq, "value": s.value}
+            for s in self.kernel.history(path, since, until, limit)
+        ]
+
     def act(self, session_id: str, path: str, action: str, args: Optional[dict] = None, expect: Optional[dict] = None) -> dict:
         token = self._token_for(session_id)
         if not token:
