@@ -132,6 +132,8 @@ class Consistency:
                 self.set_state(txn, "committed")
             elif verdict == "failed":
                 self.set_state(txn, "failed", error="refuted by telemetry")
+            elif isinstance(verdict, str) and verdict.startswith("failed:"):
+                self.set_state(txn, "failed", error=verdict[len("failed:"):].strip() or None)
 
     def expire(self, drivers: dict) -> None:
         now = self._clock()
