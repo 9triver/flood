@@ -141,7 +141,16 @@ async def run() -> int:
             print(f"  assessment {filed['value']['id']} by {filed['value']['author']}: {filed['value']['title']}")
             print(f"  {filed['value']['content']['summary']}")
 
-            banner("6. 镜像与 watch：查历史、等世界变化")
+            banner("6. 资产：领域对象库已入世界（GIS 参考数据）")
+            bridges = await client.call("list_paths", session=session, under="/hydro/shanhu/assets/Bridge")
+            print(f"  Bridge 对象 {len(bridges)} 个")
+            bridge = await client.call("read_path", session=session, path=bridges[0])
+            print(f"  {bridges[0].split('/')[-1]}: geometry={bridge['value']['geometry']}, crs={bridge['value'].get('geometry_crs')}")
+            rivers = await client.call("read_path", session=session, path="/hydro/shanhu/assets/River/shanhu")
+            handle = rivers["value"]["geometry"]
+            print(f"  shanhu(河): 大几何走句柄 vertices={handle['vertices']} crs={handle['crs']}")
+
+            banner("7. 镜像与 watch：查历史、等世界变化")
             rows = await client.call(
                 "history", session=session,
                 path="/hydro/shanhu/stations/interval1/flow_m3s", limit=3,

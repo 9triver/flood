@@ -34,6 +34,7 @@ from .kernel import Kernel, ActResult, FrozenPathError, PreconditionError, Inval
 from .persistence import JsonlSink, load_journal, recover
 from .history import ObservationHistory, Sample
 from .assessment import AssessmentDevice, FILE_ASSESSMENT, mount_assessments, spawn_observer_watchdog
+from .asset import AssetDevice, UPDATE_ASSETS, mount_assets
 from .gateway import DosGateway, GatewaySession, GatewayError, ReadScopeError
 
 __all__ = [
@@ -61,6 +62,9 @@ __all__ = [
     "FILE_ASSESSMENT",
     "mount_assessments",
     "spawn_observer_watchdog",
+    "AssetDevice",
+    "UPDATE_ASSETS",
+    "mount_assets",
     "DosGateway",
     "GatewaySession",
     "GatewayError",

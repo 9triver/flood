@@ -43,6 +43,7 @@ from dos import JsonlSink, Journal, mount_assessments, spawn_observer_watchdog
 from dos.gateway import DosGateway
 from dos.mcp_server import build_mcp_server
 from dos.mqtt import InMemoryMqttBus
+from domains.flood.dos_assets import mount_flood_assets
 from domains.flood.dos_forecast import BOUNDARIES, mount_forecast, spawn_forecast_trigger
 from domains.flood.dos_impact import mount_impact, spawn_impact_auto
 from domains.flood.dos_instance import STATION, build_mqtt_kernel, spawn_monitor
@@ -101,6 +102,7 @@ def main() -> int:
     mount_forecast(kernel, forecast_runner)
     mount_impact(kernel, fake_impact_runner)
     mount_assessments(kernel, ASSESSMENTS)
+    mount_flood_assets(kernel)
 
     monitor_cap = kernel.grant(f"/hydro/shanhu/stations/{STATION}", {"set_sampling_interval"}, "server-boot")
     forecast_cap = kernel.grant("/hydro/shanhu/forecasts", {"run_forecast"}, "server-boot")
