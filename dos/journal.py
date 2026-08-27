@@ -58,6 +58,11 @@ class Journal:
         if keep is not None and len(self._records) > keep:
             del self._records[: len(self._records) - keep]
 
+    def attach_sink(self, sink: Callable[[Record], None]) -> None:
+        """Persist future records (e.g. re-attaching a file sink after
+        loading a journal back from disk)."""
+        self._sink = sink
+
     def tail(self, after_seq: int = 0) -> list[Record]:
         return [r for r in self._records if r.seq > after_seq]
 

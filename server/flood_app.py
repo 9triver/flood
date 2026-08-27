@@ -193,6 +193,12 @@ class FloodApp:
             raise DomainApiUnavailable("Domain OS query API is not configured")
         return self._domain_api
 
+    def attach_dos_api(self, api) -> None:
+        """Swap in a dos-backed adapter (duck-typed like DomainApi)."""
+        if self._domain_api is not None:
+            self._domain_api.close()
+        self._domain_api = api
+
     def attach_domain_runtime(
         self,
         runtime: DomainReadModel,

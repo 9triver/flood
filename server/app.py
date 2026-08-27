@@ -555,12 +555,29 @@ def main():
         type=Path,
         help="Serve persisted Domain OS projections, products and events.",
     )
+    parser.add_argument(
+        "--dos",
+        action="store_true",
+        help="Host the dos kernel (next-generation Domain OS) instead of the legacy runtime.",
+    )
     args = parser.parse_args()
     domain_host = None
     domain_playback = None
+    dos_host = None
     server = None
     try:
-        if args.domain_database is not None:
+        if args.dos:
+            import os
+
+            from server.dos_api import DosApi
+            from server.dos_host import DosFloodHost, DosPlaybackController
+
+            dos_host = DosFloodHost(fake_model=os.environ.get("DOS_FAKE_MODEL") == "1")
+            dos_host.start()
+            APP.attach_dos_api(DosApi(dos_host))
+            domain_playback = DosPlaybackController(dos_host, PLAYBACK_SOURCES)
+            AUTONOMY_RUNTIME = domain_playback
+        elif args.domain_database is not None:
             if not args.domain_database.is_file():
                 parser.error(f"Domain OS database not found: {args.domain_database}")
             from domains.flood.impact_domain import (  # noqa: PLC0415

@@ -82,46 +82,11 @@ def fake_impact_runner(args: dict, target: Path, forecast_meta: dict) -> dict:
 
 
 def real_forecast_runner(args: dict, target: Path) -> dict:
-    """Adapter: mirror-query input snapshot → legacy CNN summary format."""
-    from domains.flood.runtime.cnn_v2 import run_cnn_v2_forecast
+    """Adapter retained for the check script — the canonical implementation
+    lives in domains.flood.dos_forecast.real_cnn_runner."""
+    from domains.flood.dos_forecast import real_cnn_runner
 
-    stations = args["stations"]
-    window_start = min(pairs[0][0] for pairs in stations.values())
-    boundaries = {}
-    for boundary, pairs in stations.items():
-        series = [
-            {"time_h": round((ts - window_start) / 3600.0, 3), "flow_m3s": round(float(value), 6)}
-            for ts, value in pairs
-        ]
-        values = [point["flow_m3s"] for point in series]
-        boundaries[boundary] = {"label": boundary, "point_count": len(series), "series": series, "peak_flow_m3s": max(values)}
-    forecast_id = f"fcst_real_{int(time.time())}"
-    summary = {
-        "boundary_flow_id": forecast_id,
-        "mode": "dos_mirror_query",
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "window_start": datetime.fromtimestamp(window_start, tz=timezone.utc).isoformat(),
-        "forecast_point_count": max(b["point_count"] for b in boundaries.values()),
-        "forecast_horizon_h": args.get("window_hours", 24),
-        "rainfall_total_mm": 0.0,
-        "rainfall_series": [],
-        "reservoir_level_m": 0.0,
-        "boundaries": boundaries,
-    }
-    target.mkdir(parents=True, exist_ok=True)
-    result = run_cnn_v2_forecast({"summary": summary}, target / "max_depth.csv", working_dir=target / "_work")
-    if result.get("error"):
-        raise RuntimeError(f"{result['error']}: {result.get('detail') or result.get('stderr_tail') or ''}")
-    wet = result.get("wet_cells") or result.get("positive_cells") or len(result.get("_positive_depths") or [])
-    return {
-        "stats": {"max_depth_m": result.get("max_depth_m"), "wet_cells": wet, "time_step_count": result.get("time_step_count")},
-        "artifacts": {
-            "max_depth_csv": str(target / "max_depth.csv"),
-            "depth_series": str(target / "depth_series.npy"),
-            "time_steps": str(target / "time_steps.json"),
-        },
-        "model": {"model_name": result.get("model_name"), "device": result.get("device"), "timings_ms": result.get("timings_ms")},
-    }
+    return real_cnn_runner(args, target)
 
 
 def wait_until(predicate, label: str, timeout: float = 60.0) -> None:
