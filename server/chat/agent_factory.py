@@ -137,6 +137,11 @@ class FloodAgentFactory:
                 max_turns=configured_agent_max_turns(self.config),
                 enable_write_confirmation=True,
                 llm_extra_body=self._llm_extra_body(),
+                genai_trace_json_path=str(
+                    self.project_dir / ".oag_data" / "genai_traces_flood.json"
+                ),
+                genai_trace_service_name="flood-emergency-agent",
+                genai_trace_provider_name=self._genai_provider_name(),
                 runtime_context={
                     "frontend": "GIS-centered flood emergency workspace",
                     "map_rendering": (
@@ -162,3 +167,14 @@ class FloodAgentFactory:
             self.config.get("LLM_DISABLE_REASONING", "")
         ).lower() in {"1", "true", "yes", "on"}
         return {"enable_thinking": False} if disabled else {}
+
+    def _genai_provider_name(self) -> str:
+        configured = self.config.get("GENAI_TRACE_PROVIDER")
+        if configured:
+            return configured
+        api_url = self.config.get("LLM_API_URL", "").lower()
+        if "deepseek" in api_url:
+            return "deepseek"
+        if "openai" in api_url:
+            return "openai"
+        return "openai"

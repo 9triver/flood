@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 from typing import TYPE_CHECKING
 
@@ -42,11 +43,20 @@ class FloodChatService:
                     answer=run.message,
                 )
             else:
-                event_stream = self.agent.chat_stream(
-                    self._agent_message(run.message, selected),
-                    session_id=agent_session_id,
-                    allowed_tools=None,
-                )
+                message = self._agent_message(run.message, selected)
+                if self._agent_supports_run_id():
+                    event_stream = self.agent.chat_stream(
+                        message,
+                        session_id=agent_session_id,
+                        allowed_tools=None,
+                        run_id=run.run_id,
+                    )
+                else:
+                    event_stream = self.agent.chat_stream(
+                        message,
+                        session_id=agent_session_id,
+                        allowed_tools=None,
+                    )
             for event in event_stream:
                 if run.cancelled:
                     break
@@ -80,6 +90,12 @@ class FloodChatService:
                 "type": "directive_draft",
                 "draft": result.get("draft", {}),
             })
+
+    def _agent_supports_run_id(self) -> bool:
+        try:
+            return "run_id" in inspect.signature(self.agent.chat_stream).parameters
+        except (TypeError, ValueError, AttributeError):
+            return False
 
     def _agent_message(self, message: str, selected: dict) -> str:
         task_hint = build_agent_task_hint(message, self.ontology)
