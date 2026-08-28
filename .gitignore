@@ -5,6 +5,7 @@
 __pycache__/
 *.py[cod]
 *.pyo
+*.egg-info/
 *.so
 *.dylib
 *.dll
@@ -30,3 +31,6 @@ hydrodynamic_model/
 
 # Local reference repos
 mypalantir/
+
+# Local competition/evaluation attachments provided outside the project source.
+智能体运行日志格式校验工具/

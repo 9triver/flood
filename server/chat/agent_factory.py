@@ -137,9 +137,7 @@ class FloodAgentFactory:
                 max_turns=configured_agent_max_turns(self.config),
                 enable_write_confirmation=True,
                 llm_extra_body=self._llm_extra_body(),
-                genai_trace_json_path=str(
-                    self.project_dir / ".oag_data" / "genai_traces_flood.json"
-                ),
+                genai_trace_json_path=str(self._genai_trace_json_path()),
                 genai_trace_service_name="flood-emergency-agent",
                 genai_trace_provider_name=self._genai_provider_name(),
                 runtime_context={
@@ -178,3 +176,10 @@ class FloodAgentFactory:
         if "openai" in api_url:
             return "openai"
         return "openai"
+
+    def _genai_trace_json_path(self) -> Path:
+        configured = self.config.get("GENAI_TRACE_JSON_PATH")
+        if configured:
+            path = Path(configured).expanduser()
+            return path if path.is_absolute() else self.project_dir / path
+        return self.project_dir / ".oag_data" / "genai_traces_flood.json"

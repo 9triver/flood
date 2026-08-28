@@ -24,6 +24,10 @@ from domains.flood.runtime.impact_analysis import (  # noqa: E402
 from server.agent_runs import AgentRunManager  # noqa: E402
 from server.directives import DirectiveStore  # noqa: E402
 from server.events import EventRuntime  # noqa: E402
+from server.evaluation_api import (  # noqa: E402
+    EvaluationApiError,
+    build_chat_completion_response,
+)
 from server.flood_app import FloodApp  # noqa: E402
 from server.serialization import format_sse  # noqa: E402
 from domains.flood.runtime.playback_sources import (  # noqa: E402
@@ -93,6 +97,8 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/autonomy/sources":
                 return self._upload_playback_source(parsed.query)
             payload = self._read_json()
+            if parsed.path == "/v1/chat/completions":
+                return self._evaluation_chat_completion(payload)
             if parsed.path == "/api/autonomy/start":
                 return self._json(EVENT_RUNTIME.start_playback(
                     payload.get("speed_multiplier", 20),
@@ -127,6 +133,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "not found"}, status=404)
         except ValueError as exc:
             return self._json({"error": str(exc)}, status=400)
+        except EvaluationApiError as exc:
+            return self._json({"error": {"message": exc.message}}, status=exc.status)
         except Exception as exc:
             return self._json({"error": str(exc)}, status=500)
 
@@ -186,6 +194,10 @@ class Handler(BaseHTTPRequestHandler):
             yield format_sse("done", {"type": "done"})
 
         return self._sse(generator())
+
+    def _evaluation_chat_completion(self, payload: dict[str, Any]):
+        body, headers = build_chat_completion_response(APP, payload)
+        return self._json(body, headers=headers)
 
     def _issue_directive(self, payload: dict[str, Any]):
         try:
@@ -325,10 +337,13 @@ class Handler(BaseHTTPRequestHandler):
             raise PlaybackSourceValidationError("CSV 文件不能超过 5 MB")
         return self.rfile.read(length)
 
-    def _json(self, data: dict | list, status: int = 200):
+    def _json(self, data: dict | list, status: int = 200,
+              headers: dict[str, str] | None = None):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        for key, value in (headers or {}).items():
+            self.send_header(key, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

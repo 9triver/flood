@@ -71,3 +71,42 @@ uv run python -m unittest discover -s tests -q
 uv run pytest agent/tests -q
 node --check server/static/app.js
 ```
+
+## 智能体运行日志评测材料
+
+`智能体运行日志格式校验工具/智能体运行原生日志生成指南.pdf` 要求最终准备三份文件：
+
+- `traces.json`：静态智能体运行日志，记录真实任务中的模型调用、工具调用和工具结果。
+- `traces-dynamic.json`：动态评测器发起 C4/E3 测试后，由系统导出的动态运行日志。
+- `information.json`：业务意图、推理任务、工具能力、记忆能力、任务证据和动态 API 配置说明。
+
+本系统在 OAG agent 内使用 OpenTelemetry Python SDK 生成标准 OTLP GenAI trace。默认输出路径是 `.oag_data/genai_traces_flood.json`，也可以通过 `GENAI_TRACE_JSON_PATH` 改到独立文件，便于区分日常 demo、静态评测和动态评测。
+
+推荐流程：
+
+```bash
+# 1. 启动系统，并在工作台中完成一组静态业务任务，产生 .oag_data/genai_traces_flood.json。
+uv run python server/app.py --host 127.0.0.1 --port 8765
+
+# 2. 生成静态 traces.json 和 information.json。
+python3 scripts/build_evaluation_submission.py --refresh-static
+
+# 3. 校验静态 trace 和 information。
+uv run python 智能体运行日志格式校验工具/competition-attachments/genai-log-validator/src/main.py \
+  --format json local/evaluation-submission/traces.json
+uv run python 智能体运行日志格式校验工具/competition-attachments/information-validator/information_validator.py \
+  local/evaluation-submission/information.json --json
+
+# 4. 让动态评测器调用本系统的 OpenAI-compatible 入口。
+sh 智能体运行日志格式校验工具/competition-attachments/dynamic-evaluation-runner/dynamic-evaluation-runner \
+  check local/evaluation-submission/information.json local/evaluation-submission/traces.json
+sh 智能体运行日志格式校验工具/competition-attachments/dynamic-evaluation-runner/dynamic-evaluation-runner \
+  run local/evaluation-submission/information.json local/evaluation-submission/traces.json \
+  --output local/evaluation-submission/execution-report.json --timeout 60
+
+# 5. 根据 execution-report.json 中的 trace_id 过滤生成 traces-dynamic.json。
+python3 scripts/build_evaluation_submission.py \
+  --dynamic-report local/evaluation-submission/execution-report.json
+```
+
+动态评测入口为 `POST /v1/chat/completions`，请求/响应兼容 OpenAI Chat Completions；响应正文和 `traceparent` header 都会携带本次智能体运行的 trace id，供 `traces-dynamic.json` 与执行报告关联。

@@ -44,19 +44,12 @@ class FloodChatService:
                 )
             else:
                 message = self._agent_message(run.message, selected)
-                if self._agent_supports_run_id():
-                    event_stream = self.agent.chat_stream(
-                        message,
-                        session_id=agent_session_id,
-                        allowed_tools=None,
-                        run_id=run.run_id,
-                    )
-                else:
-                    event_stream = self.agent.chat_stream(
-                        message,
-                        session_id=agent_session_id,
-                        allowed_tools=None,
-                    )
+                event_stream = self._chat_stream(
+                    message,
+                    session_id=agent_session_id,
+                    run_id=run.run_id,
+                    trace_user_message=run.message,
+                )
             for event in event_stream:
                 if run.cancelled:
                     break
@@ -91,11 +84,24 @@ class FloodChatService:
                 "draft": result.get("draft", {}),
             })
 
-    def _agent_supports_run_id(self) -> bool:
+    def _chat_stream(self, message: str, *, session_id: str,
+                     run_id: str = "", trace_user_message: str = ""):
+        kwargs = {
+            "session_id": session_id,
+            "allowed_tools": None,
+        }
+        supported = self._agent_chat_stream_parameters()
+        if "run_id" in supported:
+            kwargs["run_id"] = run_id
+        if "trace_user_message" in supported:
+            kwargs["trace_user_message"] = trace_user_message
+        return self.agent.chat_stream(message, **kwargs)
+
+    def _agent_chat_stream_parameters(self) -> set[str]:
         try:
-            return "run_id" in inspect.signature(self.agent.chat_stream).parameters
+            return set(inspect.signature(self.agent.chat_stream).parameters)
         except (TypeError, ValueError, AttributeError):
-            return False
+            return set()
 
     def _agent_message(self, message: str, selected: dict) -> str:
         task_hint = build_agent_task_hint(message, self.ontology)
