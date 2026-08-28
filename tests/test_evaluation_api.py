@@ -95,9 +95,19 @@ class EvaluationApiTest(unittest.TestCase):
         self.assertEqual(TRACE_ID, body["trace_id"])
         self.assertEqual(TRACE_ID, headers["X-Trace-Id"])
         self.assertEqual(f"00-{TRACE_ID}-{SPAN_ID}-01", headers["traceparent"])
-        self.assertEqual("evaluation:case-001", agent.calls[0]["session_id"])
+        self.assertEqual("case-001", agent.calls[0]["session_id"])
         self.assertEqual("eval-001", agent.calls[0]["run_id"])
         self.assertEqual("判断淹没影响", agent.calls[0]["trace_user_message"])
+
+    def test_default_session_id_is_generic_chat_completion_run(self):
+        agent = FakeAgent()
+
+        build_chat_completion_response(SimpleNamespace(agent=agent), {
+            "messages": [{"role": "user", "content": "判断淹没影响"}],
+            "run_id": "case-no-session",
+        })
+
+        self.assertEqual("chatcmpl:case-no-session", agent.calls[0]["session_id"])
 
     def test_dynamic_runner_metadata_does_not_change_agent_execution_path(self):
         agent = FakeAgent()

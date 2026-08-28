@@ -149,8 +149,8 @@ def _request_session_id(payload: dict[str, Any], run_id: str) -> str:
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
     configured = metadata.get("session_id") or payload.get("user")
     if isinstance(configured, str) and configured.strip():
-        return f"evaluation:{_safe_identifier(configured.strip())}"
-    return f"evaluation:{run_id}"
+        return _safe_identifier(configured.strip())
+    return f"chatcmpl:{run_id}"
 
 
 def _safe_identifier(value: str) -> str:
