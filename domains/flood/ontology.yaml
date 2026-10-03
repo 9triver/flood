@@ -19,7 +19,7 @@ interaction_policies:
       - "前端上下文 hydrodynamic_timeline.mode=time_slice 且用户询问当前时刻、当前画面或该时刻影响时，把 current_hydrodynamic_time_h 作为 analyze_inundation_impacts.time_h；用户询问总体或最大影响时不传 time_h。"
       - "预测结果中的 time_h、arrival_time_h 以及名称以 _time_h 结尾的预测时间均是相对 valid_from 的小时偏移，不是钟表时间。面向用户说明何时发生时，优先使用工具返回的 analysis_time_at、valid_at、first_unsafe_at、latest_departure_at 等实际时刻，并可把预测 +Nh 作为辅助信息；不得把 generated_at 当作预测基准时刻。"
       - "用户要求运行预测、实时预测或未来淹没时，先调用 run_flood_forecast，再用 HydrodynamicGridCell 和 forecast_id=latest 展示预测淹没结果。"
-      - "用户要求自主观测、持续预测、自动告警、闭环调度或避洪转移调度时，调用 run_emergency_cycle，再按结果展示相关领域对象。"
+      - "用户要求自主观测、持续预测、自动告警、应急研判闭环或避洪转移研判时，调用 run_emergency_cycle，再按结果展示相关领域对象。该函数只生成预警和处置建议，不执行封路、转移或指令发布。"
       - "不要把 severity_index 或综合指标映射为 5/10/20/50/100 年一遇设计方案；防洪响应预案必须通过已实现工具或人工审批。"
       - "用户要求规划导航、避洪路线或绕开淹没区域前往安置点时调用 plan_evacuation_route；同一起终点每个用户请求最多调用一次，no_safe_route 或 retryable=false 后不得自行改变交通方式、预测时刻或避洪参数重试。"
       - "路线规划成功后使用结果中的 evacuation_route_id 展示本次生成的 EvacuationRoute；一次展示多个对象时放入同一次 ui_show_objects 调用。"
@@ -966,9 +966,9 @@ functions:
       force: {type: bool, description: "是否强制重新运行简化模型", default: false}
 
   run_emergency_cycle:
-    summary: "运行水文观测-预测-告警-调度闭环原型"
-    description: "使用最新边界流量预测输入和水动力结果，生成预警级别、受影响转移对象、道路/路线关注对象和调度建议。预测结果直接来自 InundationForecastCell，不通过设计频率映射。"
-    usage_prompt: "当用户要求自主观测、持续预测、自动告警、闭环调度、避洪转移调度或应急循环时调用。该函数只返回预测、预警、受影响对象和调度建议事实；如需 GIS 展示，LLM 应在本函数返回后调用 ui_show_objects 展示 HydrodynamicGridCell、EvacuationUnit、EvacuationSite、EvacuationRoute 等领域对象。涉及发布预警、封路、转移等执行动作时必须说明需要人工审批。"
+    summary: "运行洪水应急研判闭环"
+    description: "使用最新边界流量预测输入和水动力结果，生成预警级别、受影响转移对象、道路/路线关注对象和处置建议。预测结果直接来自 InundationForecastCell，不通过设计频率映射。本函数只做确定性研判，不执行封路、人员转移或应急指令发布。"
+    usage_prompt: "当用户要求自主观测、持续预测、自动告警、应急研判闭环、避洪转移研判或应急循环时调用。该函数只返回预测、预警、受影响对象和处置建议事实；如需 GIS 展示，LLM 应在本函数返回后调用 ui_show_objects 展示 HydrodynamicGridCell、EvacuationUnit、EvacuationSite、EvacuationRoute 等领域对象。涉及发布预警、封路、转移等执行动作时必须说明需要人工审批。"
     function_type: lookup
     involves_objects: [FloodForecast, InundationForecastCell, Road, EvacuationRoute, EvacuationUnit, EvacuationSite]
     params:

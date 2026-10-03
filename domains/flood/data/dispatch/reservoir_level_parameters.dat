@@ -1,0 +1,7 @@
+# 龙潭水库防洪调度水位参数（m）
+# 汛限水位、设计洪水位、校核洪水位从本文件读入。
+# DESIGN_FLOOD_LEVEL_M=247.92 为当前正式外部参数；其库容由 Storage_Capacity_Curve.DAT 线性插值计算。
+
+FLOOD_LIMIT_LEVEL_M   = 245.30
+DESIGN_FLOOD_LEVEL_M  = 247.92
+CHECK_FLOOD_LEVEL_M   = 248.91

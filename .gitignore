@@ -6,6 +6,12 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
 *.so
 *.dylib
 *.dll
@@ -15,6 +21,7 @@ agent/.venv/
 
 # Local workbench: source data, reference docs, model experiments
 local/
+temp/
 
 # Local domain tool secrets
 domains/tools/.env
@@ -31,6 +38,14 @@ hydrodynamic_model/
 
 # Local reference repos
 mypalantir/
+
+# Local build and runtime artifacts
+build/
+dist/
+*.log
+*.tmp
+*.sqlite
+*.sqlite-*
 
 # Local competition/evaluation attachments provided outside the project source.
 智能体运行日志格式校验工具/

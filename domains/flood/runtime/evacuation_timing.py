@@ -9,7 +9,8 @@ from typing import Any
 
 import numpy as np
 
-from .forecast import LATEST_FORECAST_ID, distance_m, iter_coords, row_point
+from .forecast_constants import LATEST_FORECAST_ID
+from .forecast_geometry import distance_m, iter_coords, row_point
 from .hydrodynamic_grid import (
     MESH_DB_PATH,
     forecast_series_path,

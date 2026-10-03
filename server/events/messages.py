@@ -7,7 +7,7 @@ from typing import Any
 def readable_event_tool(name: str) -> str:
     return {
         "run_flood_forecast": "运行水动力模型",
-        "run_emergency_cycle": "运行预警调度闭环",
+        "run_emergency_cycle": "运行应急研判闭环",
         "analyze_inundation_impacts": "分析淹没影响对象",
         "ui_show_objects": "地图展示对象",
         "ui_show_event_marker": "地图展示事件",

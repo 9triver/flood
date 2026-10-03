@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from domains.flood.runtime import hydrodynamic_grid
 from domains.flood.runtime import route_planning
+from domains.flood.runtime import route_store
 from domains.flood.runtime.workspace import WorkspaceManager, workspace_scope
 
 
@@ -55,7 +56,7 @@ class WorkspaceTest(unittest.TestCase):
             first = manager.create()["workspace_id"]
             with patch("domains.flood.runtime.workspace.WORKSPACES", manager):
                 with workspace_scope(first):
-                    route_planning.save_planned_route({
+                    route_store.save_planned_route({
                         "evacuation_route_id": "route-first",
                         "start_object_type": "EvacuationUnit",
                         "start_object_id": "40",
@@ -65,20 +66,20 @@ class WorkspaceTest(unittest.TestCase):
                         ["route-first"],
                         [
                             row["evacuation_route_id"]
-                            for row in route_planning.read_planned_routes()
+                            for row in route_store.read_planned_routes()
                         ],
                     )
 
                 second = manager.create()["workspace_id"]
                 with workspace_scope(second):
-                    self.assertEqual([], route_planning.read_planned_routes())
+                    self.assertEqual([], route_store.read_planned_routes())
 
                 with workspace_scope(first):
                     self.assertEqual(
                         ["route-first"],
                         [
                             row["evacuation_route_id"]
-                            for row in route_planning.read_planned_routes()
+                            for row in route_store.read_planned_routes()
                         ],
                     )
 

@@ -13,7 +13,7 @@ from .common import (
     apply_window,
     id_field,
 )
-from .forecast import (
+from .forecast_query import (
     count_forecast_cells,
     count_forecast_runs,
     query_forecast_cells,
@@ -24,7 +24,7 @@ from .directives import (
     query_emergency_directives,
 )
 from .hydrodynamic_grid import count_hydrodynamic_cells, query_hydrodynamic_cells
-from .route_planning import read_planned_routes
+from .route_store import read_planned_routes
 from .road_routes import build_road_routes, road_refs, road_route_id
 
 
@@ -38,9 +38,9 @@ class FloodRepository:
               limit: int | None = None, order_by: str | None = None,
               offset: int | None = None) -> list[dict]:
         if object_type == "FloodForecast":
-            return query_forecast_runs(self, filters, limit, order_by, offset)
+            return query_forecast_runs(filters, limit, order_by, offset)
         if object_type == "InundationForecastCell":
-            return query_forecast_cells(self, filters, limit, order_by, offset)
+            return query_forecast_cells(filters, limit, order_by, offset)
         if object_type == "HydrodynamicGridCell":
             return query_hydrodynamic_cells(filters, limit, order_by, offset)
         if object_type == "EmergencyDirective":
@@ -143,7 +143,7 @@ def read_object_library(object_type: str) -> list[dict]:
     if not path.exists():
         raise FileNotFoundError(
             f"missing flood object library: {path}. "
-            "Run `uv run --project agent python scripts/build_flood_objects.py --force`."
+            "Restore the generated object-library bundle under domains/flood/data/objects."
         )
     rows = []
     for line in path.read_text(encoding="utf-8").splitlines():

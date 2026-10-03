@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import collections
-import json
 import threading
 import time
 from typing import Any, TYPE_CHECKING
@@ -14,6 +12,8 @@ from domains.flood.runtime.playback_sources import PlaybackSourceRegistry
 from domains.flood.runtime.workspace import WORKSPACES, active_workspace_id
 from server.events.agent_processor import EventAgentProcessor
 from server.events.factory import make_directive_issued_event
+from server.events.queue import EventQueue
+from server.events.timeline import EventTimelineStore
 from server.events.messages import (
     boundary_flow_forecast_detail,
     domain_event_detail,
@@ -49,10 +49,12 @@ class EventRuntime:
         self._processing_event_id = ""
         self._processing_correlation_id = ""
         self._processing_followup_pending = False
-        self._event_queue: collections.deque[
-            tuple[dict[str, Any], int]
-        ] = collections.deque()
-        self._event_queue_condition = threading.Condition()
+        self._event_queue_store = EventQueue()
+        # Keep the historical inspection seams available to diagnostics and
+        # tests while the queue implementation lives in its own module.
+        self._event_queue = self._event_queue_store.items
+        self._event_queue_condition = self._event_queue_store.condition
+        self._timeline_store = EventTimelineStore()
         self._generation = 0
         self._published_inundation_sources: set[str] = set()
         self._published_impact_sources: set[str] = set()
@@ -510,9 +512,7 @@ class EventRuntime:
                 self.condition.wait(timeout=min(remaining, 0.5))
 
     def _clear_event_queue(self) -> None:
-        with self._event_queue_condition:
-            self._event_queue.clear()
-            self._event_queue_condition.notify_all()
+        self._event_queue_store.clear()
 
     def _publish_boundary_flow_observation(
         self,
@@ -612,19 +612,13 @@ class EventRuntime:
         *,
         priority: bool = False,
     ) -> None:
-        with self._event_queue_condition:
-            if priority:
-                self._event_queue.appendleft((event, generation))
-            else:
-                self._event_queue.append((event, generation))
-            self._event_queue_condition.notify()
+        self._event_queue_store.enqueue(
+            event, generation, priority=priority,
+        )
 
     def _event_worker_loop(self) -> None:
         while True:
-            with self._event_queue_condition:
-                while not self._event_queue:
-                    self._event_queue_condition.wait()
-                event, generation = self._event_queue.popleft()
+            event, generation = self._event_queue_store.wait_pop()
             try:
                 if generation == self._generation:
                     self._agent_processor.handle_event(event, generation)
@@ -863,18 +857,4 @@ class EventRuntime:
             "data": {**data, "workspace_id": workspace_id},
         }
         self.outputs.append(item)
-        if not workspace_id:
-            return
-        path = (
-            WORKSPACES.path(str(workspace_id), create=True)
-            / "events"
-            / "timeline.jsonl"
-        )
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("a", encoding="utf-8") as stream:
-                stream.write(json.dumps(item, ensure_ascii=False, default=str))
-                stream.write("\n")
-        except OSError:
-            # Persistence must not interrupt the live SSE stream.
-            return
+        self._timeline_store.append(item, str(workspace_id or ""), WORKSPACES)

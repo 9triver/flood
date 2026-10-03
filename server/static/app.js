@@ -826,6 +826,9 @@ function gcjTransformLng(x, y) {
 async function bootstrap() {
   const res = await fetch("/api/bootstrap");
   state.bootstrap = await res.json();
+  if (state.bootstrap.id_fields && typeof state.bootstrap.id_fields === "object") {
+    Object.assign(ID_FIELDS, state.bootstrap.id_fields);
+  }
   if (state.bootstrap.title) document.title = state.bootstrap.title;
   state.workspaceId = state.bootstrap.workspace_id || null;
   updateMapContentContext();
@@ -6868,7 +6871,7 @@ function readableTool(name, args) {
     count: "统计数量",
     inspect: "查看定义",
     run_flood_forecast: "运行洪水预测",
-    run_emergency_cycle: "运行闭环预警",
+    run_emergency_cycle: "运行应急研判闭环",
     analyze_inundation_impacts: "分析淹没影响",
     ui_show_objects: "地图显示",
     ui_show_event_marker: "地图标记事件",

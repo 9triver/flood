@@ -46,22 +46,18 @@ class BoundaryFlowPolicyTest(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def test_csv_parsing_derives_tonggu_and_has_baseflow_lead_in(self):
+    def test_csv_parsing_derives_tonggu_and_preserves_dry_lead_in(self):
         self.assertGreater(len(self.source.rows), 72)
-        lead_in_flows = {key: [] for key in BASE_FLOWS_M3S}
         for row in self.source.rows[:72]:
             self.assertEqual(row["rainfall_mm"], 0)
-            self.assertGreater(row["total_flow_m3s"], 0)
-            for key, reference in BASE_FLOWS_M3S.items():
+            for key in BASE_FLOWS_M3S:
                 flow = row["boundaries"][key]["flow_m3s"]
-                lead_in_flows[key].append(flow)
-                self.assertGreater(flow, reference * 0.85)
-                self.assertLess(flow, reference * 1.15)
-        for flows in lead_in_flows.values():
-            self.assertGreater(len(set(flows)), 12)
-            self.assertGreater(max(flows) - min(flows), 0)
+                self.assertGreaterEqual(flow, 0)
+        self.assertTrue(any(
+            row["total_flow_m3s"] > 0 for row in self.source.rows[72:]
+        ))
 
-        flood_row = next(row for row in self.source.rows if row["observed_at"].startswith("2025-01-01T08:00"))
+        flood_row = next(row for row in self.source.rows if row["total_flow_m3s"] > 0)
         interval2 = flood_row["boundaries"]["interval2"]["flow_m3s"]
         tonggu = flood_row["boundaries"]["tonggu"]["flow_m3s"]
         self.assertAlmostEqual(tonggu, interval2 * 0.946, places=6)
@@ -450,7 +446,7 @@ class BoundaryFlowPlaybackRunnerTest(unittest.TestCase):
 
             self.assertEqual(
                 transitions,
-                [(61, 5.0, "forecast")],
+                [(52, 5.0, "forecast")],
             )
 
     def test_runner_continues_after_forecast_request_until_csv_eof(self):

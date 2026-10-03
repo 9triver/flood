@@ -11,6 +11,8 @@ from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
 from domains.flood.runtime import route_planning
+from domains.flood.runtime import route_store
+from domains.flood.runtime import route_safety
 
 
 class EmptyResolver:
@@ -119,7 +121,7 @@ class RoutePlanningTests(unittest.TestCase):
         self.assertEqual("shelter-232", site_id)
 
     def test_legacy_workspace_route_is_normalized_on_read(self):
-        route = route_planning.normalize_planned_route({
+        route = route_store.normalize_planned_route({
             "route_id": "route-40",
             "transfer_id": "40",
             "place_id": "shelter-232",
@@ -140,14 +142,14 @@ class RoutePlanningTests(unittest.TestCase):
             for row in range(20)
             for index in range(20)
         ]
-        result = route_planning.build_flood_avoidance_areas(cells, 0.3, max_areas=12)
+        result = route_safety.build_flood_avoidance_areas(cells, 0.3, max_areas=12)
         features = result["feature_collection"]["features"]
 
         self.assertTrue(features)
         self.assertLessEqual(len(features), 12)
         self.assertEqual("Polygon", features[0]["geometry"]["type"])
         self.assertEqual(400, result["summary"]["source_cell_count"])
-        self.assertTrue(route_planning.point_in_areas(
+        self.assertTrue(route_safety.point_in_areas(
             (111.3002, 24.4002), result["feature_collection"],
         ))
 
@@ -161,9 +163,9 @@ class RoutePlanningTests(unittest.TestCase):
                 cached_geojson = Path(directory) / "route.geojson"
                 cached_geojson.write_text("{}", encoding="utf-8")
                 with patch.object(
-                    route_planning, "planned_routes_path", return_value=route_path,
+                    route_store, "planned_routes_path", return_value=route_path,
                 ), patch.object(
-                    route_planning, "clear_route_geojson_cache",
+                    route_store, "clear_route_geojson_cache",
                     side_effect=lambda: cached_geojson.unlink(missing_ok=True),
                 ), patch.object(
                     route_planning,
@@ -222,9 +224,9 @@ class RoutePlanningTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as directory:
                 route_path = Path(directory) / "planned_routes.jsonl"
                 with patch.object(
-                    route_planning, "planned_routes_path", return_value=route_path,
+                    route_store, "planned_routes_path", return_value=route_path,
                 ), patch.object(
-                    route_planning, "clear_route_geojson_cache",
+                    route_store, "clear_route_geojson_cache",
                 ), patch.object(
                     route_planning,
                     "query_forecast_cells",
@@ -273,9 +275,9 @@ class RoutePlanningTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as directory:
                 route_path = Path(directory) / "planned_routes.jsonl"
                 with patch.object(
-                    route_planning, "planned_routes_path", return_value=route_path,
+                    route_store, "planned_routes_path", return_value=route_path,
                 ), patch.object(
-                    route_planning, "clear_route_geojson_cache",
+                    route_store, "clear_route_geojson_cache",
                 ), patch.object(
                     route_planning,
                     "query_forecast_cells",

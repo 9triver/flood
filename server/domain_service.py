@@ -13,34 +13,9 @@ from domains.flood.runtime.impact_analysis import (
     BRIDGE_INFLUENCE_RADIUS_M,
     analyze_inundation_impacts,
 )
+from domains.flood.runtime.common import OBJECT_ID_FIELDS
 from domains.flood.runtime.tools import list_mappable_objects
 from domains.flood.runtime.workspace import active_workspace_id
-
-
-ID_FIELDS = {
-    "River": "river_id",
-    "Watershed": "watershed_id",
-    "HydrodynamicBoundary": "boundary_id",
-    "County": "county_id",
-    "Town": "town_id",
-    "Reservoir": "reservoir_id",
-    "Sluice": "sluice_id",
-    "HydraulicStructure": "structure_id",
-    "Road": "road_id",
-    "RoadRoute": "road_route_id",
-    "RoadRouteSegment": "road_route_segment_id",
-    "Bridge": "bridge_id",
-    "Facility": "facility_id",
-    "EvacuationSite": "evacuation_site_id",
-    "EvacuationUnit": "evacuation_unit_id",
-    "EvacuationRoute": "evacuation_route_id",
-    "DangerArea": "danger_area_id",
-    "Station": "station_id",
-    "FloodForecast": "forecast_id",
-    "InundationForecastCell": "forecast_cell_id",
-    "HydrodynamicGridCell": "hydrodynamic_cell_id",
-    "EmergencyDirective": "directive_id",
-}
 
 
 class FloodDomainService:
@@ -56,6 +31,7 @@ class FloodDomainService:
         return {
             "domain": self.ontology.name,
             "title": "基于大模型的水路联动应急智能体集群应用",
+            "id_fields": dict(OBJECT_ID_FIELDS),
             "mappable": list_mappable_objects(self.resolver),
             "counts": {
                 "school": self.resolver.count(
@@ -141,12 +117,12 @@ class FloodDomainService:
         row = self.resolver.query_by_id(object_type, object_id)
         if row:
             return {"object_type": object_type, "object": row}
-        id_field = ID_FIELDS.get(object_type)
+        identity_field = OBJECT_ID_FIELDS.get(object_type)
         rows = (
             self.resolver.query(
-                object_type, {id_field: object_id}, limit=1,
+                object_type, {identity_field: object_id}, limit=1,
             )
-            if id_field
+            if identity_field
             else []
         )
         return {

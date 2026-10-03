@@ -60,7 +60,7 @@ class PlaybackSourceValidationTest(unittest.TestCase):
 
     def test_requires_base_columns(self):
         lines = _csv_content(25).decode("utf-8").splitlines()
-        lines[0] = lines[0].replace(",end_level_m", "")
+        lines[0] = lines[0].replace(",rainfall_mm", "")
 
         with self.assertRaisesRegex(PlaybackSourceValidationError, "CSV 必须包含字段"):
             validate_playback_source("\n".join(lines).encode("utf-8"))
@@ -104,7 +104,7 @@ class PlaybackSourceValidationTest(unittest.TestCase):
             validate_playback_source(_csv_content(24))
 
     def test_rejects_invalid_numeric_value_and_extra_cell(self):
-        content = _csv_content(25).replace(b",0.5,1.0,", b",not-a-number,1.0,", 1)
+        content = _csv_content(25).replace(b",0.5", b",not-a-number", 1)
         with self.assertRaisesRegex(PlaybackSourceValidationError, "必须是数值"):
             validate_playback_source(content)
 
@@ -213,7 +213,7 @@ def _csv_content(row_count: int, *, slash_dates: bool = False) -> bytes:
             )
         else:
             timestamp = f"{observed_at:%Y-%m-%d %H:%M}"
-        lines.append(f"{timestamp},0.5,1.0,0.2,0.8,0.6,245.1")
+        lines.append(f"{timestamp},0.5")
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 

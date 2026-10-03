@@ -4,12 +4,11 @@ This directory contains only versioned inputs and queryable domain data.
 
 - `objects/`: canonical JSONL object library used by the repository.
 - `mock/`: deterministic input templates used by the evolution service.
-- `sources/`: compact external source snapshots required by the object builder.
 
 Runtime observations, forecasts, impacts, routes, traces, and GeoJSON caches belong
 under `local/runtime/flood/workspaces/`. Shared rebuildable caches belong under
-`local/runtime/flood/cache/`. Large downloads and intermediate source rasters belong
-under `local/source_data/`.
+`local/runtime/flood/cache/`. The runtime does not require the original GIS/Excel
+source package.
 
 Each successful forecast is archived in its workspace as `forecasts/vNNN`, while
 `forecasts/latest` remains the compatibility path used by the live map. `InundationForecastCell`

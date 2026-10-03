@@ -79,7 +79,6 @@ UI 的“影响分析”分为“预测影响”和“邻近积水”页签，�
 
 - `local/runtime/flood/`：演进 workspace、预测、路线和可重建缓存。
 - `.oag_data/`：Agent 会话与 trace。
-- `local/source_data/`：用于重新生成对象库的原始资料，日常运行不读取。
 - `.env`：LLM 和高德密钥。
 
 `local/runtime/flood/cache/hydrodynamic/mesh.sqlite` 会在首次访问水动力网格时由仓库内的 `GT.txt` 自动重建。

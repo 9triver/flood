@@ -32,12 +32,14 @@ MIN_PLAYBACK_SOURCE_ROWS = 25
 REQUIRED_BOUNDARY_FLOW_COLUMNS = (
     "time_period_end",
     "rainfall_mm",
+)
+LEGACY_DERIVED_FLOW_COLUMNS = frozenset({
     "interval1_outlet_flow_m3s",
     "interval2_outlet_flow_m3s",
     "reservoir_outlet_flow_m3s",
     "release_m3s",
     "end_level_m",
-)
+})
 _UPLOADED_SOURCE_ID = re.compile(r"source_[0-9a-f]{12}")
 
 
@@ -278,7 +280,7 @@ def validate_playback_source(content: bytes) -> dict[str, Any]:
     actual = set(columns)
     if len(actual) != len(columns):
         raise PlaybackSourceValidationError("CSV 字段名不能重复")
-    unknown = actual - required - station_columns
+    unknown = actual - required - station_columns - LEGACY_DERIVED_FLOW_COLUMNS
     present_station_columns = actual & station_columns
     if not required.issubset(actual):
         raise PlaybackSourceValidationError(
@@ -299,6 +301,7 @@ def validate_playback_source(content: bytes) -> dict[str, Any]:
     end_time = ""
     row_count = 0
     numeric_columns = [
+        *(column for column in LEGACY_DERIVED_FLOW_COLUMNS if column in actual),
         *REQUIRED_BOUNDARY_FLOW_COLUMNS[1:],
         *(column for column in station_rainfall_columns() if column in actual),
     ]

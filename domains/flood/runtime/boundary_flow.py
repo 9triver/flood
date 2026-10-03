@@ -16,6 +16,8 @@ from .reservoir_monitoring import (
     assess_reservoir_window,
     reservoir_level_status,
 )
+from .rainfall_runoff import simulate_rainfall_runoff
+from .reservoir_dispatch import simulate_reservoir_dispatch
 from .station_rainfall import station_rainfall_from_csv_row
 from .workspace import workspace_dir
 
@@ -27,11 +29,20 @@ BOUNDARIES = {
     "upstream": "坝址",
 }
 
+RUNOFF_BASIN_AREAS_KM2 = {
+    "interval1": 381.0,
+    "interval2": 85.0,
+    "reservoir": 36.0,
+}
+RUNOFF_COEFFICIENT = 0.5
+RUNOFF_BASEFLOW_M3S = 0.2
+RUNOFF_ROUTING_ALPHA = 0.6
+RUNOFF_LAG_HOURS = 1
 BASE_FLOWS_M3S = {
-    "interval1": 0.256694,
-    "interval2": 0.036155,
-    "tonggu": 0.036155 * 0.946,
-    "upstream": 0.220762,
+    "interval1": RUNOFF_BASEFLOW_M3S,
+    "interval2": RUNOFF_BASEFLOW_M3S,
+    "tonggu": RUNOFF_BASEFLOW_M3S * 0.946,
+    "upstream": 0.0,
 }
 
 DEFAULT_BOUNDARY_FLOW_CSV_PATH = DOMAIN_DATA_DIR / "mock" / "boundary_flow.csv"
@@ -68,35 +79,80 @@ def configured_boundary_flow_csv_path() -> Path:
 
 def load_boundary_flow_rows(path: Path | None = None) -> list[dict[str, Any]]:
     source_path = path or configured_boundary_flow_csv_path()
-    rows: list[dict[str, Any]] = []
+    raw_rows: list[dict[str, Any]] = []
     with source_path.open(newline="", encoding="utf-8-sig") as file:
         for sequence, raw in enumerate(csv.DictReader(file)):
             observed_at = parse_boundary_flow_time(
                 str(raw.get("time_period_end") or "")
             ).replace(tzinfo=CHINA_STANDARD_TIME)
-            interval2 = _number(raw.get("interval2_outlet_flow_m3s"))
+            raw_rows.append({
+                **raw,
+                "_sequence": sequence,
+                "_observed_at": observed_at,
+            })
+
+    if not raw_rows:
+        return []
+    dt_hours = _series_step_hours(raw_rows)
+    rainfall_inputs = [
+        {
+            "valid_time": row["_observed_at"].isoformat(),
+            "rainfall_mm": _number(row.get("rainfall_mm")),
+        }
+        for row in raw_rows
+    ]
+    runoff_results = {
+        key: simulate_rainfall_runoff(
+            rainfall_inputs,
+            area_km2=area,
+            runoff_coefficient=RUNOFF_COEFFICIENT,
+            baseflow_m3s=RUNOFF_BASEFLOW_M3S,
+            routing_alpha=RUNOFF_ROUTING_ALPHA,
+            lag_hours=RUNOFF_LAG_HOURS,
+            dt_hours=dt_hours,
+        )["series"]
+        for key, area in RUNOFF_BASIN_AREAS_KM2.items()
+    }
+    dispatch = simulate_reservoir_dispatch(
+        runoff_results["reservoir"],
+        dt_hours=dt_hours,
+    )["series"]
+    rows: list[dict[str, Any]] = []
+    for sequence, raw in enumerate(raw_rows):
+            interval1 = runoff_results["interval1"][sequence]["reservoir_inflow_m3s"]
+            interval2 = runoff_results["interval2"][sequence]["reservoir_inflow_m3s"]
+            reservoir_inflow = runoff_results["reservoir"][sequence]["reservoir_inflow_m3s"]
+            release = dispatch[sequence]["release_m3s"]
             boundaries = {
-                "interval1": _boundary("interval1", raw.get("interval1_outlet_flow_m3s")),
+                "interval1": _boundary("interval1", interval1),
                 "interval2": _boundary("interval2", interval2),
                 "tonggu": _boundary("tonggu", interval2 * 0.946),
-                "upstream": _boundary("upstream", raw.get("release_m3s")),
+                "upstream": _boundary("upstream", release),
             }
             baseflow_total = sum(BASE_FLOWS_M3S.values())
             station_rainfall = station_rainfall_from_csv_row(raw)
             rows.append({
                 "sequence": sequence,
-                "observed_at": observed_at.isoformat(),
-                "simulation_time": observed_at.isoformat(),
+                "observed_at": raw["_observed_at"].isoformat(),
+                "simulation_time": raw["_observed_at"].isoformat(),
                 "rainfall_mm": round(_number(raw.get("rainfall_mm")), 3),
                 "station_rainfall": station_rainfall,
-                "reservoir_inflow_m3s": round(_number(raw.get("reservoir_outlet_flow_m3s")), 6),
-                "reservoir_release_m3s": round(_number(raw.get("release_m3s")), 6),
-                "reservoir_level_m": round(_number(raw.get("end_level_m")), 3),
+                "reservoir_inflow_m3s": round(reservoir_inflow, 6),
+                "reservoir_outlet_flow_m3s": round(reservoir_inflow, 6),
+                "reservoir_release_m3s": round(release, 6),
+                "reservoir_level_m": round(dispatch[sequence]["end_level_m"], 3),
                 "boundaries": boundaries,
                 "baseflow_total_m3s": round(baseflow_total, 6),
                 "total_flow_m3s": round(sum(item["flow_m3s"] for item in boundaries.values()), 6),
             })
     return rows
+
+
+def _series_step_hours(rows: list[dict[str, Any]]) -> float:
+    if len(rows) < 2:
+        return 1.0
+    delta = (rows[1]["_observed_at"] - rows[0]["_observed_at"]).total_seconds() / 3600.0
+    return delta if delta > 0 else 1.0
 
 
 class BoundaryFlowPlaybackSource:

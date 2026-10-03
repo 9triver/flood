@@ -10,12 +10,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from domains.flood.runtime import forecast
+from domains.flood.runtime import forecast_query
 from domains.flood.runtime.workspace import WorkspaceManager, workspace_scope
 
 
 class ForecastStorageTest(unittest.TestCase):
     def tearDown(self):
-        forecast.clear_forecast_cell_cache()
+        forecast_query.clear_forecast_cell_cache()
 
     def test_forecast_cells_are_materialized_once_and_not_persisted(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -35,18 +36,16 @@ class ForecastStorageTest(unittest.TestCase):
             with patch("domains.flood.runtime.workspace.WORKSPACES", manager):
                 with workspace_scope(workspace_id):
                     with patch.object(forecast, "ensure_latest_forecast"):
-                        with patch.object(forecast, "forecast_depth_entry", return_value=depth_entry):
+                        with patch.object(forecast_query, "forecast_depth_entry", return_value=depth_entry):
                             with patch.object(
-                                forecast,
+                                forecast_query,
                                 "forecast_cells_from_hydrodynamic_mesh",
                                 return_value=rows,
                             ) as materialize:
-                                first = forecast.query_forecast_cells(
-                                    None,
+                                first = forecast_query.query_forecast_cells(
                                     {"forecast_id": "latest", "time_h": 1.0},
                                 )
-                                second = forecast.query_forecast_cells(
-                                    None,
+                                second = forecast_query.query_forecast_cells(
                                     {"forecast_id": "latest", "time_h": 1.0},
                                 )
 
@@ -99,8 +98,8 @@ class ForecastStorageTest(unittest.TestCase):
                     ):
                         first = forecast.ensure_latest_forecast(None, force=True)
                         second = forecast.ensure_latest_forecast(None, force=True)
-                    latest = forecast.query_forecast_runs(
-                        None, {"forecast_id": "latest"},
+                    latest = forecast_query.query_forecast_runs(
+                        {"forecast_id": "latest"},
                     )
 
             self.assertEqual("v001", first["forecast_id"])
@@ -129,8 +128,8 @@ class ForecastStorageTest(unittest.TestCase):
             with patch("domains.flood.runtime.workspace.WORKSPACES", manager):
                 with workspace_scope(workspace_id):
                     with patch.object(forecast, "ensure_latest_forecast") as ensure:
-                        self.assertEqual([], forecast.query_forecast_runs(None))
-                        self.assertEqual([], forecast.query_forecast_cells(None))
+                        self.assertEqual([], forecast_query.query_forecast_runs())
+                        self.assertEqual([], forecast_query.query_forecast_cells())
             ensure.assert_not_called()
 
     def test_forecast_generation_is_serialized_per_workspace(self):

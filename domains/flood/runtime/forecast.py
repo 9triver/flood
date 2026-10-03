@@ -5,59 +5,86 @@ import math
 import csv
 import os
 import shutil
-import sqlite3
 import threading
-from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .cnn_v2 import GRID_PATH, run_cnn_v2_forecast
-from .common import apply_filters, apply_order, apply_window, id_field, rel
-from .hydrodynamic_grid import MESH_DB_PATH, coerce_optional_float, forecast_depth_entry
+from .common import id_field, rel
+from .hydrodynamic_grid import MESH_DB_PATH
 from .boundary_flow import read_latest_forecast_input
 from .workspace import WORKSPACES, active_workspace_id, workspace_dir, workspace_scope
+from . import forecast_storage as _forecast_storage
+from .forecast_storage import (
+    read_jsonl as _read_jsonl,
+    write_jsonl as _write_jsonl,
+)
+from .forecast_geometry import (
+    build_cell_spatial_index,
+    nearest_cell,
+    row_point,
+    sampled_geometry_points,
+)
+from .forecast_constants import FORECAST_SCHEMA_VERSION, LATEST_FORECAST_ID
+from .forecast_query import (
+    clear_forecast_cell_cache,
+    forecast_cell_summary_from_hydrodynamic_mesh,
+    query_forecast_cells,
+    read_hydrodynamic_depth_csv,
+)
 
 
-LATEST_FORECAST_ID = "forecast_latest"
-FORECAST_SCHEMA_VERSION = 6
-_FORECAST_CELL_CACHE_MAX = 2
-_FORECAST_CELL_CACHE_LOCK = threading.RLock()
-_FORECAST_CELL_CACHE: OrderedDict[tuple[Any, ...], list[dict[str, Any]]] = OrderedDict()
 _FORECAST_RUN_LOCKS_LOCK = threading.Lock()
 _FORECAST_RUN_LOCKS: dict[str, threading.RLock] = {}
 
 
 def forecast_dir(*, create: bool = False) -> Path:
-    return workspace_dir(create=create) / "forecasts" / "latest"
+    return _forecast_storage.forecast_dir(create=create)
 
 
 def forecast_runs_path() -> Path:
-    return workspace_dir() / "forecasts" / "forecast_runs.jsonl"
+    return _forecast_storage.forecast_runs_path()
 
 
 def legacy_forecast_runs_path() -> Path:
-    return forecast_dir() / "forecast_runs.jsonl"
+    return _forecast_storage.legacy_forecast_runs_path()
 
 
 def forecast_pointer_path() -> Path:
-    return workspace_dir() / "forecasts" / "latest.json"
+    return _forecast_storage.forecast_pointer_path()
 
 
 def forecast_cycle_path() -> Path:
-    return forecast_dir() / "emergency_cycle.json"
+    return _forecast_storage.forecast_cycle_path()
 
 
 def hydrodynamic_forecast_depth_path() -> Path:
-    return forecast_dir() / "max_depth.csv"
+    return _forecast_storage.hydrodynamic_forecast_depth_path()
 
 
 def hydrodynamic_forecast_series_path() -> Path:
-    return forecast_dir() / "depth_series.npy"
+    return _forecast_storage.hydrodynamic_forecast_series_path()
 
 
 def hydrodynamic_forecast_time_steps_path() -> Path:
-    return forecast_dir() / "time_steps.json"
+    return _forecast_storage.hydrodynamic_forecast_time_steps_path()
+
+
+# Compatibility wrappers keep the historical ``forecast`` module seams
+# patchable while the actual file-format implementation lives in
+# ``forecast_storage``.
+def read_jsonl(path: Path) -> list[dict]:
+    return _read_jsonl(path)
+
+
+def write_jsonl(path: Path, rows: list[dict]) -> None:
+    _write_jsonl(path, rows)
+
+
+def read_forecast_runs() -> list[dict]:
+    rows = read_jsonl(forecast_runs_path())
+    return rows or read_jsonl(legacy_forecast_runs_path())
 
 
 def run_flood_forecast(resolver, forecast_id: str = "latest",
@@ -92,7 +119,7 @@ def run_emergency_cycle(resolver, force_forecast: bool = False,
         if cached:
             return cached
 
-    cells = query_forecast_cells(resolver, {"forecast_id": LATEST_FORECAST_ID})
+    cells = query_forecast_cells({"forecast_id": LATEST_FORECAST_ID})
     evacuation_unit_impacts = impacted_evacuation_units(resolver, cells)
     road_impacts = impacted_linear_objects(resolver, cells, "Road", max_items=8)
     route_impacts = impacted_linear_objects(resolver, cells, "EvacuationRoute", max_items=6)
@@ -119,45 +146,12 @@ def run_emergency_cycle(resolver, force_forecast: bool = False,
     return result
 
 
-def query_forecast_runs(resolver, filters: dict[str, Any] | None = None,
-                        limit: int | None = None,
-                        order_by: str | None = None,
-                        offset: int | None = None) -> list[dict]:
-    if not active_workspace_id():
-        return []
-    rows = read_forecast_runs()
-    normalized_filters = normalize_forecast_filters(filters)
-    if is_latest_forecast_id((filters or {}).get("forecast_id")):
-        rows = rows[-1:]
-        normalized_filters.pop("forecast_id", None)
-    rows = apply_filters(rows, normalized_filters)
-    rows = apply_order(rows, order_by)
-    return apply_window(rows, limit, offset)
 
 
-def query_forecast_cells(resolver, filters: dict[str, Any] | None = None,
-                         limit: int | None = None,
-                         order_by: str | None = None,
-                         offset: int | None = None) -> list[dict]:
-    if not active_workspace_id():
-        return []
-    normalized_filters = normalize_forecast_filters(filters)
-    rows = cached_forecast_cells(normalized_filters)
-    object_filters = {
-        key: value for key, value in normalized_filters.items()
-        if key not in {"forecast_id", "time_h"}
-    }
-    rows = apply_filters(rows, object_filters)
-    rows = apply_order(rows, order_by)
-    return apply_window(rows, limit, offset)
 
 
-def count_forecast_runs(resolver, filters: dict[str, Any] | None = None) -> int:
-    return len(query_forecast_runs(resolver, filters))
 
 
-def count_forecast_cells(resolver, filters: dict[str, Any] | None = None) -> int:
-    return len(query_forecast_cells(resolver, filters))
 
 
 def ensure_latest_forecast(resolver, force: bool = False) -> dict[str, Any]:
@@ -473,181 +467,20 @@ def hydrology_inputs_from_forecast(forecast: dict[str, Any]) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def read_hydrodynamic_depth_csv(path: Path) -> dict[int, float]:
-    if not path.exists():
-        return {}
-    depths: dict[int, float] = {}
-    with path.open(newline="", encoding="utf-8") as file:
-        reader = csv.DictReader(file)
-        for row in reader:
-            try:
-                cell_id = int(row["cell_id"])
-                depth = float(row.get("max_depth") or row.get("max_depth_m") or 0)
-            except (KeyError, TypeError, ValueError):
-                continue
-            if depth > 0:
-                depths[cell_id] = depth
-    return depths
 
 
-def forecast_cells_from_hydrodynamic_mesh(depths: dict[int, float],
-                                          generated_at: str,
-                                          time_h: float | None = None,
-                                          forecast_id: str = LATEST_FORECAST_ID) -> list[dict[str, Any]]:
-    if not MESH_DB_PATH.exists() or not depths:
-        return []
-    cells = []
-    with sqlite3.connect(MESH_DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        rows = mesh_rows_for_depths(conn, depths)
-        for row in rows:
-            mesh_cell_id = int(row["cell_id"])
-            depth_m = float(depths.get(mesh_cell_id) or 0)
-            coordinates = [
-                [float(row["lon1"]), float(row["lat1"])],
-                [float(row["lon2"]), float(row["lat2"])],
-                [float(row["lon3"]), float(row["lat3"])],
-                [float(row["lon1"]), float(row["lat1"])],
-            ]
-            centroid = (
-                sum(point[0] for point in coordinates[:3]) / 3,
-                sum(point[1] for point in coordinates[:3]) / 3,
-            )
-            area_m2 = triangle_area_m2(coordinates[:3])
-            velocity = round(max(0.04, min(2.4, 0.10 + math.sqrt(depth_m) * 0.38)), 3)
-            cells.append({
-                "forecast_cell_id": f"{forecast_id}_{mesh_cell_id}",
-                "forecast_id": forecast_id,
-                "model_name": "FLOOD_CNN_V2",
-                "mesh_cell_id": str(mesh_cell_id),
-                "mesh_source_id": "cnn_v2_gt",
-                "lead_time_h": round(float(time_h), 3) if time_h is not None else 3.0,
-                "centroid_lon": round(centroid[0], 7),
-                "centroid_lat": round(centroid[1], 7),
-                "distance_to_river_m": 0,
-                "river_along_ratio": 0,
-                "ground_elevation_m": 0,
-                "water_level_m": round(depth_m, 3),
-                "depth_m": round(depth_m, 3),
-                "velocity_mps": velocity,
-                "arrival_time_h": round(float(time_h), 3) if time_h is not None else 0,
-                "recession_time_h": 0,
-                "risk_level": risk_level(depth_m, velocity),
-                "area_m2": round(area_m2, 3),
-                "geometry_type": "Polygon",
-                "geometry_crs": "EPSG:4326",
-                "geometry": json.dumps({
-                    "type": "Polygon",
-                    "coordinates": [coordinates],
-                }, ensure_ascii=False),
-                "generated_at": generated_at,
-            })
-    return cells
 
 
-def forecast_cell_summary_from_hydrodynamic_mesh(
-    depths: dict[int, float],
-) -> dict[str, Any]:
-    if not MESH_DB_PATH.exists() or not depths:
-        return {"forecast_cell_count": 0, "inundated_area_km2": 0.0}
-    count = 0
-    total_area_m2 = 0.0
-    with sqlite3.connect(MESH_DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        rows = mesh_rows_for_depths(conn, depths)
-        for row in rows:
-            count += 1
-            total_area_m2 += triangle_area_m2([
-                [float(row["lon1"]), float(row["lat1"])],
-                [float(row["lon2"]), float(row["lat2"])],
-                [float(row["lon3"]), float(row["lat3"])],
-            ])
-    return {
-        "forecast_cell_count": count,
-        "inundated_area_km2": round(total_area_m2 / 1_000_000, 4),
-    }
 
 
-def mesh_rows_for_depths(
-    conn: sqlite3.Connection,
-    depths: dict[int, float],
-) -> list[sqlite3.Row]:
-    cell_ids = sorted(
-        int(cell_id)
-        for cell_id, depth in depths.items()
-        if float(depth or 0) >= 0.04
-    )
-    rows: list[sqlite3.Row] = []
-    for start in range(0, len(cell_ids), 800):
-        batch = cell_ids[start:start + 800]
-        placeholders = ",".join("?" for _ in batch)
-        rows.extend(conn.execute(
-            f"""
-            select cell_id, lon1, lat1, lon2, lat2, lon3, lat3
-            from cells
-            where cell_id in ({placeholders})
-            order by cell_id
-            """,
-            batch,
-        ).fetchall())
-    return rows
 
 
-def cached_forecast_cells(filters: dict[str, Any]) -> list[dict[str, Any]]:
-    forecast_id = str(filters.get("forecast_id") or LATEST_FORECAST_ID)
-    resolved_forecast_id = resolve_forecast_id(forecast_id)
-    requested_time_h = coerce_optional_float(filters.get("time_h"))
-    depth_entry = forecast_depth_entry(forecast_id, time_h=requested_time_h)
-    cache_key = (
-        active_workspace_id(),
-        forecast_id,
-        depth_entry.get("time_h"),
-        depth_entry.get("stat_key"),
-    )
-    with _FORECAST_CELL_CACHE_LOCK:
-        cached = _FORECAST_CELL_CACHE.get(cache_key)
-        if cached is not None:
-            _FORECAST_CELL_CACHE.move_to_end(cache_key)
-            return cached
-        rows = forecast_cells_from_hydrodynamic_mesh(
-            depth_entry["depths"],
-            generated_at=forecast_generated_at(resolved_forecast_id),
-            time_h=depth_entry.get("time_h"),
-            forecast_id=resolved_forecast_id,
-        )
-        _FORECAST_CELL_CACHE[cache_key] = rows
-        _FORECAST_CELL_CACHE.move_to_end(cache_key)
-        while len(_FORECAST_CELL_CACHE) > _FORECAST_CELL_CACHE_MAX:
-            _FORECAST_CELL_CACHE.popitem(last=False)
-        return rows
 
 
-def clear_forecast_cell_cache() -> None:
-    with _FORECAST_CELL_CACHE_LOCK:
-        _FORECAST_CELL_CACHE.clear()
 
 
-def forecast_generated_at(forecast_id: str = LATEST_FORECAST_ID) -> str:
-    rows = read_forecast_runs()
-    if rows:
-        if forecast_id not in {"latest", LATEST_FORECAST_ID}:
-            selected = next(
-                (row for row in rows if row.get("forecast_id") == forecast_id),
-                None,
-            )
-            if selected:
-                return str(selected.get("generated_at") or "")
-        return str(rows[-1].get("generated_at") or "")
-    return datetime.now(timezone.utc).isoformat()
 
 
-def triangle_area_m2(points: list[list[float]]) -> float:
-    if len(points) < 3:
-        return 0.0
-    ref_lat = sum(point[1] for point in points[:3]) / 3
-    projected = [project((point[0], point[1]), ref_lat) for point in points[:3]]
-    (x1, y1), (x2, y2), (x3, y3) = projected
-    return abs((x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1)) / 2
 
 
 def write_hydrodynamic_depth_csv(depths: dict[int, float], path: Path) -> None:
@@ -676,14 +509,6 @@ def forcing_index(inputs: dict[str, float]) -> float:
     return max(0.45, min(1.65, rain_term + forecast_term + reservoir_term + outflow_term + boundary_term))
 
 
-def risk_level(depth_m: float, velocity_mps: float) -> str:
-    if depth_m >= 1.6 or depth_m * velocity_mps >= 1.2:
-        return "critical"
-    if depth_m >= 0.9 or depth_m * velocity_mps >= 0.55:
-        return "high"
-    if depth_m >= 0.35:
-        return "medium"
-    return "low"
 
 
 def warning_from_forecast(forecast: dict[str, Any],
@@ -836,150 +661,26 @@ def compact_cell_index(cells: list[dict[str, Any]], min_depth: float) -> dict[st
     return build_cell_spatial_index(result[::step])
 
 
-def nearest_cell(point: tuple[float, float],
-                 cells: Any,
-                 max_distance_m: float) -> dict[str, Any] | None:
-    best = None
-    best_distance = max_distance_m
-    for cell in candidate_cells(point, cells, max_distance_m):
-        distance = distance_m(point, (float(cell["centroid_lon"]), float(cell["centroid_lat"])))
-        if distance <= best_distance:
-            best = cell
-            best_distance = distance
-    if not best:
-        return None
-    return {**best, "_distance_m": best_distance}
 
 
-def nearby_cells(point: tuple[float, float],
-                 cells: Any,
-                 max_distance_m: float) -> list[dict[str, Any]]:
-    matched = []
-    for cell in candidate_cells(point, cells, max_distance_m):
-        distance = cell_geometry_distance_m(point, cell)
-        if distance <= max_distance_m:
-            matched.append({**cell, "_distance_m": distance})
-    return sorted(matched, key=lambda row: float(row["_distance_m"]))
 
 
-def cell_geometry_distance_m(point: tuple[float, float],
-                             cell: dict[str, Any]) -> float:
-    geometry = cell.get("geometry") or {}
-    if isinstance(geometry, str):
-        try:
-            geometry = json.loads(geometry)
-        except json.JSONDecodeError:
-            geometry = {}
-    if isinstance(geometry, dict):
-        rings = polygon_rings(geometry)
-        if any(point_in_ring(point, ring) for ring in rings):
-            return 0.0
-        distances = [
-            point_segment_distance_m(point, start, end)[0]
-            for ring in rings
-            for start, end in closed_segments(ring)
-        ]
-        if distances:
-            return min(distances)
-    return distance_m(
-        point,
-        (float(cell["centroid_lon"]), float(cell["centroid_lat"])),
-    )
 
 
-def polygon_rings(geometry: dict[str, Any]) -> list[list[tuple[float, float]]]:
-    geometry_type = geometry.get("type")
-    coordinates = geometry.get("coordinates") or []
-    if geometry_type == "Polygon":
-        values = coordinates
-    elif geometry_type == "MultiPolygon":
-        values = [ring for polygon in coordinates for ring in polygon]
-    else:
-        return []
-    return [
-        [(float(point[0]), float(point[1])) for point in ring]
-        for ring in values
-        if isinstance(ring, list) and len(ring) >= 3
-    ]
 
 
-def point_in_ring(point: tuple[float, float],
-                  ring: list[tuple[float, float]]) -> bool:
-    x, y = point
-    inside = False
-    for start, end in closed_segments(ring):
-        x1, y1 = start
-        x2, y2 = end
-        if (y1 > y) == (y2 > y):
-            continue
-        crossing_x = x1 + (y - y1) * (x2 - x1) / (y2 - y1)
-        if x < crossing_x:
-            inside = not inside
-    return inside
 
 
-def closed_segments(
-    ring: list[tuple[float, float]],
-) -> list[tuple[tuple[float, float], tuple[float, float]]]:
-    if ring[0] == ring[-1]:
-        return list(zip(ring, ring[1:]))
-    return list(zip(ring, [*ring[1:], ring[0]]))
 
 
-def build_cell_spatial_index(cells: list[dict[str, Any]]) -> dict[str, Any]:
-    degree_size = 0.002
-    buckets: dict[tuple[int, int], list[dict[str, Any]]] = {}
-    for cell in cells:
-        key = cell_bucket(
-            (float(cell["centroid_lon"]), float(cell["centroid_lat"])),
-            degree_size,
-        )
-        buckets.setdefault(key, []).append(cell)
-    return {
-        "degree_size": degree_size,
-        "buckets": buckets,
-        "cells": cells,
-    }
 
 
-def candidate_cells(point: tuple[float, float],
-                    index: Any,
-                    max_distance_m: float) -> list[dict[str, Any]]:
-    if not isinstance(index, dict) or "buckets" not in index:
-        return index
-    degree_size = float(index["degree_size"])
-    center = cell_bucket(point, degree_size)
-    span = max(1, math.ceil(max_distance_m / (degree_size * 90_000.0)) + 1)
-    candidates: list[dict[str, Any]] = []
-    buckets = index["buckets"]
-    for x in range(center[0] - span, center[0] + span + 1):
-        for y in range(center[1] - span, center[1] + span + 1):
-            candidates.extend(buckets.get((x, y), []))
-    return candidates
 
 
-def cell_bucket(point: tuple[float, float], degree_size: float) -> tuple[int, int]:
-    lon, lat = point
-    return math.floor(lon / degree_size), math.floor(lat / degree_size)
 
 
-def row_point(row: dict[str, Any]) -> tuple[float, float] | None:
-    lon = row.get("longitude")
-    lat = row.get("latitude")
-    if lon and lat:
-        return float(lon), float(lat)
-    geometry = json.loads(row.get("geometry") or "{}")
-    centroid = geometry_centroid(geometry)
-    return centroid
 
 
-def sampled_geometry_points(row: dict[str, Any], max_points: int = 16) -> list[tuple[float, float]]:
-    geometry = json.loads(row.get("geometry") or "{}")
-    coords = iter_coords(geometry.get("coordinates") or [])
-    if len(coords) <= max_points:
-        return coords
-    step = max(1, len(coords) // max_points)
-    return coords[::step][:max_points]
 
 
 def level_name(level: str) -> str:
@@ -991,132 +692,20 @@ def level_name(level: str) -> str:
     }.get(level, level)
 
 
-class RiverModel:
-    def __init__(self, points: list[tuple[float, float]], cumulative: list[float]):
-        self.points = points
-        self.cumulative = cumulative
-        self.total_length = cumulative[-1] if cumulative else 0.0
-
-    @classmethod
-    def from_resolver(cls, resolver) -> "RiverModel":
-        rows = resolver.query("River", limit=1)
-        points = []
-        if rows:
-            geometry = json.loads(rows[0].get("geometry") or "{}")
-            points = [(lon, lat) for lon, lat in iter_coords(geometry.get("coordinates") or [])]
-        if len(points) > 300:
-            stride = max(1, len(points) // 300)
-            points = points[::stride] + points[-1:]
-        cumulative = [0.0]
-        for prev, curr in zip(points, points[1:]):
-            cumulative.append(cumulative[-1] + distance_m(prev, curr))
-        return cls(points, cumulative)
-
-    def distance_and_along(self, point: tuple[float, float]) -> tuple[float, float]:
-        if len(self.points) < 2:
-            return 0.0, 0.0
-        best_distance = float("inf")
-        best_along_m = 0.0
-        for index, (start, end) in enumerate(zip(self.points, self.points[1:])):
-            segment_distance, ratio = point_segment_distance_m(point, start, end)
-            if segment_distance < best_distance:
-                best_distance = segment_distance
-                segment_length = self.cumulative[index + 1] - self.cumulative[index]
-                best_along_m = self.cumulative[index] + segment_length * ratio
-        along_ratio = best_along_m / self.total_length if self.total_length else 0.0
-        return best_distance, max(0.0, min(1.0, along_ratio))
 
 
-def geometry_centroid(geometry: dict) -> tuple[float, float] | None:
-    coords = list(iter_coords(geometry.get("coordinates") or []))
-    if not coords:
-        return None
-    return (
-        sum(lon for lon, _ in coords) / len(coords),
-        sum(lat for _, lat in coords) / len(coords),
-    )
 
 
-def iter_coords(value) -> list[tuple[float, float]]:
-    if not isinstance(value, list):
-        return []
-    if len(value) >= 2 and all(isinstance(item, (int, float)) for item in value[:2]):
-        return [(float(value[0]), float(value[1]))]
-    coords: list[tuple[float, float]] = []
-    for item in value:
-        coords.extend(iter_coords(item))
-    return coords
 
 
-def point_segment_distance_m(point: tuple[float, float],
-                             start: tuple[float, float],
-                             end: tuple[float, float]) -> tuple[float, float]:
-    px, py = project(point, point[1])
-    ax, ay = project(start, point[1])
-    bx, by = project(end, point[1])
-    dx = bx - ax
-    dy = by - ay
-    if dx == 0 and dy == 0:
-        return math.hypot(px - ax, py - ay), 0.0
-    ratio = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
-    closest_x = ax + ratio * dx
-    closest_y = ay + ratio * dy
-    return math.hypot(px - closest_x, py - closest_y), ratio
 
 
-def distance_m(a: tuple[float, float], b: tuple[float, float]) -> float:
-    ax, ay = project(a, (a[1] + b[1]) / 2)
-    bx, by = project(b, (a[1] + b[1]) / 2)
-    return math.hypot(ax - bx, ay - by)
 
 
-def project(point: tuple[float, float], ref_lat: float) -> tuple[float, float]:
-    lon, lat = point
-    return (
-        lon * 111_320.0 * math.cos(math.radians(ref_lat)),
-        lat * 110_540.0,
-    )
 
 
-def normalize_forecast_filters(filters: dict[str, Any] | None) -> dict[str, Any]:
-    result = dict(filters or {})
-    if is_latest_forecast_id(result.get("forecast_id")):
-        result["forecast_id"] = LATEST_FORECAST_ID
-    return result
 
 
-def is_latest_forecast_id(value: Any) -> bool:
-    return str(value or "") in {"latest", LATEST_FORECAST_ID}
-
-
-def resolve_forecast_id(value: Any) -> str:
-    forecast_id = str(value or LATEST_FORECAST_ID)
-    if not is_latest_forecast_id(forecast_id):
-        return forecast_id
-    rows = read_forecast_runs()
-    return str(rows[-1].get("forecast_id") or LATEST_FORECAST_ID) if rows else LATEST_FORECAST_ID
-
-
-def read_forecast_runs() -> list[dict]:
-    rows = read_jsonl(forecast_runs_path())
-    if rows:
-        return rows
-    return read_jsonl(legacy_forecast_runs_path())
-
-
-def read_jsonl(path: Path) -> list[dict]:
-    if not path.exists():
-        return []
-    return [
-        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-
-
-def write_jsonl(path: Path, rows: list[dict]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    body = "\n".join(json.dumps(row, ensure_ascii=False, sort_keys=True) for row in rows)
-    path.write_text(f"{body}\n" if body else "", encoding="utf-8")
 
 
 def read_cached_emergency_cycle(forecast: dict[str, Any]) -> dict[str, Any] | None:

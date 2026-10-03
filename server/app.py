@@ -21,14 +21,11 @@ from oag.runtime.events import event_to_dict  # noqa: E402
 from domains.flood.runtime.impact_analysis import (  # noqa: E402
     BRIDGE_INFLUENCE_RADIUS_M,
 )
-from server.agent_runs import AgentRunManager  # noqa: E402
-from server.directives import DirectiveStore  # noqa: E402
-from server.events import EventRuntime  # noqa: E402
+from server.container import ApplicationContext, build_application  # noqa: E402
 from server.evaluation_api import (  # noqa: E402
     EvaluationApiError,
     build_chat_completion_response,
 )
-from server.flood_app import FloodApp  # noqa: E402
 from server.serialization import format_sse  # noqa: E402
 from domains.flood.runtime.playback_sources import (  # noqa: E402
     MAX_PLAYBACK_SOURCE_BYTES,
@@ -36,30 +33,33 @@ from domains.flood.runtime.playback_sources import (  # noqa: E402
 )
 
 
-APP = FloodApp()
-RUNS = AgentRunManager(APP)
-EVENT_RUNTIME = EventRuntime(APP)
-DIRECTIVES = DirectiveStore()
-
-
 class Handler(BaseHTTPRequestHandler):
     server_version = "FloodFrontend/0.1"
+
+    @property
+    def context(self) -> ApplicationContext:
+        """Return dependencies owned by the HTTP server instance."""
+
+        context = getattr(self.server, "app_context", None)
+        if context is None:
+            raise RuntimeError("HTTP server application context is not configured")
+        return context
 
     def do_GET(self):
         parsed = urlparse(self.path)
         try:
             if parsed.path == "/api/bootstrap":
-                return self._json(APP.bootstrap())
+                return self._json(self.context.app.bootstrap())
             if parsed.path == "/api/agent/chat/stream":
                 return self._chat_stream(parsed.query)
             if parsed.path == "/api/autonomy/stream":
                 return self._autonomy_stream(parsed.query)
             if parsed.path == "/api/autonomy/status":
-                return self._json(EVENT_RUNTIME.status())
+                return self._json(self.context.event_runtime.status())
             if parsed.path == "/api/autonomy/sources":
-                return self._json(EVENT_RUNTIME.list_playback_sources())
+                return self._json(self.context.event_runtime.list_playback_sources())
             if parsed.path == "/api/directives":
-                return self._json(DIRECTIVES.list_issued())
+                return self._json(self.context.directives.list_issued())
             if parsed.path == "/api/agent/runs/active":
                 return self._active_run(parsed.query)
             if parsed.path == "/api/hydrodynamic-grid/meta":
@@ -100,22 +100,22 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/v1/chat/completions":
                 return self._evaluation_chat_completion(payload)
             if parsed.path == "/api/autonomy/start":
-                return self._json(EVENT_RUNTIME.start_playback(
+                return self._json(self.context.event_runtime.start_playback(
                     payload.get("speed_multiplier", 20),
                     payload.get("source_id"),
                 ))
             if parsed.path == "/api/autonomy/stop":
-                return self._json(EVENT_RUNTIME.stop_playback())
+                return self._json(self.context.event_runtime.stop_playback())
             if parsed.path == "/api/autonomy/pause":
-                return self._json(EVENT_RUNTIME.pause_playback())
+                return self._json(self.context.event_runtime.pause_playback())
             if parsed.path == "/api/autonomy/resume":
-                return self._json(EVENT_RUNTIME.resume_playback(payload.get("speed_multiplier", 1)))
+                return self._json(self.context.event_runtime.resume_playback(payload.get("speed_multiplier", 1)))
             if parsed.path == "/api/autonomy/step":
-                return self._json(EVENT_RUNTIME.step_playback())
+                return self._json(self.context.event_runtime.step_playback())
             if parsed.path == "/api/autonomy/speed":
-                return self._json(EVENT_RUNTIME.set_playback_speed(payload.get("speed_multiplier", 1)))
+                return self._json(self.context.event_runtime.set_playback_speed(payload.get("speed_multiplier", 1)))
             if parsed.path == "/api/autonomy/auto-pause":
-                return self._json(EVENT_RUNTIME.set_auto_pause(
+                return self._json(self.context.event_runtime.set_auto_pause(
                     payload.get("auto_pause_enabled"),
                 ))
             if parsed.path == "/api/agent/confirm":
@@ -123,13 +123,13 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/directives":
                 return self._issue_directive(payload)
             if parsed.path == "/api/autonomy/reset":
-                return self._json(EVENT_RUNTIME.restart_playback(
+                return self._json(self.context.event_runtime.restart_playback(
                     payload.get("speed_multiplier", 20),
                     payload.get("source_id"),
                 ))
             if parsed.path.startswith("/api/agent/runs/") and parsed.path.endswith("/cancel"):
                 run_id = parsed.path.split("/")[-2]
-                return self._json({"ok": RUNS.cancel(run_id), "run_id": run_id})
+                return self._json({"ok": self.context.runs.cancel(run_id), "run_id": run_id})
             return self._json({"error": "not found"}, status=404)
         except ValueError as exc:
             return self._json({"error": str(exc)}, status=400)
@@ -145,7 +145,7 @@ class Handler(BaseHTTPRequestHandler):
         since = int((params.get("since") or ["0"])[0] or 0)
 
         if run_id:
-            run = RUNS.get(run_id)
+            run = self.context.runs.get(run_id)
             if not run:
                 return self._sse([
                     format_sse("text", {
@@ -154,7 +154,7 @@ class Handler(BaseHTTPRequestHandler):
                     }),
                     format_sse("done", {"type": "done"}),
                 ])
-            return self._sse(RUNS.stream(run, since))
+            return self._sse(self.context.runs.stream(run, since))
 
         message = unquote((params.get("message") or [""])[0])
         selected_raw = (params.get("selected") or ["{}"])[0]
@@ -164,26 +164,27 @@ class Handler(BaseHTTPRequestHandler):
             selected = {}
         if not message:
             return self._json({"error": "message is required"}, status=400)
-        run = RUNS.start(session_id, message, selected)
-        return self._sse(RUNS.stream(run, since=0))
+        run = self.context.runs.start(session_id, message, selected)
+        return self._sse(self.context.runs.stream(run, since=0))
 
     def _active_run(self, query: str):
         params = parse_qs(query)
         session_id = (params.get("session_id") or ["frontend-default"])[0]
-        return self._json(RUNS.active_info(session_id))
+        return self._json(self.context.runs.active_info(session_id))
 
     def _confirm(self, payload: dict):
-        session_id = APP.agent_session_id(
+        app = self.context.app
+        session_id = app.agent_session_id(
             str(payload.get("session_id") or "frontend-default")
         )
         approved = bool(payload.get("approved"))
         answer = payload.get("answer")
-        if not APP.agent or not APP.agent.has_pending(session_id):
+        if not app.agent or not app.agent.has_pending(session_id):
             return self._json({"error": "no pending confirmation"}, status=400)
 
         def generator():
             try:
-                for event in APP.agent.confirm_tool(session_id, approved, answer=answer):
+                for event in app.agent.confirm_tool(session_id, approved, answer=answer):
                     data = event_to_dict(event)
                     yield format_sse(data["type"], data)
             except Exception as exc:
@@ -196,15 +197,17 @@ class Handler(BaseHTTPRequestHandler):
         return self._sse(generator())
 
     def _evaluation_chat_completion(self, payload: dict[str, Any]):
-        body, headers = build_chat_completion_response(APP, payload)
+        body, headers = build_chat_completion_response(self.context.app, payload)
         return self._json(body, headers=headers)
 
     def _issue_directive(self, payload: dict[str, Any]):
         try:
-            directive = DIRECTIVES.issue(payload, EVENT_RUNTIME.status())
+            directive = self.context.directives.issue(
+                payload, self.context.event_runtime.status(),
+            )
         except ValueError as exc:
             return self._json({"error": str(exc)}, status=400)
-        EVENT_RUNTIME.publish_directive_issued(directive)
+        self.context.event_runtime.publish_directive_issued(directive)
         return self._json({"directive": directive}, status=201)
 
     def _upload_playback_source(self, query: str):
@@ -212,7 +215,7 @@ class Handler(BaseHTTPRequestHandler):
         filename = (params.get("filename") or [""])[0]
         try:
             content = self._read_bytes(MAX_PLAYBACK_SOURCE_BYTES)
-            result = EVENT_RUNTIME.upload_playback_source(filename, content)
+            result = self.context.event_runtime.upload_playback_source(filename, content)
         except PlaybackSourceValidationError as exc:
             status = 413 if "5 MB" in str(exc) else 400
             return self._json({"error": str(exc)}, status=status)
@@ -221,7 +224,7 @@ class Handler(BaseHTTPRequestHandler):
     def _autonomy_stream(self, query: str):
         params = parse_qs(query)
         interval = max(5, int((params.get("interval") or ["5"])[0] or 5))
-        return self._sse(EVENT_RUNTIME.stream(interval))
+        return self._sse(self.context.event_runtime.stream(interval))
 
     def _geojson(self, query: str):
         params = parse_qs(query)
@@ -241,7 +244,7 @@ class Handler(BaseHTTPRequestHandler):
             for key, values in params.items()
             if key not in {"object_type", "simplify_tolerance", "filters"} and values
         })
-        _, body = APP.export_geojson(object_type, filters, simplify)
+        _, body = self.context.app.export_geojson(object_type, filters, simplify)
         self.send_response(200)
         self.send_header("Content-Type", "application/geo+json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -260,7 +263,9 @@ class Handler(BaseHTTPRequestHandler):
         wet_only = str((params.get("wet_only") or [""])[0]).lower() in {"1", "true", "yes", "on"}
         time_h = _coerce_optional_float((params.get("time_h") or [""])[0])
         tile_crs = (params.get("tile_crs") or ["wgs84"])[0]
-        data = APP.hydrodynamic_grid_tile(z, x, y, forecast_id, wet_only, time_h, tile_crs)
+        data = self.context.app.hydrodynamic_grid_tile(
+            z, x, y, forecast_id, wet_only, time_h, tile_crs,
+        )
         body = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         use_gzip = len(body) >= 1024 and "gzip" in self.headers.get("Accept-Encoding", "").lower()
         if use_gzip:
@@ -278,11 +283,11 @@ class Handler(BaseHTTPRequestHandler):
     def _hydrodynamic_grid_meta(self, query: str):
         params = parse_qs(query)
         forecast_id = self._hydrodynamic_result_id(params)
-        return self._json(APP.hydrodynamic_grid_stats(forecast_id))
+        return self._json(self.context.app.hydrodynamic_grid_stats(forecast_id))
 
     def _impact_analysis(self, query: str):
         params = parse_qs(query)
-        result = APP.analyze_inundation_impacts(
+        result = self.context.app.analyze_inundation_impacts(
             forecast_id=(params.get("forecast_id") or ["latest"])[0],
             target_type=(params.get("target_type") or ["all"])[0],
             min_depth_m=_coerce_float((params.get("min_depth_m") or ["0.15"])[0], 0.15),
@@ -309,7 +314,7 @@ class Handler(BaseHTTPRequestHandler):
         object_id = (params.get("id") or [""])[0]
         if not object_type or not object_id:
             return self._json({"error": "object_type and id are required"}, status=400)
-        return self._json(APP.get_object(object_type, object_id))
+        return self._json(self.context.app.get_object(object_type, object_id))
 
     def _static(self, path: str):
         rel = "index.html" if path in {"", "/"} else path.lstrip("/")
@@ -390,13 +395,26 @@ def _coerce_float(value: str, default: float) -> float:
         return default
 
 
+def create_server(host: str = "127.0.0.1", port: int = 8765,
+                  context: ApplicationContext | None = None):
+    """Build an HTTP server with an explicit application context.
+
+    Tests and embedding applications can provide their own context without
+    importing or mutating module-level service singletons.
+    """
+
+    server = ThreadingHTTPServer((host, port), Handler)
+    server.app_context = context or build_application()
+    return server
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
 
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
+    server = create_server(args.host, args.port)
     print(f"Flood server running at http://{args.host}:{args.port}")
     server.serve_forever()
 

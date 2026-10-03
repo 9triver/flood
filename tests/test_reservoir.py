@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import unittest
 
-from domains.flood.runtime.common import PROJECT_DIR
 from domains.flood.runtime.repository import object_library_path
 
 
@@ -41,15 +40,7 @@ class ReservoirObjectTest(unittest.TestCase):
 
         self.assertIn(river_coordinates[0], reservoir_boundary)
 
-        source_path = PROJECT_DIR / longtan["data_path"]
-        source = json.loads(source_path.read_text(encoding="utf-8"))
-        connection = next(
-            feature["geometry"]["coordinates"]
-            for feature in source["features"]
-            if feature["properties"].get("role") == "river_connection"
-        )
-        self.assertGreater(len(connection), 5)
-        self.assertEqual(connection, river_coordinates[:len(connection)])
+        self.assertEqual("amap_standard_map_water_extent_interpretation", longtan["geometry_source"])
 
 
 if __name__ == "__main__":

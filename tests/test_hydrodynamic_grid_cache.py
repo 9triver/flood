@@ -11,20 +11,21 @@ from pathlib import Path
 from unittest.mock import patch
 
 from domains.flood.runtime import hydrodynamic_grid
+from domains.flood.runtime import hydrodynamic_cache
 
 
 class HydrodynamicGridCacheTest(unittest.TestCase):
     def setUp(self):
-        with hydrodynamic_grid._DEPTH_CACHE_LOCK:
-            hydrodynamic_grid._DEPTH_CACHE.clear()
-            hydrodynamic_grid._DEPTH_LOADS.clear()
+        with hydrodynamic_cache.DEPTH_CACHE_LOCK:
+            hydrodynamic_cache.DEPTH_CACHE.clear()
+            hydrodynamic_cache.DEPTH_LOADS.clear()
         with hydrodynamic_grid._TILE_CACHE_LOCK:
             hydrodynamic_grid._TILE_CACHE.clear()
 
     def tearDown(self):
-        with hydrodynamic_grid._DEPTH_CACHE_LOCK:
-            hydrodynamic_grid._DEPTH_CACHE.clear()
-            hydrodynamic_grid._DEPTH_LOADS.clear()
+        with hydrodynamic_cache.DEPTH_CACHE_LOCK:
+            hydrodynamic_cache.DEPTH_CACHE.clear()
+            hydrodynamic_cache.DEPTH_LOADS.clear()
         with hydrodynamic_grid._TILE_CACHE_LOCK:
             hydrodynamic_grid._TILE_CACHE.clear()
 
