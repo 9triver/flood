@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 from typing import Any
 
 from .common import MAPPABLE_OBJECTS, rel
 from .repository import object_library_path
+from . import road_routes
 from .workspace import SHARED_CACHE_DIR, active_workspace_id, workspace_dir
 
 
@@ -59,7 +61,11 @@ def export_objects_geojson(resolver, object_type: str,
 def _cache_is_current(target, object_type: str) -> bool:
     if not target.exists():
         return False
-    source = object_library_path(object_type)
+    source = object_library_path("Road" if object_type == "RoadRoute" else object_type)
+    # The route model also enriches Road properties; invalidate pre-model exports.
+    if object_type in {"Road", "RoadRoute"}:
+        if target.stat().st_mtime_ns < Path(road_routes.__file__).stat().st_mtime_ns:
+            return False
     return not source.exists() or target.stat().st_mtime_ns >= source.stat().st_mtime_ns
 
 

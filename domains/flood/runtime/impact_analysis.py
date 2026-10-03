@@ -8,7 +8,6 @@ from .common import id_field
 from .forecast import (
     LATEST_FORECAST_ID,
     build_cell_spatial_index,
-    compact_cell_index,
     iter_coords,
     nearby_cells,
     nearest_cell,
@@ -16,9 +15,10 @@ from .forecast import (
     query_forecast_cells,
     risk_level,
     row_point,
-    sampled_geometry_points,
 )
 from .hydrodynamic_grid import forecast_time_context
+from .road_routes import ROAD_ROUTE_SCOPE
+from .linear_inundation import METRIC_CRS, WetCellIndex
 
 
 POINT_TARGET_TYPES = ("Facility", "EvacuationUnit", "EvacuationSite")
@@ -45,7 +45,7 @@ def analyze_inundation_impacts(
             "forecast_id": forecast_key,
             "time_h": analysis_time_h,
             "target_type": target_type,
-            "valid_target_types": ["all", *TARGET_TYPES],
+            "valid_target_types": ["all", *TARGET_TYPES, "RoadRoute"],
             "summary": {},
             "total_impacts": 0,
             "impacts": [],
@@ -75,7 +75,12 @@ def analyze_inundation_impacts(
         }
 
     minimum_depth = float(min_depth_m or 0)
-    cell_index = compact_cell_index(cells, min_depth=minimum_depth)
+    # Index every qualifying cell. Subsampling wet cells can hide intersections.
+    cell_index = build_cell_spatial_index([
+        row for row in cells if float(row.get("depth_m") or 0) >= minimum_depth
+        and row.get("centroid_lon") is not None and row.get("centroid_lat") is not None
+    ])
+    linear_index = WetCellIndex(cells, minimum_depth) if set(target_types) & {*LINE_TARGET_TYPES, "RoadRoute"} else None
     bridge_cell_index = None
     if "Bridge" in target_types:
         bridge_cell_index = build_cell_spatial_index([
@@ -86,7 +91,12 @@ def analyze_inundation_impacts(
         ])
     resolved_forecast_id = str(cells[0].get("forecast_id") or forecast_key)
     impacts: list[dict[str, Any]] = []
+    nearby_impacts: list[dict[str, Any]] = []
+    unassessed_objects: list[dict[str, str]] = []
     for object_type in target_types:
+        if object_type == "RoadRoute":
+            # Analyze each complete segment, then aggregate membership.
+            object_type = "Road"
         if object_type == "Bridge":
             impacts.extend(analyze_bridge_objects(
                 resolver,
@@ -103,13 +113,16 @@ def analyze_inundation_impacts(
                 max_distance_m=float(max_distance_m or 0),
             ))
         else:
-            impacts.extend(analyze_linear_objects(
+            linear_impacts = analyze_linear_objects(
                 resolver,
                 object_type,
-                cell_index,
+                linear_index,
                 min_depth_m=minimum_depth,
                 max_distance_m=float(max_distance_m or 0),
-            ))
+                unassessed_objects=unassessed_objects,
+            )
+            impacts.extend(row for row in linear_impacts if row["impact_status"] != "nearby_flood")
+            nearby_impacts.extend(row for row in linear_impacts if row["impact_status"] == "nearby_flood")
 
     impacts = sorted(
         impacts,
@@ -119,11 +132,24 @@ def analyze_inundation_impacts(
             float(row.get("distance_m") or 0),
         ),
     )
+    route_fields = {}
+    if "Road" in target_types or "RoadRoute" in target_types:
+        road_impacts = [row for row in impacts if row["object_type"] == "Road"]
+        nearby_roads = [row for row in nearby_impacts if row["object_type"] == "Road"]
+        route_impacts, nearby_routes, coverage = aggregate_road_route_impacts(resolver, road_impacts, nearby_roads)
+        route_fields = {
+            "road_route_impacts": route_impacts,
+            "road_route_nearby_impacts": nearby_routes,
+            "road_route_coverage": coverage,
+        }
+        if target_types == ["RoadRoute"]:
+            impacts = route_impacts
+            nearby_impacts = nearby_routes
     summary = summarize_impacts(target_types, impacts)
     actual_time_h = actual_cell_time_h(cells, analysis_time_h)
     time_fields = analysis_time_fields(resolved_forecast_id, actual_time_h)
     return {
-        "status": "completed",
+        "status": "partial" if unassessed_objects or (linear_index and linear_index.skipped_cell_ids) else "completed",
         "forecast_id": resolved_forecast_id,
         "time_h": actual_time_h,
         **time_fields,
@@ -137,8 +163,21 @@ def analyze_inundation_impacts(
         "summary": summary,
         "affected_object_ids": affected_object_ids(target_types, impacts),
         "total_impacts": len(impacts),
+        "nearby_impacts": nearby_impacts,
+        "nearby_object_ids": affected_object_ids(target_types, nearby_impacts),
+        "nearby_summary": summarize_impacts(target_types, nearby_impacts),
+        "total_nearby": len(nearby_impacts),
+        "linear_analysis": {
+            "method": "full_line_polygon_overlay",
+            "metric_crs": METRIC_CRS,
+            "indexed_wet_cell_count": len(linear_index.rows) if linear_index else 0,
+            "skipped_cell_ids": linear_index.skipped_cell_ids if linear_index else [],
+            "unassessed_objects": unassessed_objects,
+            "nearby_distance_m": max(0.0, float(max_distance_m or 0)),
+        },
         "basis": analysis_basis(actual_time_h, time_fields.get("analysis_time_at")),
         "impacts": impacts,
+        **route_fields,
     }
 
 
@@ -188,7 +227,8 @@ def analysis_basis(time_h: float | None, analysis_time_at: str | None = None,
     return (
         f"{prefix}执行确定性空间邻近分析；"
         "普通点对象按对象坐标匹配最近淹没网格，桥梁按完整网格多边形执行桥头影响区分析，"
-        "线对象按几何采样点匹配最深命中网格。"
+        "道路和转移路线使用完整线形与全部达标湿网格多边形求交，距离在本地投影下以米计算；"
+        "仅邻近的对象另列 nearby_impacts，不计入受影响对象数；缺少几何时标记未评估，不能解释为安全。"
     )
 
 
@@ -202,10 +242,70 @@ def resolve_target_types(target_type: str) -> list[str]:
         "transfer": "EvacuationUnit",
         "place": "EvacuationSite",
         "road": "Road",
+        "roadroute": "RoadRoute",
         "route": "EvacuationRoute",
     }
     canonical = aliases.get(value.lower(), value)
-    return [canonical] if canonical in TARGET_TYPES else []
+    return [canonical] if canonical in (*TARGET_TYPES, "RoadRoute") else []
+
+
+def aggregate_road_route_impacts(resolver, road_impacts: list[dict],
+                                 nearby_roads: list[dict]) -> tuple[list[dict], list[dict], dict]:
+    """Count intersecting segments separately from segments only near flooding."""
+    routes = resolver.query("RoadRoute")
+    by_id = {str(row["object_id"]): row for row in road_impacts}
+    nearby_by_id = {str(row["object_id"]): row for row in nearby_roads}
+    grouped_ids = {str(road_id) for route in routes for road_id in route["road_ids"]}
+    results, nearby_results = [], []
+    for route in routes:
+        affected = [by_id[str(road_id)] for road_id in route["road_ids"] if str(road_id) in by_id]
+        nearby = [nearby_by_id[str(road_id)] for road_id in route["road_ids"] if str(road_id) in nearby_by_id]
+        members = affected or nearby
+        if not members:
+            continue
+        deepest = max(members, key=lambda row: float(row.get("depth_m") or 0))
+        result = {
+            **{key: deepest[key] for key in (
+                "depth_m", "velocity_mps", "distance_m", "forecast_cell_id", "mesh_cell_id", "longitude", "latitude",
+            )},
+            "object_type": "RoadRoute",
+            "object_id": route["road_route_id"],
+            "name": route["name"],
+            "ref": route["ref"],
+            "risk_level": max(members, key=lambda row: risk_rank(row["risk_level"]))["risk_level"],
+            "basis": "aggregated_road_segment_impacts",
+            "impact_status": "forecast_overlap" if affected else "nearby_flood",
+            "directly_inundated": False,
+            "passability_status": "not_assessed" if affected else "inspection_required",
+            "depth_basis": "intersecting_forecast_cells" if affected else "nearby_forecast_cells",
+            "coverage_scope": ROAD_ROUTE_SCOPE,
+            "recorded_segment_count": route["segment_count"],
+            "geometry_segment_count": route["geometry_segment_count"],
+            "affected_segment_count": len(affected),
+            "nearby_segment_count": len(nearby),
+            "structure_unverified_segment_count": sum(row.get("impact_status") == "structure_overlap_unverified" for row in affected),
+            "affected_road_ids": [row["object_id"] for row in affected],
+            "nearby_road_ids": [row["object_id"] for row in nearby],
+            "segment_impacts": affected,
+            "nearby_segment_impacts": nearby,
+        }
+        (results if affected else nearby_results).append(result)
+    sort_key = lambda row: (-risk_rank(row["risk_level"]), -float(row["depth_m"]), row["object_id"])
+    results.sort(key=sort_key)
+    nearby_results.sort(key=sort_key)
+    return results, nearby_results, {
+        "coverage_scope": ROAD_ROUTE_SCOPE,
+        "recorded_route_count": len(routes),
+        "grouped_segment_count": len(grouped_ids),
+        "ungrouped_segment_count": len(resolver.query("Road")) - len(grouped_ids),
+        "affected_route_count": len(results),
+        "nearby_only_route_count": len(nearby_results),
+        "affected_segment_count": len(by_id),
+        "nearby_segment_count": len(nearby_by_id),
+        "ungrouped_affected_road_ids": sorted(set(by_id) - grouped_ids),
+        "ungrouped_nearby_road_ids": sorted(set(nearby_by_id) - grouped_ids),
+        "note": "受影响数仅计与预测湿网格相交的路段，邻近积水另计。共线路段可影响多条道路，道路数与路段数不可相加；受影响不等于整条道路不可通行。",
+    }
 
 
 def analyze_bridge_objects(
@@ -367,36 +467,48 @@ def analyze_point_objects(resolver, object_type: str, cell_index: Any,
 
 def analyze_linear_objects(resolver, object_type: str, cell_index: Any,
                            min_depth_m: float,
-                           max_distance_m: float) -> list[dict[str, Any]]:
+                           max_distance_m: float,
+                           unassessed_objects: list[dict] | None = None) -> list[dict]:
+    index = cell_index if isinstance(cell_index, WetCellIndex) else WetCellIndex(
+        cell_index.get("cells", []) if isinstance(cell_index, dict) else cell_index,
+        min_depth_m,
+    )
     impacts = []
     object_id_field = id_field(object_type)
     for row in resolver.query(object_type):
-        points = safe_sampled_geometry_points(row, max_points=20)
-        if not points:
+        matched = index.match(row, max_distance_m)
+        if matched is None:
+            if unassessed_objects is not None:
+                unassessed_objects.append({
+                    "object_type": object_type, "object_id": str(row.get(object_id_field) or ""),
+                    "reason": "missing_or_invalid_line_geometry",
+                })
             continue
-        matched = [
-            (point, nearest_cell(point, cell_index, max_distance_m=max_distance_m))
-            for point in points
-        ]
-        matched = [
-            (point, cell) for point, cell in matched
-            if cell and float(cell.get("depth_m") or 0) >= min_depth_m
-        ]
-        if not matched:
+        if matched["status"] == "no_match":
             continue
-        impact_point, deepest = max(
-            matched,
-            key=lambda item: float(item[1].get("depth_m") or 0),
+        overlap = matched["status"] == "forecast_overlap"
+        structure_unverified = overlap and object_type == "Road" and (
+            row.get("bridge_flag") or row.get("tunnel_flag")
         )
         impact = make_impact(
-            object_type,
-            row,
-            object_id_field,
-            deepest,
-            "line_sample_nearest_cell",
-            impact_point,
+            object_type, row, object_id_field, matched["cell"],
+            "line_polygon_intersection" if overlap else "line_polygon_proximity",
+            matched["point"],
         )
-        impact["sample_hits"] = len(matched)
+        impact.update({
+            "impact_status": "structure_overlap_unverified" if structure_unverified else matched["status"],
+            "directly_inundated": overlap and not structure_unverified,
+            "passability_status": "inspection_required" if not overlap or structure_unverified else "not_assessed",
+            "depth_basis": "intersecting_forecast_cells" if overlap else "nearby_forecast_cells",
+            "overlap_length_m": matched["overlap_length_m"],
+            "intersecting_mesh_cell_ids": matched["intersecting_mesh_cell_ids"],
+            "nearby_mesh_cell_ids": matched["nearby_mesh_cell_ids"],
+            "intersecting_cell_count": len(matched["intersecting_mesh_cell_ids"]),
+            "nearby_cell_count": len(matched["nearby_mesh_cell_ids"]),
+            "nearest_distance_m": matched["nearest_distance_m"],
+        })
+        if structure_unverified:
+            impact["data_quality"] = "road_surface_elevation_unverified"
         impacts.append(impact)
     return impacts
 
@@ -471,14 +583,6 @@ def safe_row_point(row: dict[str, Any]) -> tuple[float, float] | None:
         return row_point(row)
     except (TypeError, ValueError):
         return None
-
-
-def safe_sampled_geometry_points(row: dict[str, Any],
-                                 max_points: int) -> list[tuple[float, float]]:
-    try:
-        return sampled_geometry_points(row, max_points=max_points)
-    except (TypeError, ValueError):
-        return []
 
 
 def risk_rank(level: str) -> int:

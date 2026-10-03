@@ -8,6 +8,8 @@ interaction_policies:
     description: "珊瑚河 GIS 用户对话策略"
     include_in_system_prompt: true
     instructions:
+      - "道路对象分为 RoadRoute（按编号聚合的道路）与 Road（独立路段）。用户要求所有道路地图时展示 Road，以包含未归属的路段；要求 G65 等整条编号道路时查询 RoadRoute.ref 并展示 RoadRoute，其范围仅为项目已收录路段。数量回答必须区分编号道路与路段，并说明覆盖范围；未编号路段不能从地图或统计说明中被忽略。"
+      - "道路归属通过 RoadRouteSegment 表达多对多关系。不能按名称相同、距离近或 osm_ref 推断归属，osm_ref 是源要素ID。道路影响使用 road_route_impacts 或 target_type=RoadRoute，表述为已收录 N 段中 M 段受影响，不得推断整条道路不可通行；共线路段在各道路中分别汇总，不能把道路数和路段数相加。"
       - "你服务于以珊瑚河流域 GIS 为中心的前端；当前系统只展示实时预测结果，不提供设计洪水方案切换。"
       - "用户明确要求显示、打开、绘制、加载、叠加、缩放、聚焦或清空地图对象时，必须调用对应 ui_* 工具执行前端动作，不要只用文字说明。"
       - "用户只要求清除、隐藏淹没范围、预测淹没结果或水动力结果时，调用 ui_clear_map 并传 target=inundation；这只移除淹没结果，不改变地图视野。"
@@ -24,7 +26,7 @@ interaction_policies:
       - "用户要求把当前或刚才的建议作为应急指令初稿、新建应急指令或准备发出指令时，调用 ui_open_emergency_directive_editor；根据对话上下文生成简洁标题、明确接收对象、优先级和可编辑正文。该工具只打开草稿编辑器，必须由用户在前端修改并确认后才会发出。"
     intents:
       count:
-        keywords: ["几个", "多少个", "数量", "总数"]
+        keywords: ["几个", "多少个", "几条", "多少条", "数量", "总数"]
         tools: [count]
         task_hint: "本问题是领域对象库的直接数量查询。请直接调用 {calls}；不要先查询无关对象或对象几何，也不要添加用户未明确给出的过滤条件。得到 count 结果后立即回答。"
       map:
@@ -381,19 +383,20 @@ objects:
   Road:
     kind: entity
     countable: true
-    display_name: "道路"
+    display_name: "路段"
     aliases:
-      - {terms: ["道路", "路段", "公路"]}
+      - {terms: ["路段"]}
     data_source: external_api
     mutability: read_only
     source:
       type: resolver
       resolver: flood_repository
       id_field: road_id
-    summary: "道路"
-    description: "Road 表达道路或路段，是交通中断、绕行和转移路线可达性分析的基础对象。"
+    summary: "道路路段"
+    description: "Road 表达独立几何路段，保留原始 road_id。包括未能归属编号道路的路段；通过 RoadRouteSegment 多对多关联 RoadRoute。"
     properties:
-      road_id: {type: str, required: true, description: "道路或路段稳定ID"}
+      road_id: {type: str, required: true, description: "路段稳定ID"}
+      road_route_ids: {type: list, description: "按规范 ref 归属的 RoadRoute ID 列表；空列表表示未归属"}
       name: {type: str, description: "道路名称"}
       source_name: {type: str, description: "原始路网中的道路名称"}
       name_source: {type: str, description: "规范显示名的生成或校正方式"}
@@ -404,6 +407,55 @@ objects:
       bridge_flag: {type: bool, description: "该路段是否标记为桥上路段"}
       tunnel_flag: {type: bool, description: "该路段是否标记为隧道路段"}
       length_m: {type: float, description: "道路长度，米"}
+
+  RoadRoute:
+    kind: entity
+    countable: true
+    display_name: "编号道路"
+    aliases:
+      - {terms: ["道路", "公路"]}
+    data_source: external_api
+    mutability: read_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: road_route_id
+    summary: "由多个已收录路段组成的编号道路"
+    description: "仅按 Road.ref 的可靠编号聚合，不根据同名或邻近关系猜测归属。几何为成员路段的 MultiLineString，可不连续，包含双向线和已标号匝道，不保证拓扑连通或覆盖整条道路。名称取单一编号路段的众数，缺失时回退所有成员名称众数或编号，不代表官方名称核定。"
+    properties:
+      road_route_id: {type: str, required: true, description: "稳定ID，如 road_route_G65"}
+      ref: {type: str, description: "单一道路编号，如 G65"}
+      name: {type: str, description: "从成员路段推导的显示名称"}
+      name_source: {type: str, description: "显示名称选取依据"}
+      source_names: {type: list, description: "成员中出现的名称，保留名称差异"}
+      road_category: {type: str, description: "expressway/other/mixed；按路段等级而非编号前缀判断"}
+      road_class: {type: str, description: "成员路段最常见的等级"}
+      road_ids: {type: list, description: "已收录成员路段ID，可用 Road.road_id__in 查询"}
+      segment_count: {type: int, description: "已收录路段数量"}
+      geometry_segment_count: {type: int, description: "具有可展示线几何的成员路段数量"}
+      shared_segment_count: {type: int, description: "同时属于其他编号道路的路段数量"}
+      recorded_length_m: {type: float, description: "已收录路段长度之和，含双向线及匝道，不是道路里程或全长"}
+      membership_basis: {type: str, description: "归属依据 Road.ref"}
+      coverage_scope: {type: str, description: "仅包含项目已收录路段"}
+
+  RoadRouteSegment:
+    kind: entity
+    countable: false
+    display_name: "道路与路段关联"
+    data_source: external_api
+    mutability: read_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: road_route_segment_id
+    summary: "编号道路与路段的多对多关联"
+    description: "一个路段可归属于多条编号道路；无可靠编号的路段不自动关联。先从道路或路段查询关联，再通过关联取得另一端对象。"
+    properties:
+      road_route_segment_id: {type: str, required: true, description: "道路与路段组合稳定ID"}
+      road_route_id: {type: str, description: "RoadRoute ID"}
+      road_id: {type: str, description: "Road ID"}
+      ref: {type: str, description: "关联的单一道路编号"}
+      membership_basis: {type: str, description: "归属依据 Road.ref"}
 
   Bridge:
     kind: entity
@@ -739,6 +791,38 @@ objects:
       recommended_action: {type: str, description: "建议动作摘要"}
 
 links:
+  road_route_segments:
+    source: RoadRoute
+    target: RoadRouteSegment
+    join: {source_key: road_route_id, target_key: road_route_id}
+    description: "编号道路的全部成员关联"
+    link_type: contains
+    cardinality: 1..n
+
+  road_segment_routes:
+    source: Road
+    target: RoadRouteSegment
+    join: {source_key: road_id, target_key: road_id}
+    description: "路段所属编号道路的全部关联，允许共线"
+    link_type: relates
+    cardinality: 1..n
+
+  road_membership_segment:
+    source: RoadRouteSegment
+    target: Road
+    join: {source_key: road_id, target_key: road_id}
+    description: "关联对应的原始路段"
+    link_type: relates
+    cardinality: n..1
+
+  road_membership_route:
+    source: RoadRouteSegment
+    target: RoadRoute
+    join: {source_key: road_route_id, target_key: road_route_id}
+    description: "关联对应的编号道路"
+    link_type: relates
+    cardinality: n..1
+
   river_watersheds:
     source: River
     target: Watershed
@@ -892,8 +976,13 @@ functions:
 
   analyze_inundation_impacts:
     summary: "根据预测淹没范围分析受影响对象"
-    description: "读取最新或指定 InundationForecastCell 预测淹没网格，可按指定 time_h 分析某个预测时刻，也可默认使用最大水深包络；普通点和线对象执行空间邻近分析，桥梁针对河槽无网格的特点执行独立的桥头影响区分析，返回受影响对象清单、风险等级和按类型汇总。"
+    description: "读取最新或指定 InundationForecastCell 预测淹没网格，可按指定 time_h 分析某个预测时刻，也可默认使用最大水深包络；普通点执行空间邻近分析，道路与转移路线按完整线形与全部达标湿网格多边形求交，桥梁针对河槽无网格的特点执行独立的桥头影响区分析，返回受影响对象清单、风险等级和按类型汇总。"
     usage_prompt: >-
+      target_type=RoadRoute 按独立路段分析后聚合，并保留 segment_impacts；all 和 Road 的 road_route_impacts 为额外道路汇总，不计入 total_impacts。无预测时不能解释为无风险。
+      Road/EvacuationRoute 的 impacts 仅计完整线形与达标湿网格相交的对象；nearby_impacts 仅表示距湿网格边界 max_distance_m 内邻近积水，需核查，不能计为受淹。nearby_object_ids 仅用于用户明确要求的邻近风险展示。
+      道路 depth_m 来自相交网格，overlap_length_m 为相交线形长度；intersecting_mesh_cell_ids 保留证据。邻近网格更深时不得将其水深当成道路水深。
+      structure_overlap_unverified 表示桥上或隧道路段线形相交但路面高程未知，不得声称路面已淹。status=partial 和 linear_analysis 中的未评估项表示资料不完整，不能作为无影响结论。
+      RoadRoute.affected_segment_count 仅统计相交路段，nearby_segment_count 是另列的邻近路段；应分别说明。
       本函数是对象级受淹判定的确定性空间分析入口，forecast_id 默认 latest，target_type 默认 all；只能根据返回结果说明哪些对象受影响，不得自行猜测。
       当前端上下文包含 current_hydrodynamic_time_h，或用户明确询问某个时间点、当前时间轴位置的影响时，必须把该值作为 time_h 传入；用户询问总体或最大影响时不传 time_h，默认使用最大水深包络。
       time_h 是相对 valid_from 的偏移量，回答用户时应以结果的 analysis_time_at 实际时刻为主，并把预测 +Nh 作为辅助信息。
@@ -901,14 +990,14 @@ functions:
       桥梁默认检查80米桥头影响区内的完整湿网格多边形。桥梁结果中的 depth_m 和 nearby_max_depth_m 是邻近洪泛区最大水深，不是桥面水深；directly_inundated=false 表示模型未直接覆盖桥面。
       passability_status=inspection_required 表示周边或单侧桥头受淹、需要现场核查；likely_impassable 表示两侧桥头受淹。缺少桥面高程时，不得声称桥梁本体已经淹没。
       只有用户明确请求在地图展示影响对象时，才把 affected_object_ids 中各对象类型对应的对象项与 HydrodynamicGridCell 放入同一次 ui_show_objects 调用，并设置 highlight=true、show_only_object_ids=true；自动事件的展示范围由 event_policies 决定。
-      需要缩窄范围时 target_type 可传 Road、Bridge、Facility、EvacuationRoute、EvacuationUnit、EvacuationSite 或 all；min_depth_m 默认0.15，普通对象 max_distance_m 默认10，桥梁 bridge_influence_radius_m 默认80。除非用户明确要求敏感性分析，否则保持默认桥梁影响半径。
+      需要缩窄范围时 target_type 可传 RoadRoute、Road、Bridge、Facility、EvacuationRoute、EvacuationUnit、EvacuationSite 或 all；min_depth_m 默认0.15，普通对象 max_distance_m 默认10，桥梁 bridge_influence_radius_m 默认80。除非用户明确要求敏感性分析，否则保持默认桥梁影响半径。
     function_type: lookup
-    involves_objects: [FloodForecast, InundationForecastCell, Road, Bridge, Facility, EvacuationRoute, EvacuationUnit, EvacuationSite]
+    involves_objects: [FloodForecast, InundationForecastCell, RoadRoute, Road, Bridge, Facility, EvacuationRoute, EvacuationUnit, EvacuationSite]
     params:
       forecast_id: {type: str, description: "预测运行ID；latest 表示最新预测", default: "latest"}
-      target_type: {type: str, description: "分析目标类型: Road/Bridge/Facility/EvacuationRoute/EvacuationUnit/EvacuationSite/all", default: "all"}
+      target_type: {type: str, description: "分析目标类型: RoadRoute/Road/Bridge/Facility/EvacuationRoute/EvacuationUnit/EvacuationSite/all", default: "all"}
       min_depth_m: {type: float, description: "纳入影响判定的最低预测水深，单位 m", default: 0.15}
-      max_distance_m: {type: float, description: "普通点对象或线采样点到预测淹没网格中心的最大匹配距离，单位 m；不用于桥梁", default: 10}
+      max_distance_m: {type: float, description: "普通点到湿网格中心的匹配距离；道路线形到湿网格多边形的邻近核查距离（不会扩大受淹判定），单位 m；不用于桥梁", default: 10}
       time_h: {type: float, description: "可选预测时刻，单位小时；不传表示使用最大水深包络", default: ""}
       bridge_influence_radius_m: {type: float, description: "桥梁到预测湿网格多边形的桥头影响区半径，单位 m", default: 80}
 

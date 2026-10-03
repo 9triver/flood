@@ -56,9 +56,14 @@ MAPPABLE_OBJECTS = {
         "style": {"type": "fill", "color": "#475569", "weight": 1, "fillColor": "#facc15", "fillOpacity": 0.08},
     },
     "Road": {
-        "label": "道路",
+        "label": "全部路段",
         "role": "base",
-        "style": {"type": "line", "color": "#6b7280", "weight": 2},
+        "style": {"type": "line", "color": "#facc15", "weight": 2.8},
+    },
+    "RoadRoute": {
+        "label": "编号道路",
+        "role": "base",
+        "style": {"type": "line", "color": "#fb923c", "weight": 4.5},
     },
     "Reservoir": {
         "label": "水库",
@@ -178,6 +183,8 @@ def id_field(object_type: str) -> str:
         "Sluice": "sluice_id",
         "HydraulicStructure": "structure_id",
         "Road": "road_id",
+        "RoadRoute": "road_route_id",
+        "RoadRouteSegment": "road_route_segment_id",
         "Bridge": "bridge_id",
         "Facility": "facility_id",
         "EvacuationSite": "evacuation_site_id",

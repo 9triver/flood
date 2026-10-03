@@ -53,6 +53,26 @@ uv run python server/app.py --host 127.0.0.1 --port 8765
 
 访问 <http://127.0.0.1:8765>。
 
+## 道路与路段
+
+- `Road` 保留 423 个独立路段及原始 `road_id`。地图“全部路段”显示全部数据，高速（含匝道）为橙色，非高速为黄色。
+- `RoadRoute` 按规范 `Road.ref` 中的 G/S/X/Y 编号聚合，当前有 12 条编号道路，覆盖 184 个路段。地图“编号道路”可选中整组已收录线形，并从详情定位成员路段。
+- `RoadRouteSegment` 是多对多关联，当前有 199 条关联。例如 11 个路段同时属于 G65 和 G78。其余 239 个路段缺少可靠编号，继续独立保留，不按同名、邻近或 OSM 要素 ID 自动归属。
+
+道路对象由 `road.jsonl` 动态生成，源数据更新后重建派生对象与地图缓存。稳定 ID 例如 `road_route_G65`；几何是成员的 `MultiLineString`，保留断开线形、双向车道和标号匝道，不强行连接。显示名称优先取单一编号成员的名称众数，保留 `source_names` 供追溯。`recorded_length_m` 是已收录线段长度之和，不是道路全长或里程。
+
+查询示例：`query(RoadRoute, {ref: "G65"})`；成员可通过 `road_ids` 查询 `Road.road_id__in`，或沿 `road_route_segments → road_membership_segment` 关联查询。反向使用 `road_segment_routes → road_membership_route`。
+
+`analyze_inundation_impacts(target_type="RoadRoute")` 逐段执行完整线形与预测湿网格多边形求交后汇总，保留 `segment_impacts` 和受影响路段 ID。所有水深达标的网格进入空间索引，不抽样删减道路顶点或网格。使用模型本地投影 EPSG:4546 计算米制距离与相交长度，支持不连续线形、多部件多边形和孔洞。
+
+`impacts` / `affected_segment_count` 仅计与水深达到阈值（默认 0.15 米）的网格相交的路段；保留 `intersecting_mesh_cell_ids` 和去除重叠后的 `overlap_length_m`。`depth_m` 是相交网格最大预测水深，不能用旁边更深的网格代替。桥上或隧道路段只确认平面相交，返回 `structure_overlap_unverified`，路面高程和通行状态仍需核查。
+
+`max_distance_m` 对道路线对象表示邻近核查距离，默认 10 米，从湿网格边界计算；不扩大受淹判定。仅邻近的对象进入独立的 `nearby_impacts` / `nearby_object_ids`，不计入 `total_impacts`，UI 以“邻近积水，需核查”另列。道路汇总分别返回 `affected_segment_count` 和 `nearby_segment_count`。缺少或无效的几何记录在 `linear_analysis` 中列出，并返回 `status=partial`，不能当成无影响。
+
+`all` 或 `Road` 的结果额外提供 `road_route_impacts`、`road_route_nearby_impacts` 与覆盖统计，但不会把道路汇总重复计入 `total_impacts`。界面展示“已收录 N 段中 M 段受影响”，单独说明未归属路段；这些结果不代表整条道路不可通行，也不保证已收录几何覆盖整条道路。
+
+UI 的“影响分析”分为“预测影响”和“邻近积水”页签，支持按对象类型筛选。道路按“编号道路 → 路段”展开，未归属路段单列，共线路段在各所属道路下展示但在对象总数中只计一次；即使工具返回 `RoadRoute` 汇总，UI 对象计数仍使用唯一路段。列表突出相交长度、网格最大预测水深或邻近距离，并标注高程待核查；点击道路定位全线，点击路段定位相交或邻近位置。预测时间刷新时保留页签、类型筛选、展开状态和滚动位置。
+
 ## 数据边界
 
 仓库内包含运行所需的领域对象库、mock 边界流量、CNN 网格、配置和 Git LFS 权重。以下内容是本地状态，不进入 Git：

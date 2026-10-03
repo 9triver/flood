@@ -330,7 +330,7 @@ def default_context(actions: list[MapAction]) -> str:
         return "实时预测 · 珊瑚河流域"
     if types & {"Reservoir", "Sluice", "HydraulicStructure"}:
         return "水利工程设施 · 珊瑚河流域"
-    if types & {"Road", "Bridge"}:
+    if types & {"Road", "RoadRoute", "Bridge"}:
         return "交通基础设施 · 珊瑚河流域"
     return "对象分析 · 珊瑚河流域"
 

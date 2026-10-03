@@ -6,7 +6,7 @@
     <title>基于大模型的水路联动应急智能体集群应用</title>
     <meta name="application-name" content="基于大模型的水路联动应急智能体集群应用" />
     <link rel="stylesheet" href="/vendor/leaflet/leaflet.css?v=1.9.4" />
-    <link rel="stylesheet" href="/styles.css?v=11" />
+    <link rel="stylesheet" href="/styles.css?v=17" />
   </head>
   <body class="is-cover-visible">
     <section class="launch-cover" id="launchCover" aria-labelledby="launchCoverTitle" aria-modal="true" role="dialog" tabindex="-1">
@@ -337,25 +337,32 @@
                 <output id="telemetryProgressText">0 / 0</output>
               </footer>
             </section>
-            <section class="impact-panel situation-pane map-draggable-panel" id="impactPanel" aria-label="受影响对象" aria-live="polite">
-            <header class="impact-panel-header panel-drag-handle" data-panel-drag-handle title="拖动受影响对象">
-              <div>
-                <strong>受影响对象</strong>
-                <div class="impact-panel-context">
-                  <span id="impactTimeLabel" title="当前影响分析范围">--</span>
-                  <span aria-hidden="true">·</span>
-                  <span id="impactStatus">等待结果</span>
-                </div>
+            <section class="impact-panel situation-pane map-draggable-panel" id="impactPanel" aria-label="影响分析">
+            <header class="impact-panel-header panel-drag-handle" data-panel-drag-handle title="拖动影响分析">
+              <div class="impact-panel-title">
+                <strong>影响分析</strong>
+                <span id="impactStatus" role="status">等待结果</span>
               </div>
               <div class="impact-panel-meta">
-                <output id="impactCount" aria-label="当前分析范围内的受影响对象数">0 个</output>
                 <span class="panel-drag-grip" aria-hidden="true"><i data-lucide="grip-horizontal"></i></span>
-                <button class="icon-button" id="impactFloatBtn" type="button" title="浮动受影响对象" aria-label="浮动受影响对象">
+                <button class="icon-button" id="impactFloatBtn" type="button" title="浮动影响分析" aria-label="浮动影响分析">
                   <i data-lucide="picture-in-picture-2"></i>
                 </button>
               </div>
+              <div class="impact-panel-context">
+                <span id="impactTimeLabel" title="当前影响分析范围">等待预测结果</span>
+              </div>
             </header>
-            <div class="impact-list" id="impactList"></div>
+            <div class="impact-controls">
+              <div class="impact-tabs" role="tablist" aria-label="影响类别">
+                <button id="impactAffectedTab" type="button" role="tab" aria-selected="true" aria-controls="impactList" data-impact-tab="affected">预测影响 <output id="impactCount" aria-label="当前分析范围内的受影响对象数">0</output></button>
+                <button id="impactNearbyTab" type="button" role="tab" aria-selected="false" aria-controls="impactList" tabindex="-1" data-impact-tab="nearby">邻近积水 <span id="impactNearbyCount">0</span></button>
+              </div>
+              <select id="impactTypeFilter" aria-label="筛选对象类型"><option value="all">全部类型</option></select>
+            </div>
+            <div id="impactNotice" class="impact-notice" role="status" hidden></div>
+            <div class="impact-list" id="impactList" role="tabpanel" aria-labelledby="impactAffectedTab" tabindex="0"><p class="impact-empty">加载预测结果后查看影响分析</p></div>
+            <footer class="impact-panel-footer" id="impactListSummary">道路按已收录路段统计</footer>
           </section>
             <section class="directive-panel situation-pane" id="directivePanel" aria-label="应急指令">
               <header class="directive-panel-header">
@@ -445,6 +452,6 @@
     <script src="/vendor/lucide.js?v=2"></script>
     <script src="/map-symbols.js?v=3"></script>
     <script src="/vendor/marked/marked.min.js?v=12.0.2"></script>
-    <script src="/app.js?v=11"></script>
+    <script src="/app.js?v=17"></script>
   </body>
 </html>

@@ -130,9 +130,18 @@ const state = {
     playing: false,
   },
   impactAnalysis: null,
+  impactListView: {
+    tab: "affected",
+    type: "all",
+    expanded: new Map(),
+    positions: new Map(),
+    renderedKey: null,
+  },
   impactMarkerLayer: null,
   impactMarkers: new Map(),
+  roadNameLayers: new Set(),
   selectedImpactKey: null,
+  selectedImpactTab: "affected",
   selectedImpactLayerKey: null,
   impactFocusSeq: 0,
   impactRefreshTimer: null,
@@ -212,7 +221,8 @@ const OBJECT_CONFIG = {
   Watershed: { label: "珊瑚河流域", color: "#1f2937" },
   County: { label: "县级边界", color: "#7b8794" },
   Town: { label: "乡镇边界", color: "#7a6a22" },
-  Road: { label: "道路", color: "#5f6772" },
+  Road: { label: "全部路段", color: "#facc15" },
+  RoadRoute: { label: "编号道路", color: "#fb923c" },
   Reservoir: { label: "水库", color: "#0284c7" },
   Sluice: { label: "水闸", color: "#158a8a" },
   Bridge: { label: "桥梁", color: "#202833" },
@@ -228,6 +238,11 @@ const OBJECT_CONFIG = {
   ForecastResult: { label: "预测淹没范围", color: "#dc2626" },
 };
 
+const ROAD_STYLES = {
+  expressway: { label: "高速（含匝道）", color: "#fb923c", outline: "#7c2d12", weight: 4.5 },
+  other: { label: "非高速", color: "#facc15", outline: "#422006", weight: 2.8 },
+};
+
 const OBJECT_LAYER_GROUPS = [
   {
     label: "水系与监测",
@@ -236,7 +251,7 @@ const OBJECT_LAYER_GROUPS = [
   },
   {
     label: "风险与应急",
-    objectTypes: ["DangerArea", "Road", "Bridge", "EvacuationSite"],
+    objectTypes: ["DangerArea", "Road", "RoadRoute", "Bridge", "EvacuationSite"],
     filterControl: "facility",
   },
   {
@@ -255,6 +270,7 @@ const ID_FIELDS = {
   County: "county_id",
   Town: "town_id",
   Road: "road_id",
+  RoadRoute: "road_route_id",
   Reservoir: "reservoir_id",
   Sluice: "sluice_id",
   Bridge: "bridge_id",
@@ -445,6 +461,7 @@ function initMap() {
   state.map.on("popupclose", () => {
     window.requestAnimationFrame(syncStationPopupOpenState);
   });
+  state.map.on("zoomend moveend resize", refreshRoadNameLabels);
   setBasemap(readStoredBasemap(), { persist: false });
   initRainEffect();
 }
@@ -937,6 +954,14 @@ function createObjectLayerButton(objectType) {
   btn.className = "object-row";
   btn.dataset.objectType = objectType;
   btn.innerHTML = `${layerObjectIcon(objectType)}<span>${config.label}</span>`;
+  if (objectType === "Road" || objectType === "RoadRoute") {
+    const legend = document.createElement("span");
+    legend.className = "road-style-legend";
+    legend.innerHTML = Object.values(ROAD_STYLES).map((style) => `
+      <span><i aria-hidden="true" style="--road-color: ${style.color}; --road-outline: ${style.outline}; --road-width: ${style.weight}px"></i>${style.label}</span>
+    `).join("");
+    btn.appendChild(legend);
+  }
   const active = hasLayerButtonType(objectType);
   btn.classList.toggle("active", active);
   btn.setAttribute("aria-pressed", String(active));
@@ -1007,6 +1032,19 @@ function layerObjectIcon(objectType, feature = {}, className = "layer-list-icon"
 }
 
 function bindEvents() {
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-road-object-id]");
+    if (!button) return;
+    const objectType = button.dataset.roadObjectType;
+    if (!["Road", "RoadRoute"].includes(objectType)) return;
+    const objectId = button.dataset.roadObjectId;
+    const result = state.impactAnalysis?.lastResult;
+    const candidates = [...(result?.impacts || []), ...(result?.nearby_impacts || []), ...(result?.road_route_impacts || []), ...(result?.road_route_nearby_impacts || [])];
+    const impact = [...candidates, ...candidates.flatMap((item) => [...(item.segment_impacts || []), ...(item.nearby_segment_impacts || [])])]
+      .find((item) => item.object_type === objectType && String(item.object_id) === objectId);
+    void (impact ? focusImpactObject(impact) : focusObject({ object_type: objectType, object_id: objectId }))
+      .catch((error) => addTrace("MISS", "道路定位失败", String(error?.message || error)));
+  });
   const directiveToast = document.getElementById("directiveDraftToast");
   state.directiveToast = {
     id: "directive-draft",
@@ -1021,6 +1059,7 @@ function bindEvents() {
   document.getElementById("situationToggleBtn").addEventListener("click", toggleTelemetryPanel);
   document.getElementById("telemetryFloatBtn").addEventListener("click", () => toggleSituationPanelFloating("telemetryPanel"));
   document.getElementById("impactFloatBtn").addEventListener("click", () => toggleSituationPanelFloating("impactPanel"));
+  bindImpactListControls();
   document.getElementById("agentDrawerBtn").addEventListener("click", () => setAgentDrawerOpen(true));
   document.getElementById("agentCloseBtn").addEventListener("click", () => setAgentDrawerOpen(false));
   bindPlaybackSourceControls();
@@ -1290,7 +1329,7 @@ function setSituationPanelFloating(panel, floating) {
   if (!floating) setMapPanelTranslation(panel, 0, 0);
   const button = panel.querySelector("#telemetryFloatBtn, #impactFloatBtn");
   if (button) {
-    const label = panel.id === "impactPanel" ? "受影响对象" : "演进数据";
+    const label = panel.id === "impactPanel" ? "影响分析" : "演进数据";
     button.title = floating ? `停靠${label}` : `浮动${label}`;
     button.setAttribute("aria-label", button.title);
     button.innerHTML = `<i data-lucide="${floating ? "panel-bottom" : "picture-in-picture-2"}"></i>`;
@@ -1439,22 +1478,24 @@ async function loadObject(objectType, filters = {}, options = {}) {
     ? createRiverLayer(geojson, mapSelectable)
     : objectType === "Reservoir"
       ? createReservoirLayer(geojson, mapSelectable)
-      : L.geoJSON(geojson, {
-        interactive: mapSelectable,
-        renderer: objectType === "Watershed" ? state.watershedRenderer : undefined,
-        className: objectType === "Watershed" ? "watershed-boundary" : "",
-        style: (feature) => featureStyle(objectType, feature),
-        pointToLayer: (feature, latlng) => pointLayer(objectType, feature, latlng),
-        onEachFeature: (feature, layerItem) => {
-          if (!mapSelectable) return;
-          indexFeature(objectType, feature, layerItem);
-          layerItem.bindPopup(
-            popupHtml(objectType, feature),
-            objectPopupOptions(objectType),
-          );
-          layerItem.on("click", () => selectFeature(objectType, feature, layerItem));
-        },
-      });
+      : ["Road", "RoadRoute"].includes(objectType)
+        ? createRoadLayer(geojson, mapSelectable, objectType)
+        : L.geoJSON(geojson, {
+          interactive: mapSelectable,
+          renderer: objectType === "Watershed" ? state.watershedRenderer : undefined,
+          className: objectType === "Watershed" ? "watershed-boundary" : "",
+          style: (feature) => featureStyle(objectType, feature),
+          pointToLayer: (feature, latlng) => pointLayer(objectType, feature, latlng),
+          onEachFeature: (feature, layerItem) => {
+            if (!mapSelectable) return;
+            indexFeature(objectType, feature, layerItem);
+            layerItem.bindPopup(
+              popupHtml(objectType, feature),
+              objectPopupOptions(objectType),
+            );
+            layerItem.on("click", () => selectFeature(objectType, feature, layerItem));
+          },
+        });
   layer.addTo(state.map);
   renderIcons();
 
@@ -1999,20 +2040,26 @@ function clearImpactAnalysisState() {
   updateMapContentContext();
   const panel = document.getElementById("impactPanel");
   panel?.classList.remove("is-loading");
+  panel?.setAttribute("aria-busy", "false");
   const count = document.getElementById("impactCount");
   const time = document.getElementById("impactTimeLabel");
   const status = document.getElementById("impactStatus");
   const list = document.getElementById("impactList");
-  if (count) count.textContent = "0 个";
+  if (count) count.textContent = "0";
   if (time) {
-    time.textContent = "--";
+    time.textContent = "等待预测结果";
     time.title = "当前影响分析范围";
   }
   if (status) {
     status.textContent = "等待结果";
     status.title = "等待水动力结果";
   }
-  if (list) list.innerHTML = "";
+  state.impactListView.positions.clear();
+  state.impactListView.renderedKey = null;
+  updateImpactListControls({ impacts: [], nearby: [] });
+  document.getElementById("impactNotice").hidden = true;
+  document.getElementById("impactListSummary").textContent = "道路按已收录路段统计";
+  if (list) list.innerHTML = '<p class="impact-empty">加载预测结果后查看影响分析</p>';
 }
 
 function clearEventMarkers() {
@@ -3449,7 +3496,7 @@ function featureStyle(objectType, feature) {
   if (objectType === "Reservoir") return reservoirWaterStyle();
   if (objectType === "County") return { color: "#7b8794", weight: 1.2, fillOpacity: 0 };
   if (objectType === "Town") return { color: "#7a6a22", weight: 1, fillColor: "#facc15", fillOpacity: 0.08 };
-  if (objectType === "Road") return { color: "#5f6772", weight: 2, opacity: 0.82 };
+  if (objectType === "Road" || objectType === "RoadRoute") return roadLineStyle(feature);
   if (objectType === "EvacuationRoute") return { color: "#d44a3a", weight: 3, opacity: 0.92 };
   if (objectType === "HydraulicStructure") return { color: "#0f766e", weight: 2, opacity: 0.9 };
   return { color: OBJECT_CONFIG[objectType]?.color || "#334155", weight: 2 };
@@ -3519,6 +3566,135 @@ function reservoirHighlightStyle() {
     lineCap: "round",
     lineJoin: "round",
   };
+}
+
+function roadClassInfo(feature) {
+  const props = feature?.properties || feature || {};
+  const roadClass = String(props.road_class || "").trim().toLowerCase();
+  const isLink = !props.road_route_id && roadClass === "motorway_link";
+  const isExpressway = props.road_category
+    ? props.road_category === "expressway"
+    : roadClass === "motorway" || roadClass === "motorway_link";
+  const style = ROAD_STYLES[isExpressway ? "expressway" : "other"];
+  return {
+    ...style,
+    label: props.road_category === "mixed" ? "包含高速及非高速路段" : isLink ? "高速匝道" : isExpressway ? "高速公路" : "非高速道路",
+    weight: isLink ? 3.2 : style.weight,
+  };
+}
+
+function roadLineStyle(feature, outline = false) {
+  const style = roadClassInfo(feature);
+  return {
+    color: outline ? style.outline : style.color,
+    weight: style.weight + (outline ? 2.5 : 0),
+    opacity: outline ? 0.9 : 1,
+    lineCap: "round",
+    lineJoin: "round",
+  };
+}
+
+function createRoadLayer(geojson, mapSelectable, objectType = "Road") {
+  const group = L.featureGroup();
+  const namedLayers = [];
+  L.geoJSON(geojson, {
+    interactive: false,
+    style: (feature) => roadLineStyle(feature, true),
+  }).addTo(group);
+  L.geoJSON(geojson, {
+    interactive: mapSelectable,
+    style: (feature) => featureStyle(objectType, feature),
+    onEachFeature: (feature, layerItem) => {
+      const name = roadMapName(feature.properties || {});
+      if (name) {
+        layerItem.bindTooltip(escapeHtml(name), {
+          permanent: true,
+          direction: "center",
+          offset: [0, -13],
+          opacity: 1,
+          interactive: false,
+          className: "road-name-label",
+        });
+        namedLayers.push({ layer: layerItem, name, objectType });
+      }
+      if (!mapSelectable) return;
+      indexFeature(objectType, feature, layerItem);
+      layerItem.bindPopup(popupHtml(objectType, feature), objectPopupOptions(objectType));
+      layerItem.on("click", () => selectFeature(objectType, feature, layerItem));
+    },
+  }).addTo(group);
+  group.on("add", () => {
+    namedLayers.forEach((entry) => state.roadNameLayers.add(entry));
+    refreshRoadNameLabels();
+  });
+  group.on("remove", () => {
+    namedLayers.forEach((entry) => state.roadNameLayers.delete(entry));
+    refreshRoadNameLabels();
+  });
+  return group;
+}
+
+function roadMapName(props) {
+  const name = String(props.name || "").trim();
+  if (!name || /^(未命名|无名|unnamed\b|unknown\b)/i.test(name)) return "";
+  if (["generated_from_stable_id", "generated_stable_id", "generated_from_source_id"].includes(props.name_source)) return "";
+  return name;
+}
+
+function roadLabelAnchor(layer, viewport) {
+  const latlngs = layer.getLatLngs();
+  const lines = latlngs[0]?.lat !== undefined ? [latlngs] : latlngs;
+  let anchor = null;
+  let longest = 0;
+  let visibleLength = 0;
+  for (const line of lines) {
+    const points = line.map((latlng) => state.map.latLngToContainerPoint(latlng));
+    for (let index = 1; index < points.length; index += 1) {
+      const clipped = L.LineUtil.clipSegment(points[index - 1], points[index], viewport);
+      if (!clipped) continue;
+      const length = clipped[0].distanceTo(clipped[1]);
+      visibleLength += length;
+      if (length > longest) {
+        longest = length;
+        // Keep labels on an actual visible line, including disconnected routes.
+        anchor = clipped[0].add(clipped[1]).divideBy(2);
+      }
+    }
+  }
+  return anchor ? { point: anchor, visibleLength } : null;
+}
+
+function refreshRoadNameLabels() {
+  if (!state.map) return;
+  const viewport = L.bounds([0, 0], state.map.getSize());
+  const candidates = [];
+  state.roadNameLayers.forEach((entry) => {
+    const element = entry.layer.getTooltip()?.getElement();
+    if (!element) return;
+    element.style.visibility = "hidden";
+    const anchor = roadLabelAnchor(entry.layer, viewport);
+    if (anchor) candidates.push({ ...entry, ...anchor, element });
+  });
+  candidates.sort((a, b) => (
+    Number(b.objectType === "RoadRoute") - Number(a.objectType === "RoadRoute")
+    || b.visibleLength - a.visibleLength
+  ));
+  const placed = [];
+  for (const item of candidates) {
+    const halfWidth = item.element.offsetWidth / 2 + 6;
+    const halfHeight = item.element.offsetHeight / 2 + 4;
+    const center = item.point.subtract([0, 13]);
+    const bounds = L.bounds(
+      center.subtract([halfWidth, halfHeight]),
+      center.add([halfWidth, halfHeight]),
+    );
+    if (!viewport.contains(bounds)) continue;
+    if (placed.some((other) => bounds.intersects(other.bounds)
+      || (item.name === other.name && center.distanceTo(other.center) < 260))) continue;
+    item.layer.getTooltip().setLatLng(state.map.containerPointToLatLng(item.point));
+    item.element.style.visibility = "visible";
+    placed.push({ name: item.name, center, bounds });
+  }
 }
 
 function createReservoirLayer(geojson, mapSelectable) {
@@ -3804,7 +3980,8 @@ function objectIconInfo(objectType, feature) {
     Reservoir: { key: "reservoir", icon: "waves-horizontal", label: "水库" },
     Sluice: { key: "sluice", icon: "dam", label: "水闸" },
     Bridge: { key: "bridge", icon: "bridge", label: "桥梁" },
-    Road: { key: "road", icon: "route", label: "道路" },
+    Road: { key: "road", icon: "route", label: "路段" },
+    RoadRoute: { key: "road", icon: "route", label: "编号道路" },
     EvacuationSite: { key: "place", icon: "house-heart", label: "安置地点" },
     EvacuationUnit: { key: "evacuation-unit", icon: "users", label: "转移单元" },
     EvacuationRoute: { key: "route", icon: "route", label: "转移路线" },
@@ -3836,6 +4013,19 @@ function popupHtml(objectType, feature) {
   const props = feature.properties || {};
   const name = props.name || props[ID_FIELDS[objectType]] || OBJECT_CONFIG[objectType]?.label || objectType;
   const id = props[ID_FIELDS[objectType]] || "";
+  if (objectType === "RoadRoute") {
+    return `<div class="popup-title">${escapeHtml(props.ref)} · ${escapeHtml(name)}</div>
+      <div class="popup-meta">${escapeHtml(roadClassInfo(props).label)} · 已收录 ${escapeHtml(String(props.segment_count))} 段</div>
+      <div class="popup-meta">${escapeHtml(props.coverage_scope)}</div>`;
+  }
+  if (objectType === "Road") {
+    const description = [roadClassInfo(feature).label, props.ref].filter(Boolean).join(" · ");
+    return `
+      <div class="popup-title">${escapeHtml(name)}</div>
+      <div class="popup-meta">${escapeHtml(description)}</div>
+      <div class="popup-meta">路段 ${escapeHtml(id)} · ${escapeHtml(formatRouteDistance(props.length_m))}</div>
+    `;
+  }
   if (objectType === "EvacuationRoute") {
     const steps = parseRouteInstructions(props.instructions);
     return `
@@ -4758,11 +4948,44 @@ function fitHighlighted() {
 }
 
 function detailHtml(objectType, props) {
+  if (objectType === "Road") return roadDetailHtml(props);
+  if (objectType === "RoadRoute") return roadRouteDetailHtml(props);
   if (objectType === "EvacuationRoute") return routeDetailHtml(props);
   if (objectType === "Station") return stationDetailHtml(props);
   const keys = Object.keys(props).filter((key) => props[key] !== "" && props[key] !== null && key !== "geometry");
   const rows = keys.slice(0, 8).map((key) => `<div><strong>${escapeHtml(key)}</strong>: ${escapeHtml(String(props[key]))}</div>`);
   return `<div class="muted"><strong>${escapeHtml(OBJECT_CONFIG[objectType]?.label || objectType)}</strong>${rows.join("")}</div>`;
+}
+
+function roadDetailHtml(props) {
+  const rows = [
+    ["名称", props.name],
+    ["道路编号", props.ref || "未标注"],
+    ["类型", roadClassInfo(props).label],
+    ["路段ID", props.road_id],
+    ["路段长度", formatRouteDistance(props.length_m)],
+    ["通行方向", { F: "单向", T: "反向单向", B: "双向" }[props.one_way] || "未标注"],
+    ["桥上路段", props.bridge_flag ? "是" : "否"],
+    ["隧道路段", props.tunnel_flag ? "是" : "否"],
+  ];
+  const routes = (props.road_route_ids || []).map((id) => roadObjectButton("RoadRoute", id, id.replace("road_route_", ""))).join("");
+  return `<div class="muted"><strong>道路路段</strong>${rows.map(([label, value]) => `<div><strong>${label}</strong>: ${escapeHtml(String(value ?? "未标注"))}</div>`).join("")}
+    <div>所属编号道路：${routes || "未归属（缺少可靠编号）"}</div></div>`;
+}
+
+function roadObjectButton(objectType, objectId, label) {
+  return `<button type="button" class="road-object-link" data-road-object-type="${escapeHtml(objectType)}" data-road-object-id="${escapeHtml(String(objectId))}">${escapeHtml(String(label))}</button>`;
+}
+
+function roadRouteDetailHtml(props) {
+  const segments = (props.road_ids || []).map((id) => roadObjectButton("Road", id, id)).join("");
+  return `<div class="muted"><strong>${escapeHtml(props.ref)} · ${escapeHtml(props.name)}</strong>
+    <div>${escapeHtml(roadClassInfo(props).label)} · 已收录 ${escapeHtml(String(props.segment_count))} 段</div>
+    <div>共线路段：${escapeHtml(String(props.shared_segment_count))} 段</div>
+    <div>路段累计长度：${escapeHtml(formatRouteDistance(props.recorded_length_m))}（含双向线及匝道）</div>
+    <div>${escapeHtml(props.coverage_scope)}</div>
+    <details><summary>成员路段（点击定位）</summary><div class="road-member-list">${segments}</div></details>
+  </div>`;
 }
 
 function stationDetailHtml(props) {
@@ -5842,7 +6065,7 @@ function parseToolJsonResult(value) {
 
 function registerImpactAnalysisResult(result, options = {}) {
   if (!result || typeof result !== "object") return;
-  if (!["completed", "no_forecast_cells"].includes(result.status)) return;
+  if (!["completed", "partial", "no_forecast_cells"].includes(result.status)) return;
   const params = result.parameters || {};
   state.impactAnalysis = {
     forecastId: result.forecast_id || "latest",
@@ -5931,6 +6154,7 @@ async function refreshImpactAnalysisForTimeline() {
 function setImpactAnalysisLoading(hour, validAt = null, mode = "time_slice") {
   const panel = document.getElementById("impactPanel");
   panel?.classList.add("is-loading");
+  panel?.setAttribute("aria-busy", "true");
   const count = document.getElementById("impactCount");
   const time = document.getElementById("impactTimeLabel");
   const status = document.getElementById("impactStatus");
@@ -5946,6 +6170,12 @@ function setImpactAnalysisLoading(hour, validAt = null, mode = "time_slice") {
 
 function setImpactAnalysisError(error) {
   document.getElementById("impactPanel")?.classList.remove("is-loading");
+  document.getElementById("impactPanel")?.setAttribute("aria-busy", "false");
+  const notice = document.getElementById("impactNotice");
+  notice.hidden = false;
+  notice.textContent = "本次分析失败，下方保留的是上一次结果。";
+  const previous = state.impactAnalysis?.lastResult;
+  if (previous) setImpactScopeLabel(document.getElementById("impactTimeLabel"), previous.time_h, previous.analysis_time_at, previous.time_h == null);
   const status = document.getElementById("impactStatus");
   if (status) {
     status.textContent = "分析失败";
@@ -5961,19 +6191,16 @@ function setImpactScopeLabel(element, hour, validAt, envelope = false) {
     return;
   }
   const offset = `+${formatHydrodynamicHour(hour)}h`;
-  const actual = formatForecastActualTime(validAt);
-  element.textContent = actual ? `${offset} · ${actual}` : offset;
+  const actual = formatForecastActualTime(validAt, true);
+  element.textContent = actual ? `预测时刻 · ${actual}` : `预测时刻 · ${offset}`;
   element.title = `分析范围：${formatHydrodynamicTimeLabel(hour, validAt)}`;
 }
 
 function renderImpactAnalysisResult(result) {
-  const impacts = (result?.impacts || []).filter((impact) => (
-    impact?.object_type
-    && impact?.object_id != null
-    && Number.isFinite(Number(impact.longitude))
-    && Number.isFinite(Number(impact.latitude))
-  ));
-  const currentKeys = new Set(impacts.map(impactObjectKey));
+  const { impacts, nearby, routes: routeImpacts } = impactListData(result);
+  const detailImpacts = [...impacts, ...nearby, ...routeImpacts,
+    ...routeImpacts.flatMap((item) => [...(item.segment_impacts || []), ...(item.nearby_segment_impacts || [])])];
+  const currentKeys = new Set(detailImpacts.map(impactObjectKey));
   if (state.selectedImpactKey && !currentKeys.has(state.selectedImpactKey)) {
     clearImpactObjectSelection({ removeLayer: true });
   }
@@ -5981,15 +6208,15 @@ function renderImpactAnalysisResult(result) {
     ...(state.impactAnalysis || {}),
     lastResult: result,
   };
-  renderImpactMarkers(impacts);
-  renderImpactList(result, impacts);
-  updateSelectedImpactDetails(impacts);
+  renderImpactMarkers([...impacts, ...nearby]);
+  renderImpactList(result);
+  updateSelectedImpactDetails(detailImpacts);
 }
 
 function renderImpactMarkers(impacts) {
   state.impactMarkerLayer?.clearLayers();
   state.impactMarkers.clear();
-  impacts.forEach((impact) => {
+  impacts.filter(impactHasLocation).forEach((impact) => {
     const key = impactObjectKey(impact);
     const selected = key === state.selectedImpactKey;
     const marker = L.marker([Number(impact.latitude), Number(impact.longitude)], {
@@ -6017,7 +6244,7 @@ function impactMarkerIcon(impact, selected = false) {
     ? impact.risk_level
     : "unknown";
   return L.divIcon({
-    className: `impact-point-marker is-${riskLevel}${selected ? " is-selected" : ""}`,
+    className: `impact-point-marker is-${riskLevel}${impact.impact_status === "nearby_flood" ? " is-nearby" : ""}${selected ? " is-selected" : ""}`,
     html: '<span class="impact-point-core" aria-hidden="true"></span>',
     iconSize: [16, 16],
     iconAnchor: [8, 8],
@@ -6027,59 +6254,334 @@ function impactMarkerIcon(impact, selected = false) {
 
 function impactTooltipHtml(impact) {
   const depthLabel = impactDepthLabel(impact);
-  const status = impactPassabilityLabel(impact.passability_status);
+  const status = impactStatusLabel(impact) || impactPassabilityLabel(impact.passability_status);
   return `<strong>${escapeHtml(impact.name || impact.object_id)}</strong><br>${escapeHtml(impactTypeLabel(impact.object_type))} · ${escapeHtml(depthLabel)} ${formatImpactNumber(impact.depth_m, 2)} m${status ? `<br>${escapeHtml(status)}` : ""}`;
 }
 
-function renderImpactList(result, impacts) {
+function impactHasLocation(impact) {
+  return impact.longitude != null && impact.latitude != null
+    && Number.isFinite(Number(impact.longitude)) && Number.isFinite(Number(impact.latitude));
+}
+
+function uniqueImpactObjects(items) {
+  return [...new Map(items.filter((item) => item?.object_type && item.object_id != null)
+    .map((item) => [impactObjectKey(item), item])).values()];
+}
+
+function impactListData(result) {
+  const routes = uniqueImpactObjects([
+    ...(result?.road_route_impacts || []), ...(result?.road_route_nearby_impacts || []),
+    ...(result?.impacts || []).filter((item) => item.object_type === "RoadRoute"),
+    ...(result?.nearby_impacts || []).filter((item) => item.object_type === "RoadRoute"),
+  ]);
+  // Count leaf objects once, even for a RoadRoute-only result or shared road segments.
+  const impacts = uniqueImpactObjects([
+    ...(result?.impacts || []).filter((item) => item.object_type !== "RoadRoute"),
+    ...routes.flatMap((route) => route.segment_impacts || []),
+  ]);
+  const affectedKeys = new Set(impacts.map(impactObjectKey));
+  const nearby = uniqueImpactObjects([
+    ...(result?.nearby_impacts || []).filter((item) => item.object_type !== "RoadRoute"),
+    ...routes.flatMap((route) => route.nearby_segment_impacts || []),
+  ]).filter((item) => !affectedKeys.has(impactObjectKey(item)));
+  return { impacts, nearby, routes };
+}
+
+function impactGroupLabel(type) {
+  return type === "Road" ? "道路" : impactTypeLabel(type);
+}
+
+function bindImpactListControls() {
+  const tabs = [...document.querySelectorAll("[data-impact-tab]")];
+  tabs.forEach((button, index) => {
+    button.addEventListener("click", () => {
+      state.impactListView.tab = button.dataset.impactTab;
+      refreshImpactListView();
+    });
+    button.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
+        : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+      tabs[next].focus();
+      tabs[next].click();
+    });
+  });
+  document.getElementById("impactTypeFilter").addEventListener("change", (event) => {
+    state.impactListView.type = event.target.value;
+    refreshImpactListView();
+  });
+}
+
+function refreshImpactListView() {
+  const result = state.impactAnalysis?.lastResult;
+  if (result) renderImpactList(result);
+  else updateImpactListControls({ impacts: [], nearby: [] });
+}
+
+function updateImpactListControls(data, noData = false) {
+  const view = state.impactListView;
+  document.querySelectorAll("[data-impact-tab]").forEach((button) => {
+    const active = button.dataset.impactTab === view.tab;
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
+  });
+  document.getElementById("impactCount").textContent = noData ? "--" : data.impacts.length;
+  document.getElementById("impactNearbyCount").textContent = noData ? "--" : data.nearby.length;
+  document.getElementById("impactList").setAttribute("aria-labelledby", view.tab === "nearby" ? "impactNearbyTab" : "impactAffectedTab");
+  const rows = view.tab === "nearby" ? data.nearby : data.impacts;
+  const types = [...new Set([...data.impacts, ...data.nearby].map((item) => item.object_type))];
+  if (view.type !== "all" && !types.includes(view.type)) types.push(view.type);
+  types.sort((a, b) => (a === "Road" ? -1 : b === "Road" ? 1 : impactGroupLabel(a).localeCompare(impactGroupLabel(b), "zh-CN")));
+  const select = document.getElementById("impactTypeFilter");
+  select.replaceChildren(new Option("全部类型", "all"), ...types.map((type) => (
+    new Option(`${impactGroupLabel(type)} (${rows.filter((item) => item.object_type === type).length})`, type)
+  )));
+  select.value = view.type;
+}
+
+function rememberImpactListPosition(list) {
+  const view = state.impactListView;
+  if (!view.renderedKey || !list.clientHeight) return;
+  const top = list.getBoundingClientRect().top;
+  const anchor = [...list.querySelectorAll("[data-impact-row]")].find((row) => (
+    row.getClientRects().length && row.getBoundingClientRect().bottom > top
+  ));
+  // Retain the last position when a time slice temporarily has no matching objects.
+  if (!anchor) return;
+  view.positions.set(view.renderedKey, {
+    top: list.scrollTop,
+    anchor: anchor.dataset.impactRow,
+    offset: anchor.getBoundingClientRect().top - top,
+  });
+}
+
+function restoreImpactListPosition(list) {
+  const view = state.impactListView;
+  view.renderedKey = `${view.tab}:${view.type}`;
+  const position = view.positions.get(view.renderedKey);
+  list.scrollTop = position?.top || 0;
+  if (!position?.anchor) return;
+  const anchor = [...list.querySelectorAll("[data-impact-row]")].find((row) => row.dataset.impactRow === position.anchor);
+  if (anchor?.getClientRects().length) {
+    list.scrollTop += anchor.getBoundingClientRect().top - list.getBoundingClientRect().top - position.offset;
+  }
+}
+
+function renderImpactList(result) {
   const panel = document.getElementById("impactPanel");
   const count = document.getElementById("impactCount");
   const time = document.getElementById("impactTimeLabel");
   const status = document.getElementById("impactStatus");
   const list = document.getElementById("impactList");
-  if (!panel || !count || !time || !status || !list) return;
+  const notice = document.getElementById("impactNotice");
+  const data = impactListData(result);
+  const { impacts, nearby } = data;
+  const view = state.impactListView;
+  rememberImpactListPosition(list);
+  const focusedControl = list.contains(document.activeElement) ? document.activeElement.dataset.impactControl : null;
   panel.classList.remove("is-loading");
-  count.textContent = `${impacts.length} 个`;
-  setImpactScopeLabel(
-    time,
-    result?.time_h,
-    result?.analysis_time_at,
-    result?.time_h == null,
-  );
+  panel.setAttribute("aria-busy", "false");
+  count.title = "预测影响对象数；道路按唯一路段统计，编号道路汇总不重复计数";
+  setImpactScopeLabel(time, result?.time_h, result?.analysis_time_at, result?.time_h == null);
   status.textContent = impacts.length ? "已分析" : "未发现";
-  status.title = impacts.length
-    ? `按水深与风险排序，共 ${impacts.length} 个对象`
-    : (result?.time_h == null
-      ? "未来24小时最大包络未发现受影响对象"
-      : "当前预测时刻未发现受影响对象");
-  list.innerHTML = "";
-  impacts.forEach((impact) => {
-    const key = impactObjectKey(impact);
-    const iconInfo = objectIconInfo(impact.object_type, impact);
-    const symbol = window.FloodMapSymbols?.render(iconInfo.icon) || "";
-    const button = document.createElement("button");
-    const passability = impactPassabilityLabel(impact.passability_status);
-    button.type = "button";
-    button.className = "impact-list-item";
-    button.classList.toggle("is-selected", key === state.selectedImpactKey);
-    button.dataset.impactKey = key;
-    button.innerHTML = `
-      <span class="impact-list-symbol object-symbol-${escapeHtml(iconInfo.key)}">
-        <span class="impact-object-icon" title="${escapeHtml(iconInfo.label)}" aria-hidden="true">${symbol}</span>
-        <span class="impact-risk-dot is-${escapeHtml(impact.risk_level || "unknown")}" role="img" aria-label="${escapeHtml(impactRiskLabel(impact.risk_level))}"></span>
-      </span>
-      <span class="impact-list-copy">
-        <strong>${escapeHtml(impact.name || impact.object_id)}</strong>
-        <small>${escapeHtml(impactTypeLabel(impact.object_type))}${passability ? ` · ${escapeHtml(passability)}` : ""} · ${escapeHtml(String(impact.object_id))}</small>
-      </span>
-      <span class="impact-list-depth" title="${escapeHtml(impactDepthLabel(impact))}">${formatImpactNumber(impact.depth_m, 2)}<small>m</small></span>
-    `;
-    button.addEventListener("click", () => void focusImpactObject(impact));
-    list.appendChild(button);
-  });
-  if (panel.classList.contains("is-floating")) {
-    window.requestAnimationFrame(() => clampMapPanelToStage(panel));
+  status.title = "仅表示预测影响；道路通行状态需另行判定";
+  const noData = result?.status === "no_forecast_cells";
+  notice.hidden = true;
+  if (noData) {
+    count.textContent = "--";
+    status.textContent = "无预测数据";
+    status.title = "缺少对应预测数据，无法判定受影响对象";
+  } else if (result?.status === "partial") {
+    status.textContent = "部分未评估";
+    const unassessed = result.linear_analysis?.unassessed_objects?.length || 0;
+    const skipped = result.linear_analysis?.skipped_cell_ids?.length || 0;
+    notice.textContent = [unassessed ? `${unassessed} 个对象未评估` : "", skipped ? `${skipped} 个网格几何无效` : ""].filter(Boolean).join("；") || "部分几何缺失或无效";
+    notice.textContent += "，不能据此判断安全。";
+    notice.hidden = false;
+  } else if (!impacts.length && nearby.length) {
+    status.textContent = "需核查";
+    status.title = `未发现预测影响，另有 ${nearby.length} 个对象邻近积水`;
   }
+  updateImpactListControls(data, noData);
+  const rows = (view.tab === "nearby" ? nearby : impacts).filter((item) => view.type === "all" || item.object_type === view.type);
+  list.replaceChildren();
+  if (!rows.length || noData) {
+    const empty = document.createElement("p");
+    empty.className = "impact-empty";
+    empty.textContent = noData ? "当前范围无可用预测网格，无法判断影响。"
+      : view.type !== "all" ? `当前${view.tab === "nearby" ? "邻近积水" : "预测影响"}结果中没有${impactGroupLabel(view.type)}。可切换对象类型查看。`
+      : view.tab === "nearby" ? "当前分析范围内未发现仅邻近积水的对象。"
+      : "当前分析范围内未发现预测影响对象。";
+    list.appendChild(empty);
+  } else {
+    const groups = new Map();
+    rows.forEach((item) => {
+      if (!groups.has(item.object_type)) groups.set(item.object_type, []);
+      groups.get(item.object_type).push(item);
+    });
+    // Keep categories stable as depths change. Within a category show risk, then depth.
+    const order = ["Road", "Bridge", "EvacuationRoute", "EvacuationUnit", "EvacuationSite", "Facility"];
+    [...groups].sort(([a], [b]) => (order.indexOf(a) < 0 ? 99 : order.indexOf(a)) - (order.indexOf(b) < 0 ? 99 : order.indexOf(b)))
+      .forEach(([type, items]) => {
+        const section = document.createElement("details");
+        section.className = "impact-group";
+        section.dataset.impactGroup = type;
+        const expansionKey = `${view.tab}:group:${type}`;
+        section.open = view.expanded.get(expansionKey) ?? (type === "Road" || view.type !== "all" || groups.size === 1);
+        const heading = document.createElement("summary");
+        heading.dataset.impactRow = heading.dataset.impactControl = `group:${type}`;
+        heading.innerHTML = `<span>${escapeHtml(impactGroupLabel(type))}</span><span class="impact-group-count">${items.length} ${type === "Road" ? "段" : "个"}</span>`;
+        section.appendChild(heading);
+        section.addEventListener("toggle", () => {
+          if (section.isConnected) view.expanded.set(expansionKey, section.open);
+        });
+        if (type === "Road") renderImpactRoads(section, items, data.routes);
+        else sortImpactListItems(items).forEach((item) => section.appendChild(impactListItem(item)));
+        list.appendChild(section);
+      });
+  }
+  document.getElementById("impactListSummary").textContent = noData ? "无预测数据不代表无影响"
+    : view.tab === "nearby" ? `${rows.length} 个待核查 · 不计入预测影响数`
+    : `显示 ${rows.length} / ${impacts.length} 个对象 · 道路按唯一路段计数`;
+  restoreImpactListPosition(list);
+  if (focusedControl) {
+    [...list.querySelectorAll("[data-impact-control]")].find((item) => item.dataset.impactControl === focusedControl)?.focus({ preventScroll: true });
+  }
+  if (panel.classList.contains("is-floating")) window.requestAnimationFrame(() => clampMapPanelToStage(panel));
+}
+
+function sortImpactListItems(items) {
+  const rank = { critical: 4, high: 3, medium: 2, low: 1 };
+  return [...items].sort((a, b) => (rank[b.risk_level] || 0) - (rank[a.risk_level] || 0)
+    || Number(b.depth_m || 0) - Number(a.depth_m || 0)
+    || String(a.object_id).localeCompare(String(b.object_id)));
+}
+
+function impactRouteName(route) {
+  return [...new Set([route.ref, route.name].map((value) => String(value || "").trim()).filter(Boolean))].join(" · ") || String(route.object_id);
+}
+
+function impactRouteForTab(route, tab) {
+  if (tab !== "nearby" || !route.nearby_segment_impacts?.length) return route;
+  const members = route.nearby_segment_impacts;
+  const deepest = members.reduce((a, b) => Number(a.depth_m) >= Number(b.depth_m) ? a : b);
+  return {
+    ...route,
+    ...Object.fromEntries(["depth_m", "velocity_mps", "longitude", "latitude", "mesh_cell_id", "forecast_cell_id", "risk_level"].map((key) => [key, deepest[key]])),
+    impact_status: "nearby_flood",
+    depth_basis: "nearby_forecast_cells",
+    passability_status: "inspection_required",
+    structure_unverified_segment_count: 0,
+    nearest_distance_m: Math.min(...members.map((item) => Number(item.nearest_distance_m ?? item.distance_m))),
+    distance_m: Math.min(...members.map((item) => Number(item.nearest_distance_m ?? item.distance_m))),
+  };
+}
+
+function renderImpactRoads(container, roads, routes) {
+  const view = state.impactListView;
+  const memberField = view.tab === "nearby" ? "nearby_segment_impacts" : "segment_impacts";
+  const byKey = new Map(roads.map((item) => [impactObjectKey(item), item]));
+  const grouped = new Set();
+  const memberships = new Map();
+  const groups = routes.map((route) => ({
+    route,
+    members: uniqueImpactObjects(route[memberField] || []).map((item) => byKey.get(impactObjectKey(item))).filter(Boolean),
+  })).filter(({ members }) => members.length);
+  groups.forEach(({ members }) => members.forEach((item) => memberships.set(impactObjectKey(item), (memberships.get(impactObjectKey(item)) || 0) + 1)));
+  groups.forEach(({ route, members }) => {
+    const key = impactObjectKey(route);
+    const name = impactRouteName(route);
+    const expansionKey = `${view.tab}:route:${key}`;
+    const section = document.createElement("div");
+    section.className = "impact-road-route";
+    const head = document.createElement("div");
+    head.className = "impact-route-header";
+    head.dataset.impactRow = `route:${key}`;
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "impact-route-toggle";
+    toggle.dataset.impactControl = `toggle:${key}`;
+    toggle.innerHTML = '<span aria-hidden="true">›</span>';
+    const children = document.createElement("div");
+    children.className = "impact-route-members";
+    children.id = `impact-members-${encodeURIComponent(String(route.object_id))}`;
+    const setOpen = (open) => {
+      children.hidden = !open;
+      toggle.setAttribute("aria-expanded", String(open));
+      toggle.setAttribute("aria-label", `${open ? "收起" : "展开"}${name}的路段`);
+    };
+    toggle.setAttribute("aria-controls", children.id);
+    setOpen(view.expanded.get(expansionKey) ?? false);
+    toggle.addEventListener("click", () => {
+      const open = children.hidden;
+      view.expanded.set(expansionKey, open);
+      setOpen(open);
+    });
+    const routeView = impactRouteForTab(route, view.tab);
+    const button = impactListItem(routeView, { title: name });
+    button.classList.add("impact-route-focus");
+    button.querySelector(".impact-list-evidence").textContent = `已收录 ${route.recorded_segment_count} 段 · ${members.length} 段${view.tab === "nearby" ? "邻近积水" : "相交"}`;
+    head.append(toggle, button);
+    members.forEach((item) => {
+      grouped.add(impactObjectKey(item));
+      children.appendChild(impactListItem(item, {
+        title: item.name && ![route.name, route.ref].includes(item.name) ? `${item.name} · 路段 ${item.object_id}` : `路段 ${item.object_id}`,
+        parentKey: key,
+        shared: memberships.get(impactObjectKey(item)) > 1,
+      }));
+    });
+    section.append(head, children);
+    container.appendChild(section);
+  });
+  const ungrouped = roads.filter((item) => !grouped.has(impactObjectKey(item)));
+  if (ungrouped.length) {
+    const label = document.createElement("div");
+    label.className = "impact-ungrouped-label";
+    label.textContent = `未归属编号道路 · ${ungrouped.length} 段`;
+    container.appendChild(label);
+    sortImpactListItems(ungrouped).forEach((item) => container.appendChild(impactListItem(item)));
+  }
+  const note = document.createElement("p");
+  note.className = "impact-road-note";
+  note.textContent = `仅统计已收录路段${[...memberships.values()].some((count) => count > 1) ? "；共线路段在各道路下列出，总数去重" : "；道路汇总不重复计数"}`;
+  container.appendChild(note);
+}
+
+function impactListItem(impact, options = {}) {
+  const key = impactObjectKey(impact);
+  const isNearby = impact.impact_status === "nearby_flood";
+  const linear = ["Road", "EvacuationRoute"].includes(impact.object_type);
+  const needsElevation = impact.impact_status === "structure_overlap_unverified" || impact.data_quality === "insufficient_bridge_elevation" || impact.structure_unverified_segment_count > 0;
+  const iconInfo = objectIconInfo(impact.object_type, impact);
+  const symbol = window.FloodMapSymbols?.render(iconInfo.icon) || "";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `impact-list-item${isNearby ? " is-nearby" : ""}`;
+  button.classList.toggle("is-selected", key === state.selectedImpactKey);
+  button.dataset.impactKey = key;
+  button.dataset.impactRow = button.dataset.impactControl = `${options.parentKey || "object"}/${key}`;
+  let evidence = isNearby ? `邻近网格最大水深 ${formatImpactNumber(impact.depth_m, 3)} m`
+    : linear ? `相交 ${formatImpactNumber(impact.overlap_length_m, 1)} m · ${impact.intersecting_mesh_cell_ids?.length || 0} 个网格`
+    : impact.object_type === "Bridge" ? (impact.impact_status === "bridge_approach_inundated" ? "桥头影响区积水" : "桥梁影响区积水")
+    : `预测网格 ${impact.mesh_cell_id || "--"}`;
+  const title = options.title || impact.name || `${impactTypeLabel(impact.object_type)} ${impact.object_id}`;
+  const value = isNearby ? formatImpactNumber(impact.nearest_distance_m ?? impact.distance_m, 1) : formatImpactNumber(impact.depth_m, 3);
+  const metric = isNearby ? "距积水边界" : linear || impact.object_type === "RoadRoute" ? "相交网格最大水深" : impact.object_type === "Bridge" ? "洪泛区最大水深" : "预测网格水深";
+  button.title = `${title} · ${evidence} · ${metric} ${value} m · ID ${impact.object_id}`;
+  button.innerHTML = `
+    <span class="impact-list-symbol object-symbol-${escapeHtml(iconInfo.key)}">
+      <span class="impact-object-icon" aria-hidden="true">${symbol}</span>
+      <span class="impact-risk-dot is-${escapeHtml(impact.risk_level || "unknown")}" role="img" aria-label="${escapeHtml(impactRiskLabel(impact.risk_level))}"></span>
+    </span>
+    <span class="impact-list-copy">
+      <strong>${escapeHtml(title)}</strong>
+      <small class="impact-list-evidence">${escapeHtml(evidence)}</small>
+      ${needsElevation || isNearby || options.shared ? `<span class="impact-item-badges">${needsElevation ? '<span>高程待核查</span>' : ""}${isNearby ? '<span>需核查</span>' : ""}${options.shared ? '<span class="is-shared">共线路段</span>' : ""}</span>` : ""}
+    </span>
+    <span class="impact-list-depth"><b>${value}<small>m</small></b><span>${metric}</span></span>`;
+  button.addEventListener("click", () => void focusImpactObject(impact));
+  return button;
 }
 
 async function focusImpactObject(impact) {
@@ -6092,6 +6594,7 @@ async function focusImpactObject(impact) {
     state.selectedImpactLayerKey = null;
   }
   state.selectedImpactKey = key;
+  state.selectedImpactTab = impact.impact_status === "nearby_flood" ? "nearby" : "affected";
   updateImpactSelectionStyles();
 
   let entry = state.featureIndex.get(featureIndexKey(objectType, objectId));
@@ -6124,10 +6627,15 @@ async function focusImpactObject(impact) {
     return;
   }
   selectFeature(objectType, entry.feature, entry.layer);
+  setLayerPanelOpen(true);
   entry.layer.setPopupContent?.(impactPopupHtml(impact));
-  entry.layer.openPopup?.();
+  entry.layer.openPopup?.(impactHasLocation(impact) ? [Number(impact.latitude), Number(impact.longitude)] : undefined);
   document.getElementById("selectedObject").innerHTML = impactDetailHtml(impact, entry.feature?.properties || {});
-  fitFeatureLayer(entry.layer);
+  if (["Road", "EvacuationRoute"].includes(objectType) && impactHasLocation(impact)) {
+    state.map.flyTo([Number(impact.latitude), Number(impact.longitude)], Math.max(state.map.getZoom(), 16), { duration: 0.65 });
+  } else {
+    fitFeatureLayer(entry.layer);
+  }
 }
 
 function updateImpactSelectionStyles() {
@@ -6145,8 +6653,9 @@ function updateImpactSelectionStyles() {
 
 function updateSelectedImpactDetails(impacts) {
   if (!state.selectedImpactKey) return;
-  const impact = impacts.find((item) => impactObjectKey(item) === state.selectedImpactKey);
+  let impact = impacts.find((item) => impactObjectKey(item) === state.selectedImpactKey);
   if (!impact) return;
+  if (impact.object_type === "RoadRoute") impact = impactRouteForTab(impact, state.selectedImpactTab);
   const entry = state.featureIndex.get(featureIndexKey(impact.object_type, impact.object_id));
   if (!entry) return;
   entry.layer.setPopupContent?.(impactPopupHtml(impact));
@@ -6175,6 +6684,7 @@ function impactObjectKey(impact) {
 }
 
 function impactTypeLabel(objectType) {
+  if (objectType === "Road") return "道路路段";
   return OBJECT_CONFIG[objectType]?.label || objectType || "领域对象";
 }
 
@@ -6187,7 +6697,20 @@ function impactRiskLabel(level) {
   }[level] || "受影响";
 }
 
+function impactStatusLabel(impact) {
+  return {
+    forecast_overlap: "与预测湿网格相交",
+    nearby_flood: "邻近积水，需核查",
+    structure_overlap_unverified: "桥上/隧道路段相交，路面高程待核查",
+    bridge_approach_inundated: "桥头影响区积水，桥面高程待核查",
+    bridge_influence_zone: "桥梁影响区积水，桥面高程待核查",
+  }[impact?.impact_status] || "";
+}
+
 function impactDepthLabel(impact) {
+  if (impact?.depth_basis === "nearby_forecast_cells") return "邻近网格最大水深";
+  if (impact?.depth_basis === "intersecting_forecast_cells") return "相交网格最大水深";
+  if (impact?.object_type === "RoadRoute") return "受影响路段对应网格最大水深";
   return impact?.object_type === "Bridge" && impact?.directly_inundated === false
     ? "邻近洪泛区最大水深"
     : "水深";
@@ -6197,29 +6720,45 @@ function impactPassabilityLabel(status) {
   return {
     inspection_required: "需现场核查",
     likely_impassable: "可能无法通行",
+    not_assessed: "整体通行状态未判定",
   }[status] || "";
+}
+
+function linearImpactEvidenceHtml(impact) {
+  if (!["Road", "EvacuationRoute"].includes(impact.object_type) || !impact.impact_status) return "";
+  if (impact.impact_status === "nearby_flood") {
+    return `<div class="popup-meta">完整线形未与达标湿网格相交，最近距网格边界 ${formatImpactNumber(impact.nearest_distance_m, 1)} m；不能据此认定路面已淹。</div>`;
+  }
+  const ids = impact.intersecting_mesh_cell_ids || [];
+  return `<div class="popup-meta">相交网格 ${ids.length} 个：${escapeHtml(ids.slice(0, 10).join("、"))}${ids.length > 10 ? "…" : ""}<br>
+    相交线形累计 ${formatImpactNumber(impact.overlap_length_m, 1)} m；水深为模型网格值，通行状态需另行判定。</div>`;
 }
 
 function impactPopupHtml(impact) {
   const depthLabel = impactDepthLabel(impact);
-  const passability = impactPassabilityLabel(impact.passability_status);
+  const passability = impactStatusLabel(impact) || impactPassabilityLabel(impact.passability_status);
   return `
     <div class="popup-title">${escapeHtml(impact.name || impact.object_id)}</div>
     <div class="popup-meta">${escapeHtml(impactTypeLabel(impact.object_type))} ${escapeHtml(impact.object_id)}</div>
     <div class="popup-depth">${formatImpactNumber(impact.depth_m, 2)} <span>m ${escapeHtml(depthLabel)}</span></div>
+    ${linearImpactEvidenceHtml(impact)}
     <div class="popup-meta">${escapeHtml(passability || impactRiskLabel(impact.risk_level))} · 流速 ${formatImpactNumber(impact.velocity_mps, 2)} m/s · 距网格 ${formatImpactNumber(impact.distance_m, 1)} m</div>
   `;
 }
 
 function impactDetailHtml(impact, props) {
   const depthLabel = impactDepthLabel(impact);
-  const passability = impactPassabilityLabel(impact.passability_status);
+  const passability = impactStatusLabel(impact) || impactPassabilityLabel(impact.passability_status);
   return `
     <div class="impact-selected-summary">
       <strong>${escapeHtml(passability || impactRiskLabel(impact.risk_level))}</strong>
       <span>${escapeHtml(depthLabel)} ${formatImpactNumber(impact.depth_m, 2)} m</span>
       <span>流速 ${formatImpactNumber(impact.velocity_mps, 2)} m/s</span>
     </div>
+    ${linearImpactEvidenceHtml(impact)}
+    ${impact.object_type === "RoadRoute" ? `<div class="muted">已收录 ${impact.recorded_segment_count} 段中 ${impact.affected_segment_count} 段受影响（与湿网格相交），另有 ${impact.nearby_segment_count || 0} 段仅邻近积水；不代表整条道路不可通行。</div>
+      <details open><summary>受影响路段（点击查看详情）</summary>${(impact.segment_impacts || []).map((segment) => roadObjectButton("Road", segment.object_id, `${segment.object_id} · ${formatImpactNumber(segment.depth_m, 2)} m`)).join("")}</details>` : ""}
+    ${impact.nearby_segment_impacts?.length ? `<details open><summary>仅邻近积水的路段（需核查）</summary>${impact.nearby_segment_impacts.map((segment) => roadObjectButton("Road", segment.object_id, `${segment.object_id} · 距网格 ${formatImpactNumber(segment.nearest_distance_m, 1)} m`)).join("")}</details>` : ""}
     ${detailHtml(impact.object_type, props)}
   `;
 }

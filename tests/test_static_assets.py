@@ -49,7 +49,7 @@ class StaticAssetTest(unittest.TestCase):
         self.assertIn('state.map?.invalidateSize({ animate: false });', app)
         self.assertNotIn('class="launch-network"', index)
         self.assertIn("智能体集群就绪", index)
-        self.assertIn('/app.js?v=11', index)
+        self.assertIn('/app.js?v=17', index)
         self.assertIn("@media (prefers-reduced-motion: reduce)", styles)
 
     def test_hydrodynamic_timeline_avoids_redundant_work(self):
@@ -120,8 +120,8 @@ class StaticAssetTest(unittest.TestCase):
     def test_frontend_libraries_are_served_locally(self):
         index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
-        self.assertIn('/styles.css?v=11', index)
-        self.assertIn('/app.js?v=11', index)
+        self.assertIn('/styles.css?v=17', index)
+        self.assertIn('/app.js?v=17', index)
         self.assertIn('/vendor/leaflet/leaflet.css?v=1.9.4', index)
         self.assertIn('/vendor/leaflet/leaflet.js?v=1.9.4', index)
         self.assertIn('/vendor/marked/marked.min.js?v=12.0.2', index)
@@ -360,9 +360,9 @@ class StaticAssetTest(unittest.TestCase):
         self.assertIn('id="situationForecastSummary"', index)
         self.assertIn('当前分析范围内的受影响对象数', index)
         self.assertIn('id="impactCount"', index)
-        self.assertIn('>0 个</output>', index)
+        self.assertIn('>0</output></button>', index)
         self.assertIn('return actual ? `预测 ${offset} · ${actual}`', app)
-        self.assertIn('count.textContent = `${impacts.length} 个`;', app)
+        self.assertIn('document.getElementById("impactCount").textContent = noData ? "--" : data.impacts.length;', app)
         self.assertIn('count.textContent = "--";', app)
         self.assertIn('function setImpactScopeLabel(', app)
         self.assertIn('function renderSituationSummary()', app)

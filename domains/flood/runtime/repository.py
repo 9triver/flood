@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from functools import cached_property
+from threading import RLock
 from typing import Any
 
 from .common import (
@@ -24,11 +25,14 @@ from .directives import (
 )
 from .hydrodynamic_grid import count_hydrodynamic_cells, query_hydrodynamic_cells
 from .route_planning import read_planned_routes
+from .road_routes import build_road_routes, road_refs, road_route_id
 
 
 class FloodRepository:
     def __init__(self):
         self._row_cache: dict[str, list[dict]] = {}
+        self._road_signature = None
+        self._road_lock = RLock()
 
     def query(self, object_type: str, filters: dict[str, Any] | None = None,
               limit: int | None = None, order_by: str | None = None,
@@ -72,7 +76,7 @@ class FloodRepository:
         if not keyword:
             return []
         results = []
-        searchable_types = object_types or [
+        searchable_types = object_types or ["RoadRoute"] + [
             item for item in OBJECT_LIBRARY_FILES
             if item not in {
                 "FloodForecast",
@@ -98,6 +102,22 @@ class FloodRepository:
         return results
 
     def _rows(self, object_type: str) -> list[dict]:
+        if object_type in {"Road", "RoadRoute", "RoadRouteSegment"}:
+            with self._road_lock:
+                stat = object_library_path("Road").stat()
+                signature = (stat.st_mtime_ns, stat.st_size)
+                if signature != self._road_signature:
+                    roads = read_object_library("Road")
+                    routes, memberships = build_road_routes(roads)
+                    self._row_cache.update({
+                        "Road": [{**road, "road_route_ids": [
+                            road_route_id(ref) for ref in road_refs(road.get("ref"))
+                        ]} for road in roads],
+                        "RoadRoute": routes,
+                        "RoadRouteSegment": memberships,
+                    })
+                    self._road_signature = signature
+                return self._row_cache[object_type]
         if object_type in self._row_cache:
             return self._row_cache[object_type]
         rows = read_object_library(object_type)

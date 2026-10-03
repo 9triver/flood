@@ -27,6 +27,8 @@ ID_FIELDS = {
     "Sluice": "sluice_id",
     "HydraulicStructure": "structure_id",
     "Road": "road_id",
+    "RoadRoute": "road_route_id",
+    "RoadRouteSegment": "road_route_segment_id",
     "Bridge": "bridge_id",
     "Facility": "facility_id",
     "EvacuationSite": "evacuation_site_id",
