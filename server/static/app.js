@@ -143,6 +143,8 @@ const state = {
   selectedImpactKey: null,
   selectedImpactTab: "affected",
   selectedImpactLayerKey: null,
+  impactRoadFocusLayer: null,
+  impactRoadFocusSeq: 0,
   impactFocusSeq: 0,
   impactRefreshTimer: null,
   impactRefreshController: null,
@@ -4851,6 +4853,7 @@ function applyFocus(layerItem, objectType) {
 }
 
 function clearFocus() {
+  clearImpactRoadFocus();
   if (!state.focusedLayer) return;
   const objectType = state.focusedOriginalStyle?.objectType;
   if (state.focusedOriginalStyle?.iconMarker) {
@@ -6626,15 +6629,89 @@ async function focusImpactObject(impact) {
     updateImpactSelectionStyles();
     return;
   }
-  selectFeature(objectType, entry.feature, entry.layer);
+  if (objectType === "RoadRoute") {
+    clearFocus();
+    state.selected = { object_type: objectType, id: objectId, name: impactRouteName(impact) };
+  } else {
+    selectFeature(objectType, entry.feature, entry.layer);
+  }
   setLayerPanelOpen(true);
   entry.layer.setPopupContent?.(impactPopupHtml(impact));
   entry.layer.openPopup?.(impactHasLocation(impact) ? [Number(impact.latitude), Number(impact.longitude)] : undefined);
   document.getElementById("selectedObject").innerHTML = impactDetailHtml(impact, entry.feature?.properties || {});
-  if (["Road", "EvacuationRoute"].includes(objectType) && impactHasLocation(impact)) {
+  if (objectType === "RoadRoute") {
+    await updateImpactRoadFocus(impact, { fit: true });
+  } else if (["Road", "EvacuationRoute"].includes(objectType) && impactHasLocation(impact)) {
     state.map.flyTo([Number(impact.latitude), Number(impact.longitude)], Math.max(state.map.getZoom(), 16), { duration: 0.65 });
   } else {
     fitFeatureLayer(entry.layer);
+  }
+}
+
+function impactRouteFocusMembers(impact) {
+  return uniqueImpactObjects(impact.impact_status === "nearby_flood"
+    ? impact.nearby_segment_impacts || []
+    : impact.segment_impacts || []);
+}
+
+function clearImpactRoadFocus() {
+  state.impactRoadFocusSeq += 1;
+  state.impactRoadFocusLayer?.remove();
+  state.impactRoadFocusLayer = null;
+}
+
+async function updateImpactRoadFocus(impact, { fit = false } = {}) {
+  clearImpactRoadFocus();
+  const seq = state.impactRoadFocusSeq;
+  const key = impactObjectKey(impact);
+  const members = impactRouteFocusMembers(impact);
+  if (!members.length) return;
+  const features = [];
+  const missingIds = [];
+  members.forEach((member) => {
+    const feature = state.featureIndex.get(featureIndexKey("Road", member.object_id))?.feature;
+    if (feature?.geometry) features.push(feature);
+    else missingIds.push(String(member.object_id));
+  });
+  if (missingIds.length) {
+    try {
+      const params = new URLSearchParams({
+        object_type: "Road",
+        filters: JSON.stringify(filtersWithObjectIds("Road", {}, missingIds)),
+      });
+      const response = await fetch(`/api/geojson?${params.toString()}`);
+      if (!response.ok) throw new Error(await response.text());
+      const geojson = await response.json();
+      const requested = new Set(missingIds);
+      features.push(...(geojson.features || []).filter((feature) => requested.has(String(feature.properties?.road_id))));
+    } catch (error) {
+      if (seq === state.impactRoadFocusSeq) addTrace("MISS", "路段几何加载失败，将按影响位置定位", String(error?.message || error));
+    }
+  }
+  // A later selection or timeline result must win over an earlier geometry request.
+  if (seq !== state.impactRoadFocusSeq || key !== state.selectedImpactKey || key !== impactObjectKey(state.selected)) return;
+  if (features.length) {
+    state.impactRoadFocusLayer = L.geoJSON({ type: "FeatureCollection", features }, {
+      interactive: false,
+      pane: "impactPane",
+      style: { color: "#f59e0b", weight: 6, opacity: 1, lineCap: "round", lineJoin: "round" },
+    }).addTo(state.map);
+  }
+  if (!fit) return;
+  if (members.length === 1 && impactHasLocation(members[0])) {
+    const member = members[0];
+    state.map.flyTo([Number(member.latitude), Number(member.longitude)], Math.max(state.map.getZoom(), 16), { duration: 0.65 });
+    return;
+  }
+  const bounds = state.impactRoadFocusLayer?.getBounds() || L.latLngBounds([]);
+  members.filter(impactHasLocation).forEach((member) => bounds.extend([Number(member.latitude), Number(member.longitude)]));
+  if (bounds.isValid()) {
+    state.map.flyToBounds(bounds.pad(0.15), {
+      animate: true,
+      duration: 0.65,
+      maxZoom: 16,
+      padding: [32, 32],
+    });
   }
 }
 
@@ -6660,9 +6737,13 @@ function updateSelectedImpactDetails(impacts) {
   if (!entry) return;
   entry.layer.setPopupContent?.(impactPopupHtml(impact));
   document.getElementById("selectedObject").innerHTML = impactDetailHtml(impact, entry.feature?.properties || {});
+  if (impact.object_type === "RoadRoute" && impactObjectKey(state.selected) === state.selectedImpactKey) {
+    void updateImpactRoadFocus(impact);
+  }
 }
 
 function clearImpactObjectSelection(options = {}) {
+  clearImpactRoadFocus();
   const selectedKey = state.selectedImpactKey;
   state.selectedImpactKey = null;
   state.impactFocusSeq += 1;
