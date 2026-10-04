@@ -9,7 +9,8 @@ from oag.ontology.schema import Ontology
 from oag.runtime.events import event_to_dict
 
 from domains.flood.runtime.workspace import active_workspace_id
-from server.chat.policy import build_agent_task_hint
+from server.chat.policy import build_agent_task_hint, is_flood_status_question
+from domains.flood.runtime.forecast_context import resolve_forecast_context
 from server.chat.side_effects import AgentSideEffects
 
 if TYPE_CHECKING:
@@ -74,6 +75,7 @@ class FloodChatService:
             run.append_event("map_actions", {
                 "type": "map_actions",
                 "context": result.get("context"),
+                "operation_id": result.get("operation_id"),
                 "map_actions": result.get("map_actions", []),
                 "result_cards": result.get("result_cards", []),
                 "llm_enabled": bool(self.agent),
@@ -88,7 +90,7 @@ class FloodChatService:
                      run_id: str = "", trace_user_message: str = ""):
         kwargs = {
             "session_id": session_id,
-            "allowed_tools": None,
+            "allowed_tools": ["get_flood_status", "ask_user"] if is_flood_status_question(trace_user_message) else None,
         }
         supported = self._agent_chat_stream_parameters()
         if "run_id" in supported:
@@ -108,6 +110,7 @@ class FloodChatService:
         frontend_context = {
             "用户问题": message,
             "选中对象": selected,
+            "当前演进与预测有效性": resolve_forecast_context(),
         }
         return (
             f"用户问题：{message}\n\n"

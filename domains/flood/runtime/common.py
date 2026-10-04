@@ -149,6 +149,8 @@ def apply_filters(rows: list[dict], filters: dict[str, Any] | None) -> list[dict
     result = list(rows)
     for key, value in (filters or {}).items():
         field, op = key.split("__", 1) if "__" in key else (key, "eq")
+        if op not in {"eq", "like", "in", "ne", "gt", "gte", "lt", "lte"}:
+            raise ValueError(f"unsupported filter operator: {op}")
         if op == "like":
             result = [row for row in result if str(value) in str(row.get(field, ""))]
         elif op == "in":
@@ -189,7 +191,9 @@ def apply_window(rows: list[dict], limit: int | None,
                  offset: int | None) -> list[dict]:
     if offset:
         rows = rows[offset:]
-    if limit:
+    if limit is not None:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+            raise ValueError("limit must be a nonnegative integer")
         rows = rows[:limit]
     return rows
 

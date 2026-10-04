@@ -16,13 +16,14 @@ from .forecast_geometry import (
     row_point,
 )
 from .hydrodynamic_grid import forecast_time_context
+from .impact_scope import ImpactScope
 from .road_routes import ROAD_ROUTE_SCOPE
 from .linear_inundation import METRIC_CRS, WetCellIndex
 
 
-POINT_TARGET_TYPES = ("Facility", "EvacuationUnit", "EvacuationSite")
+POINT_TARGET_TYPES = ("Facility", "EvacuationUnit", "EvacuationSite", "Station")
 LINE_TARGET_TYPES = ("Road", "EvacuationRoute")
-TARGET_TYPES = ("Facility", "Bridge", "EvacuationUnit", "EvacuationSite", *LINE_TARGET_TYPES)
+TARGET_TYPES = (*POINT_TARGET_TYPES, "Bridge", *LINE_TARGET_TYPES)
 BRIDGE_INFLUENCE_RADIUS_M = 80.0
 
 
@@ -34,6 +35,8 @@ def analyze_inundation_impacts(
     max_distance_m: float = 10.0,
     time_h: float | None = None,
     bridge_influence_radius_m: float = BRIDGE_INFLUENCE_RADIUS_M,
+    object_ids: list[str] | None = None,
+    filters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     forecast_key = LATEST_FORECAST_ID if forecast_id in ("", "latest") else forecast_id
     analysis_time_h = coerce_time_h(time_h)
@@ -51,6 +54,11 @@ def analyze_inundation_impacts(
             **analysis_time_fields(forecast_key, analysis_time_h),
         }
 
+    try:
+        scope = ImpactScope(resolver, target_types, object_ids, filters)
+    except (ValueError, TypeError) as exc:
+        return {"status": "invalid_scope", "error": str(exc)}
+    resolver = scope
     cell_filters: dict[str, Any] = {"forecast_id": forecast_key}
     if analysis_time_h is not None:
         cell_filters["time_h"] = analysis_time_h
@@ -59,6 +67,7 @@ def analyze_inundation_impacts(
         time_fields = analysis_time_fields(forecast_key, analysis_time_h)
         return {
             "status": "no_forecast_cells",
+            "analysis_scope": scope.description,
             "forecast_id": forecast_key,
             "time_h": analysis_time_h,
             "target_type": target_type,
@@ -132,7 +141,7 @@ def analyze_inundation_impacts(
         ),
     )
     route_fields = {}
-    if "Road" in target_types or "RoadRoute" in target_types:
+    if "RoadRoute" in target_types or ("Road" in target_types and not scope.explicit):
         road_impacts = [row for row in impacts if row["object_type"] == "Road"]
         nearby_roads = [row for row in nearby_impacts if row["object_type"] == "Road"]
         route_impacts, nearby_routes, coverage = aggregate_road_route_impacts(resolver, road_impacts, nearby_roads)
@@ -150,6 +159,7 @@ def analyze_inundation_impacts(
     return {
         "status": "partial" if unassessed_objects or (linear_index and linear_index.skipped_cell_ids) else "completed",
         "forecast_id": resolved_forecast_id,
+        "analysis_scope": scope.description,
         "time_h": actual_time_h,
         **time_fields,
         "target_type": target_type or "all",

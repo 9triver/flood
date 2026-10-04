@@ -28,6 +28,16 @@ class FakeResolver:
             "Reservoir": 1,
         }.get(object_type, 0)
 
+    def query(self, object_type, filters=None):
+        from domains.flood.runtime.common import apply_filters, id_field
+        ids = ["longtan"] if object_type == "Reservoir" else ["road_1", "road_2", "road_3"]
+        return apply_filters([{id_field(object_type): value} for value in ids], filters)
+
+    def query_by_id(self, object_type, object_id):
+        from domains.flood.runtime.common import id_field
+        rows = self.query(object_type, {id_field(object_type): object_id})
+        return rows[0] if rows else None
+
 
 class MapActionBuilderTest(unittest.TestCase):
     def setUp(self):
@@ -72,19 +82,20 @@ class MapActionBuilderTest(unittest.TestCase):
                 "object_type": "Road",
                 "object_ids": ["road_1", "road_2"],
                 "highlight": True,
-                "show_only_object_ids": True,
             }],
         }, {"Road"}))
 
         self.assertEqual(
-            ["load_object", "clear_highlights", "highlight_objects"],
+            ["load_object"],
             [action["type"] for action in result["map_actions"]],
         )
-        self.assertTrue(result["map_actions"][0]["replace_object_type"])
+        self.assertEqual("add", result["map_actions"][0]["mode"])
+        self.assertTrue(result["map_actions"][0]["highlight"])
         self.assertEqual("2", result["result_cards"][0]["value"])
 
     @patch("server.presentation.hydrodynamic.hydrodynamic_grid_stats")
-    def test_hydrodynamic_result_is_delegated_to_adapter(self, stats):
+    @patch("server.presentation.hydrodynamic.resolve_forecast_context", return_value={"available": True, "time_h": 0})
+    def test_hydrodynamic_result_is_delegated_to_adapter(self, context, stats):
         stats.return_value = {
             "forecast": {"flooded_count": 12},
             "feature_count": 20,
@@ -104,7 +115,7 @@ class MapActionBuilderTest(unittest.TestCase):
         )
         self.assertEqual("12", result["result_cards"][0]["value"])
 
-    def test_forecast_filter_does_not_relabel_non_hydrodynamic_object(self):
+    def test_forecast_filter_is_rejected_for_non_hydrodynamic_object(self):
         result = json.loads(self.builder.show_objects({
             "objects": [{
                 "object_type": "Reservoir",
@@ -112,7 +123,7 @@ class MapActionBuilderTest(unittest.TestCase):
             }],
         }, {"Reservoir"}))
 
-        self.assertEqual("水库", result["result_cards"][0]["title"])
+        self.assertIn("unsupported filter", result["error"])
 
     def test_focus_uses_single_object_id_and_enforces_scope(self):
         focused = json.loads(self.builder.focus_object(

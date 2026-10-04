@@ -53,6 +53,8 @@ uv run python server/app.py --host 127.0.0.1 --port 8765
 
 访问 <http://127.0.0.1:8765>。
 
+服务启动会准备一轮新的空演示；刷新浏览器沿用当前轮次。重启服务或重置演进后，历史输入和预测仍保留在原工作空间，但不会作为当前态势自动启用。开始演进后，预测须匹配当前输入版本和演进时刻才可用于地图、影响分析和避洪规划。
+
 ## 道路与路段
 
 - `Road` 保留 423 个独立路段及原始 `road_id`。地图“全部路段”显示全部数据，高速（含匝道）为橙色，非高速为黄色。
@@ -69,7 +71,7 @@ uv run python server/app.py --host 127.0.0.1 --port 8765
 
 `max_distance_m` 对道路线对象表示邻近核查距离，默认 10 米，从湿网格边界计算；不扩大受淹判定。仅邻近的对象进入独立的 `nearby_impacts` / `nearby_object_ids`，不计入 `total_impacts`，UI 以“邻近积水，需核查”另列。道路汇总分别返回 `affected_segment_count` 和 `nearby_segment_count`。缺少或无效的几何记录在 `linear_analysis` 中列出，并返回 `status=partial`，不能当成无影响。
 
-`all` 或 `Road` 的结果额外提供 `road_route_impacts`、`road_route_nearby_impacts` 与覆盖统计，但不会把道路汇总重复计入 `total_impacts`。界面展示“已收录 N 段中 M 段受影响”，单独说明未归属路段；这些结果不代表整条道路不可通行，也不保证已收录几何覆盖整条道路。
+未限定对象子集的 `all` 或 `Road` 结果额外提供 `road_route_impacts`、`road_route_nearby_impacts` 与覆盖统计，但不会把道路汇总重复计入 `total_impacts`。界面展示“已收录 N 段中 M 段受影响”，单独说明未归属路段；这些结果不代表整条道路不可通行，也不保证已收录几何覆盖整条道路。
 
 UI 的“影响分析”分为“预测影响”和“邻近积水”页签，支持按对象类型筛选。道路按“编号道路 → 路段”展开，未归属路段单列，共线路段在各所属道路下展示但在对象总数中只计一次；即使工具返回 `RoadRoute` 汇总，UI 对象计数仍使用唯一路段。列表突出相交长度、网格最大预测水深或邻近距离，并标注高程待核查。点击道路汇总只高亮当前页签对应的受影响或邻近路段；仅一段时定位其影响位置，多段时缩放到这些路段的范围，详情仍保留整条道路的汇总。点击单个路段定位相交或邻近位置。预测时间刷新时保留页签、类型筛选、展开状态和滚动位置，并更新选中道路的路段高亮。
 
@@ -90,6 +92,15 @@ uv run python -m unittest discover -s tests -q
 uv run pytest agent/tests -q
 node --check server/static/app.js
 ```
+
+地图工具的浏览器回归需要已启动的本地服务，以及安装在 `local/validation` 的 Playwright 和 Chromium：
+
+```bash
+NODE_PATH=local/validation/node_modules node tests/browser/map-tools.cjs
+```
+
+该测试使用真实对象数据、模拟预测元数据，不调用 LLM、不启动演进或修改工作空间。
+
 
 ## 智能体运行日志评测材料
 

@@ -86,7 +86,7 @@ class FloodRepository:
             }
         ]
         for object_type in searchable_types:
-            for row in self._rows(object_type):
+            for row in self.query(object_type):
                 matched = [
                     key for key, value in row.items()
                     if isinstance(value, str) and keyword in value

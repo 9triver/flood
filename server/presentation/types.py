@@ -12,7 +12,9 @@ class MapAction(TypedDict, total=False):
     label: str
     fit: bool
     refresh: bool
-    replace_object_type: bool
+    mode: str
+    highlight: bool
+    selection_id: str
     simplify_tolerance: float
     mesh_only: bool
     event: dict[str, Any]
@@ -27,6 +29,9 @@ class ResultCard(TypedDict):
 
 class FrontendMapPayload(TypedDict):
     kind: str
+    status: str
+    operation_id: str
+    selections: list[dict[str, Any]]
     context: str
     map_actions: list[MapAction]
     result_cards: list[ResultCard]

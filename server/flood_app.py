@@ -68,8 +68,8 @@ class FloodApp:
     def bootstrap(self) -> dict[str, Any]:
         return self._domain_service.bootstrap(llm_enabled=self.llm_enabled)
 
-    def autonomy_cycle(self, force_forecast: bool = False) -> dict:
-        return self._domain_service.autonomy_cycle(force_forecast)
+    def assess_flood_emergency(self, refresh: bool = False) -> dict:
+        return self._domain_service.assess_flood_emergency(refresh)
 
     def forecast(self, force: bool = False) -> dict:
         return self._domain_service.forecast(force)
@@ -108,6 +108,8 @@ class FloodApp:
         max_distance_m: float = 10.0,
         time_h: float | None = None,
         bridge_influence_radius_m: float = BRIDGE_INFLUENCE_RADIUS_M,
+        object_ids: list[str] | None = None,
+        filters: dict | None = None,
     ) -> dict[str, Any]:
         return self._domain_service.analyze_inundation_impacts(
             forecast_id,
@@ -116,6 +118,8 @@ class FloodApp:
             max_distance_m,
             time_h,
             bridge_influence_radius_m,
+            object_ids,
+            filters,
         )
 
     def get_object(self, object_type: str, object_id: str) -> dict[str, Any]:

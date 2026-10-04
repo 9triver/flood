@@ -32,6 +32,10 @@ const state = {
   focusedOriginalStyle: null,
   highlightedLayers: [],
   selected: null,
+  mapSelections: new Map(),
+  mapActionReceipts: new Map(),
+  mapActionQueue: Promise.resolve(),
+  mapGeneration: 0,
   bootstrap: null,
   baseBounds: null,
   launchCoverVisible: true,
@@ -1508,20 +1512,18 @@ async function loadObject(objectType, filters = {}, options = {}) {
     }
     return showHydrodynamicMesh(options);
   }
-  const resolvedFilters = filtersWithObjectIds(objectType, filters, options.objectIds || options.object_ids || []);
-  if (options.replaceObjectType || options.replace_object_type) {
-    removeObjectTypeLayers(objectType);
-  }
+  const generation = state.mapGeneration;
+  const requestedIds = options.objectIds ?? options.object_ids;
+  if (Array.isArray(requestedIds) && !requestedIds.length) return null;
+  const resolvedFilters = filtersWithObjectIds(objectType, filters, requestedIds);
   const key = layerKey(objectType, resolvedFilters);
-  if (options.refresh && state.layerGroups.has(key)) {
-    removeLayer(key);
-  }
-  if (state.layerGroups.has(key)) {
+  if (!options.refresh && options.mode !== "replace" && state.layerGroups.has(key)) {
     const existing = state.layerGroups.get(key);
     if (!state.map.hasLayer(existing)) existing.addTo(state.map);
     setObjectButtonActive(objectType, true);
     syncFilteredLayerButtons();
     if (options.fit) fitLayer(existing);
+    registerMapSelection(existing, objectType, options, key);
     updateMapContentContext();
     return existing;
   }
@@ -1533,6 +1535,12 @@ async function loadObject(objectType, filters = {}, options = {}) {
   const res = await fetch(`/api/geojson?${params.toString()}`);
   if (!res.ok) throw new Error(await res.text());
   const geojson = await res.json();
+  if (generation !== state.mapGeneration) throw new Error("地图已重置，取消旧的显示请求");
+  if (!geojson.features?.length) throw new Error("没有可显示的对象几何，原有图层已保留");
+  const returnedIds = new Set(geojson.features.map(feature => String(feature.properties?.[ID_FIELDS[objectType]])));
+  if (requestedIds?.some(id => !returnedIds.has(String(id)))) throw new Error("部分指定对象没有可显示的几何，原有图层已保留");
+  if (options.mode === "replace") removeObjectTypeLayers(objectType);
+  else if (state.layerGroups.has(key)) removeLayer(key);
   const mapSelectable = !MAP_NON_SELECTABLE_OBJECTS.has(objectType);
   const layer = objectType === "River"
     ? createRiverLayer(geojson, mapSelectable)
@@ -1571,8 +1579,140 @@ async function loadObject(objectType, filters = {}, options = {}) {
       fitLayer(layer);
     }
   }
+  registerMapSelection(layer, objectType, options, key);
   updateMapContentContext();
   return layer;
+}
+
+function eachObjectFeature(group, callback) {
+  if (group?.feature) { callback(group); return; }
+  group?.eachLayer?.(child => eachObjectFeature(child, callback));
+}
+
+function visibleObjectIds(objectType) {
+  const ids = new Set();
+  for (const [key, layer] of state.layerGroups) {
+    if (state.layerMeta.get(key)?.objectType !== objectType || !state.map.hasLayer(layer)) continue;
+    eachObjectFeature(layer, item => {
+      const id = item.feature?.properties?.[ID_FIELDS[objectType]];
+      if (id != null) ids.add(String(id));
+    });
+  }
+  return ids;
+}
+
+function registerMapSelection(layer, objectType, options, key) {
+  const ids = [];
+  eachObjectFeature(layer, item => {
+    const id = item.feature?.properties?.[ID_FIELDS[objectType]];
+    if (id != null) ids.push(String(id));
+    if (options.highlight && !state.highlightedLayers.some(entry => entry.layer === item)) applyHighlight(item, objectType);
+  });
+  const selectionId = options.selectionId || state.layerMeta.get(key)?.selectionId || `selection_${crypto.randomUUID()}`;
+  const label = options.label || OBJECT_CONFIG[objectType]?.label || objectType;
+  state.mapSelections.set(selectionId, { objectType, objectIds: [...new Set(ids)], label });
+  const meta = state.layerMeta.get(key);
+  if (meta) meta.selectionId = selectionId;
+}
+
+function visibleMapSelections() {
+  const byType = new Map();
+  const selections = [];
+  for (const [selectionId, selection] of state.mapSelections) {
+    if (!byType.has(selection.objectType)) byType.set(selection.objectType, visibleObjectIds(selection.objectType));
+    const visible = byType.get(selection.objectType);
+    const ids = selection.objectIds.filter(id => visible.has(id));
+    if (!ids.length) continue;
+    selections.push({ selection_id: selectionId, object_type: selection.objectType,
+      label: selection.label, count: ids.length,
+      ...(ids.length <= 10 ? {object_ids: ids} : {}) });
+  }
+  return selections.slice(-20);
+}
+
+function hideMapObjects(action) {
+  const selection = action.selection_id ? state.mapSelections.get(action.selection_id) : null;
+  if (action.selection_id && !selection) throw new Error("显示集合不存在，请根据当前地图重新选择");
+  const objectType = selection?.objectType || action.object_type;
+  const ids = new Set(selection?.objectIds ?? action.object_ids ?? visibleObjectIds(objectType));
+  if (!ids.size) return;
+  function prune(group) {
+    for (const child of group.getLayers?.() || []) {
+      const id = child.feature?.properties?.[ID_FIELDS[objectType]];
+      if (id != null && ids.has(String(id))) {
+        if (state.focusedLayer === child) clearFocus();
+        group.removeLayer(child);
+        for (const entry of state.roadNameLayers) { if (entry.layer === child) state.roadNameLayers.delete(entry); }
+      } else if (!child.feature) prune(child);
+    }
+  }
+  for (const [key, layer] of Array.from(state.layerGroups)) {
+    const meta = state.layerMeta.get(key);
+    if (meta?.objectType !== objectType) continue;
+    const matches = [];
+    eachObjectFeature(layer, child => { if (ids.has(String(child.feature?.properties?.[ID_FIELDS[objectType]]))) matches.push(child); });
+    if (!matches.length) continue;
+    prune(layer);
+    const remaining = [];
+    eachObjectFeature(layer, child => remaining.push(String(child.feature.properties[ID_FIELDS[objectType]])));
+    if (!remaining.length) { removeLayer(key); continue; }
+    // Rename the partial layer so a later full query reloads the hidden objects.
+    const filters = filtersWithObjectIds(objectType, {}, remaining);
+    const nextKey = `${layerKey(objectType, filters)}:visible:${crypto.randomUUID()}`;
+    state.layerGroups.delete(key); state.layerMeta.delete(key);
+    state.layerGroups.set(nextKey, layer); state.layerMeta.set(nextKey, {...meta, filters});
+  }
+  if (state.selected?.object_type === objectType && ids.has(String(state.selected.id))) state.selected = null;
+  state.highlightedLayers = state.highlightedLayers.filter(({layer}) => state.map.hasLayer(layer));
+  for (const key of state.featureIndex.keys()) {
+    if (key.startsWith(`${objectType}:`)) state.featureIndex.delete(key);
+  }
+  for (const [key, layer] of state.layerGroups) {
+    if (state.layerMeta.get(key)?.objectType === objectType) eachObjectFeature(layer, child => indexFeature(objectType, child.feature, child));
+  }
+  syncFilteredLayerButtons();
+  updateMapContentContext();
+}
+
+function enqueueMapActions(data) {
+  const generation = state.mapGeneration;
+  const execute = async () => {
+    const operationId = data.operation_id || data.output_id || (data.run_id && `${data.run_id}:${data.seq}`);
+    if (operationId && state.mapActionReceipts.has(operationId)) return;
+    if (generation !== state.mapGeneration) return;
+    const receipt = { operation_id: operationId, status: "completed", actions: [] };
+    try {
+      for (const action of data.map_actions || []) {
+        const targetType = action.object_type || state.mapSelections.get(action.selection_id)?.objectType;
+        const before = targetType ? visibleObjectIds(targetType) : new Set();
+        await executeActions([action]);
+        const after = targetType ? visibleObjectIds(targetType) : new Set();
+        receipt.actions.push({ type: action.type, object_type: targetType, selection_id: action.selection_id,
+          ...(targetType ? {visible_count: after.size, added_count: [...after].filter(id => !before.has(id)).length,
+          removed_count: [...before].filter(id => !after.has(id)).length} : {}) });
+      }
+      receipt.hydrodynamic_timeline = currentHydrodynamicTimelineContext();
+      renderMetrics(data.result_cards || []);
+      addTrace("MAP", "地图动作已执行", JSON.stringify(receipt, null, 2));
+    } catch (error) {
+      receipt.status = receipt.actions.length ? "partial" : "failed";
+      receipt.error = error.message || String(error);
+      const trace = addTrace("ERR", "地图动作执行失败", receipt.error);
+      if (!data.replayed) notifyAgentTrace({tag: "ERR", label: "地图动作执行失败", notification_key: operationId}, trace);
+    }
+    if (operationId) {
+      state.mapActionReceipts.set(operationId, receipt);
+      if (data.run_id) {
+        try {
+          const response = await fetch("/api/agent/map-receipt", { method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({run_id: data.run_id, receipt}) });
+          if (!response.ok) throw new Error(await response.text());
+        } catch (error) { addTrace("ERR", "地图执行回执未送达", error.message); }
+      }
+    }
+  };
+  state.mapActionQueue = state.mapActionQueue.then(execute, execute);
+  return state.mapActionQueue;
 }
 
 async function showHydrodynamicMesh(options = {}) {
@@ -1624,12 +1764,11 @@ async function applyHydrodynamicResult(options = {}) {
   const key = layerKey("HydrodynamicResult", filters);
   const loadToken = ++state.hydrodynamicResultLoadToken;
   const timelineSelection = captureHydrodynamicTimelineSelection(key);
-  if (options.refresh && state.layerGroups.has(key)) removeLayer(key);
-  removeOtherHydrodynamicResultLayers(key);
-  if (state.layerGroups.has(key)) {
+  if (!options.refresh && state.layerGroups.has(key)) {
     const existing = state.layerGroups.get(key);
     if (!state.map.hasLayer(existing)) existing.addTo(state.map);
     showHydrodynamicTimeline(state.hydrodynamicResultMeta, existing, key, filters, timelineSelection);
+    if (options.fit) fitHydrodynamicResult();
     setObjectButtonActive(options.buttonType || "ForecastResult", true);
     updateMapContentContext();
     return existing;
@@ -1645,7 +1784,7 @@ async function applyHydrodynamicResult(options = {}) {
   if (loadToken !== state.hydrodynamicResultLoadToken) {
     return state.layerGroups.get(key) || null;
   }
-  state.hydrodynamicResultMeta = resultMeta;
+  if (!resultMeta.forecast?.depth_path) throw new Error("没有可用的预测结果");
   const resultVersion = String(resultMeta?.forecast?.result_version || "");
   const forecast = resultMeta?.forecast || {};
   const initialSteps = hydrodynamicTimelineSteps(forecast);
@@ -1655,9 +1794,14 @@ async function applyHydrodynamicResult(options = {}) {
     resultVersion,
     key,
     timelineSelection,
+    filters,
   );
+  if (options.refresh && state.layerGroups.has(key)) removeLayer(key);
+  removeOtherHydrodynamicResultLayers(key);
+  state.hydrodynamicResultMeta = resultMeta;
   const initialFilters = hydrodynamicTileFilters(filters, resultVersion);
-  if (initialHours.length) {
+  if (filters.view === "envelope") delete initialFilters.time_h;
+  else if (initialHours.length) {
     initialFilters.time_h = formatHydrodynamicHour(initialHours[initialIndex]);
   }
   const layer = L.gridLayer.hydrodynamicGrid({
@@ -1681,6 +1825,7 @@ async function applyHydrodynamicResult(options = {}) {
     label: options.label || "水动力结果",
   });
   showHydrodynamicTimeline(state.hydrodynamicResultMeta, layer, key, filters, timelineSelection);
+  if (options.fit) fitHydrodynamicResult();
   setObjectButtonActive(options.buttonType || "ForecastResult", true);
   updateMapContentContext();
   return layer;
@@ -1709,6 +1854,7 @@ function showHydrodynamicTimeline(meta, layer, key, filters, previousSelection =
     resultVersion,
     key,
     previousSelection,
+    filters,
   );
   const rainfallSeries = hydrodynamicRainfallSeries(forecast, resultVersion);
   state.hydrodynamicTimeline = {
@@ -1735,7 +1881,8 @@ function showHydrodynamicTimeline(meta, layer, key, filters, previousSelection =
   slider.value = String(index);
   control.classList.remove("is-hidden");
   setTelemetryPanelOpen(true);
-  setHydrodynamicTimelineIndex(index);
+  if (filters?.view === "envelope") setHydrodynamicEnvelope();
+  else setHydrodynamicTimelineIndex(index);
   renderForecastWindowSummary(state.lastMockObservation);
 }
 
@@ -1769,6 +1916,21 @@ function hydrodynamicRainfallSeries(forecast, resultVersion) {
   ], ["rainfall_mm"]);
 }
 
+function setHydrodynamicEnvelope() {
+  const timeline = state.hydrodynamicTimeline;
+  if (!timeline.layer) return;
+  stopHydrodynamicTimelinePlayback({ refreshImpact: false });
+  timeline.mode = "envelope";
+  const filters = hydrodynamicTileFilters(timeline.baseFilters, timeline.resultVersion);
+  delete filters.time_h;
+  timeline.layer.setResultFilters(filters);
+  document.getElementById("hydroTimeSlider").disabled = true;
+  document.getElementById("hydroTimeLabel").textContent = "最大淹没包络";
+  setMapTimeContext({mode: "envelope"});
+  renderSituationSummary();
+  scheduleImpactAnalysisRefresh();
+}
+
 function captureHydrodynamicTimelineSelection(key) {
   const timeline = state.hydrodynamicTimeline;
   const hour = Number(timeline.hours?.[timeline.index]);
@@ -1787,7 +1949,14 @@ function nearestHydrodynamicHourIndex(hours, targetHour) {
   ), 0);
 }
 
-function resolveHydrodynamicTimelineIndex(hours, resultVersion, key, previousSelection) {
+function resolveHydrodynamicTimelineIndex(hours, resultVersion, key, previousSelection, filters = {}) {
+  if (filters.time_h != null) {
+    const requestedHour = Number(filters.time_h);
+    if (!Number.isFinite(requestedHour) || !hours.length || requestedHour < hours[0] || requestedHour > hours.at(-1)) {
+      throw new Error("指定预测时刻不在可用时间范围内");
+    }
+    return nearestHydrodynamicHourIndex(hours, requestedHour);
+  }
   const preserveHour = Boolean(
     previousSelection
     && previousSelection.key === key
@@ -2046,9 +2215,9 @@ function removeObjectTypeLayers(objectType) {
   });
 }
 
-function filtersWithObjectIds(objectType, filters = {}, objectIds = []) {
-  const ids = (objectIds || []).map(String).filter(Boolean);
-  if (!ids.length) return { ...(filters || {}) };
+function filtersWithObjectIds(objectType, filters = {}, objectIds = null) {
+  if (objectIds == null) return { ...(filters || {}) };
+  const ids = objectIds.map(String).filter(Boolean);
   const idField = ID_FIELDS[objectType];
   if (!idField) return { ...(filters || {}) };
   return {
@@ -2058,6 +2227,8 @@ function filtersWithObjectIds(objectType, filters = {}, objectIds = []) {
 }
 
 function resetMap() {
+  state.mapGeneration += 1;
+  state.mapSelections.clear();
   state.hydrodynamicResultLoadToken += 1;
   setWatershedInundationAlert(false);
   clearFocus();
@@ -2138,7 +2309,10 @@ function startAutonomyStream() {
   es.addEventListener("runtime_status", (event) => {
     const data = parseEvent(event);
     acceptWorkspace(data.workspace_id);
-    if (["等待水文事件", "等待边界流量事件", "等待启动边界流量回放"].includes(data.label)) return;
+    if (["等待水文事件", "等待边界流量事件", "等待启动边界流量回放"].includes(data.label)) {
+      updateTelemetryRuntimeStatus(data);
+      return;
+    }
     if (data.speed_multiplier) setPlaybackSpeedControl(data.speed_multiplier);
     updateTelemetryRuntimeStatus(data);
     addTrace("AUTO", data.label || "事件运行时", data.detail || "");
@@ -2153,6 +2327,7 @@ function startAutonomyStream() {
   es.addEventListener("boundary_flow_data", (event) => {
     const data = parseEvent(event);
     acceptWorkspace(data.workspace_id);
+    if (data.forecast_context && !data.forecast_context.available) clearHydrodynamicResults();
     renderMockObservation(data.event || {});
   });
 
@@ -2177,13 +2352,7 @@ function startAutonomyStream() {
   es.addEventListener("map_actions", async (event) => {
     const data = parseEvent(event);
     acceptWorkspace(data.workspace_id);
-    try {
-      await executeActions(data.map_actions || []);
-      renderMetrics(data.result_cards || []);
-      addTrace("MAP", "地图动作", (data.map_actions || []).map((item) => item.object_type || item.type).join(", "));
-    } catch (error) {
-      addTrace("ERR", "地图动作执行失败", error.message || String(error));
-    }
+    await enqueueMapActions(data);
   });
 
   es.onerror = () => {
@@ -2514,6 +2683,8 @@ function acceptWorkspace(workspaceId) {
 }
 
 function clearRuntimeWorkspaceView() {
+  if (state.activeRunId) fetch(`/api/agent/runs/${encodeURIComponent(state.activeRunId)}/cancel`, {method: "POST"}).catch(() => {});
+  finishStream(true);
   resetMap();
   clearMockTelemetry();
   state.lastTrace = null;
@@ -2527,6 +2698,7 @@ function clearRuntimeWorkspaceView() {
   dismissAgentNotification();
   state.autonomyTraceIds.clear();
   state.notificationChains.clear();
+  state.mapActionReceipts.clear();
 }
 
 function resetDirectiveWorkspaceView() {
@@ -2988,6 +3160,7 @@ function updatePlaybackStepButton() {
 }
 
 function updateTelemetryRuntimeStatus(data) {
+  if (data.forecast_context && !data.forecast_context.available && state.hydrodynamicTimeline.layer) clearHydrodynamicResults();
   if (typeof data.auto_pause_enabled === "boolean") {
     setPlaybackAutoPauseControl(data.auto_pause_enabled);
   }
@@ -3377,7 +3550,7 @@ function eventDetail(data) {
   }
   if (data.event_type === "ImpactAnalyzed") {
     const summary = payload.summary || {};
-    const labels = { Facility: "设施", Bridge: "桥梁", Road: "道路", EvacuationRoute: "路线", EvacuationUnit: "转移单元", EvacuationSite: "安置点" };
+    const labels = { Facility: "设施", Bridge: "桥梁", Road: "道路", EvacuationRoute: "路线", EvacuationUnit: "转移单元", EvacuationSite: "安置点", Station: "测站" };
     const parts = Object.keys(labels).map((key) => {
       const count = Number((summary[key] || {}).count || 0);
       return count ? `${labels[key]} ${count} 个` : "";
@@ -4865,30 +5038,15 @@ async function focusObject(action = {}) {
   const selected = state.selected || {};
   const objectType = action.object_type || selected.object_type;
   const objectId = action.object_id || action.id || selected.id;
-  if (MAP_NON_SELECTABLE_OBJECTS.has(objectType)) {
-    await loadObject(objectType, action.filters || {}, { fit: false, label: action.label });
-    return false;
+  if (!objectType || !objectId || MAP_NON_SELECTABLE_OBJECTS.has(objectType)) {
+    throw new Error("缺少可定位的具体对象");
   }
-  if (!objectType || !objectId) {
-    fitAll();
-    return false;
-  }
-
-  await loadObject(objectType, action.filters || {}, { fit: false, label: action.label });
   let entry = state.featureIndex.get(featureIndexKey(objectType, objectId));
-  if (!entry) {
-    for (const [key, value] of state.featureIndex.entries()) {
-      if (key.startsWith(`${objectType}:`) && String(value.feature?.properties?.name || "") === String(objectId)) {
-        entry = value;
-        break;
-      }
-    }
+  if (!entry || !state.map.hasLayer(entry.layer)) {
+    await loadObject(objectType, {}, { fit: false, objectIds: [String(objectId)], label: action.label });
+    entry = state.featureIndex.get(featureIndexKey(objectType, objectId));
   }
-  if (!entry) {
-    addTrace("MISS", "未找到对象", `${objectType} ${objectId}`);
-    return false;
-  }
-
+  if (!entry) throw new Error(`未找到对象：${objectType} ${objectId}`);
   selectFeature(objectType, entry.feature, entry.layer);
   fitFeatureLayer(entry.layer);
   return true;
@@ -5086,6 +5244,7 @@ function routeDetailHtml(props) {
     ["路线ID", props.evacuation_route_id],
     ["名称", props.name],
     ["方式", routeProfileLabel(props.profile)],
+    ["洪水校核", {initial_dry: "演示初始无洪水", not_checked: "未进行（历史记录）", checked: "已按预测校核"}[props.flood_validation]],
     ["距离", formatRouteDistance(props.length_m)],
     ["预计用时", formatRouteDuration(props.duration_s)],
     ["道路", props.road_detail],
@@ -5181,6 +5340,7 @@ async function onChatSubmit(event) {
   const message = input.value.trim();
   if (!message) return;
 
+  await refreshPlaybackStatus();
   settlePendingQuestion();
   input.value = "";
   addMessage("user", message);
@@ -5204,36 +5364,41 @@ function connectChatStream({ message = "", assistant, runId = "", since = 0 }) {
   state.activeStream = es;
   setSending(true);
 
-  es.addEventListener("run", (event) => {
+  const listen = (name, callback) => es.addEventListener(name, event => {
+    const data = JSON.parse(event.data);
+    if (data.workspace_id && data.workspace_id !== state.workspaceId) return;
+    callback(event);
+  });
+
+  listen("run", (event) => {
     const data = parseEvent(event);
     state.activeRunId = data.run_id;
   });
 
-  es.addEventListener("map_actions", async (event) => {
+  listen("map_actions", async (event) => {
     const data = parseEvent(event);
-    await executeActions(data.map_actions || []);
-    addTrace("MAP", "地图动作", (data.map_actions || []).map((item) => item.object_type || item.type).join(", "));
+    await enqueueMapActions(data);
   });
 
-  es.addEventListener("directive_draft", (event) => {
+  listen("directive_draft", (event) => {
     const data = parseEvent(event);
     openDirectiveDraft(data.draft || {});
     attachDirectiveDraftCard(assistant, data.draft || {});
     addTrace("COMMAND", "应急指令初稿已生成", data.draft?.title || "已打开指令编辑器");
   });
 
-  es.addEventListener("text", (event) => {
+  listen("text", (event) => {
     const data = parseEvent(event);
     appendMessageMarkdown(assistant, data.content || "");
     scrollChat();
   });
 
-  es.addEventListener("tool_call", (event) => {
+  listen("tool_call", (event) => {
     const data = parseEvent(event);
     addTrace("CALL", readableTool(data.name, data.args || {}), JSON.stringify(data.args || {}, null, 2));
   });
 
-  es.addEventListener("tool_result", (event) => {
+  listen("tool_result", (event) => {
     const data = parseEvent(event);
     addTrace(data.blocked ? "BLOCK" : "RESULT", data.name || "tool result", compactText(data.result || ""));
     if (!data.blocked && data.name === "analyze_inundation_impacts") {
@@ -5241,11 +5406,11 @@ function connectChatStream({ message = "", assistant, runId = "", since = 0 }) {
     }
   });
 
-  es.addEventListener("reasoning", () => {});
+  listen("reasoning", () => {});
 
-  es.addEventListener("debug", () => {});
+  listen("debug", () => {});
 
-  es.addEventListener("confirmation_required", (event) => {
+  listen("confirmation_required", (event) => {
     const data = parseEvent(event);
     const trace = addTrace("ASK", `需要确认: ${data.tool_name}`, JSON.stringify(data.args || {}, null, 2));
     notifyAgentTrace({tag: "ASK", label: "需要确认", notification_key: state.activeRunId}, trace);
@@ -5253,7 +5418,7 @@ function connectChatStream({ message = "", assistant, runId = "", since = 0 }) {
     finishStream(false);
   });
 
-  es.addEventListener("question", (event) => {
+  listen("question", (event) => {
     const data = parseEvent(event);
     const trace = addTrace("ASK", "等待用户输入", data.question || "");
     notifyAgentTrace({tag: "ASK", label: "等待用户输入", notification_key: state.activeRunId}, trace);
@@ -5261,7 +5426,7 @@ function connectChatStream({ message = "", assistant, runId = "", since = 0 }) {
     finishStream(false);
   });
 
-  es.addEventListener("done", () => {
+  listen("done", () => {
     if (!assistant.dataset.rawMarkdown?.trim()) setMessageMarkdown(assistant, "已完成。");
     finishStream(true);
   });
@@ -5291,6 +5456,12 @@ function stopActiveRun() {
 
 async function executeActions(actions) {
   for (const action of actions) {
+    if (action.type === "hide_hydrodynamic_mesh") {
+      removeObjectTypeLayers("HydrodynamicGridCell");
+    }
+    if (action.type === "hide_objects") {
+      hideMapObjects(action);
+    }
     if (action.type === "reset") {
       resetMap();
     }
@@ -5307,7 +5478,9 @@ async function executeActions(actions) {
         simplify_tolerance: action.simplify_tolerance,
         refresh: action.refresh,
         objectIds: action.object_ids,
-        replaceObjectType: action.replace_object_type || action.replaceObjectType,
+        mode: action.mode || "add",
+        selectionId: action.selection_id,
+        highlight: action.highlight,
       });
     }
     if (action.type === "show_hydrodynamic_mesh") {
@@ -5714,7 +5887,7 @@ function latLngToTilePixel(lat, lon, z, origin) {
 function showEventMarker(event, action = {}) {
   const lon = Number(event.longitude);
   const lat = Number(event.latitude);
-  if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+  if (!Number.isFinite(lon) || !Number.isFinite(lat) || Math.abs(lon) > 180 || Math.abs(lat) > 90) throw new Error("事件坐标无效");
   const eventId = event.event_id || `${event.event_type}:${lon}:${lat}`;
   if (state.eventMarkers.has(eventId)) {
     const existing = state.eventMarkers.get(eventId);
@@ -6087,8 +6260,12 @@ function frontendAgentContext() {
   const selected = state.selected || {};
   return {
     ...selected,
+    workspace_id: state.workspaceId,
     map_time_context: { ...state.mapTimeContext },
     hydrodynamic_timeline: currentHydrodynamicTimelineContext(),
+    visible_selections: visibleMapSelections(),
+    visible_layers: Array.from(state.layerMeta.values(), meta => ({object_type: meta.objectType, label: meta.label, selection_id: meta.selectionId})),
+    map_action_receipts: Array.from(state.mapActionReceipts.values()).slice(-8),
   };
 }
 
@@ -6148,6 +6325,8 @@ function registerImpactAnalysisResult(result, options = {}) {
   state.impactAnalysis = {
     forecastId: result.forecast_id || "latest",
     targetType: result.target_type || "all",
+    objectIds: result.analysis_scope?.requested_object_ids ?? null,
+    filters: result.analysis_scope?.filters || {},
     minDepthM: Number(params.min_depth_m ?? 0.15),
     maxDistanceM: Number(params.max_distance_m ?? 10),
     bridgeInfluenceRadiusM: Number(params.bridge_influence_radius_m ?? 80),
@@ -6191,13 +6370,15 @@ async function refreshImpactAnalysisForTimeline() {
     || "latest";
   const params = new URLSearchParams({
     forecast_id: forecastId,
-    target_type: "all",
-    min_depth_m: "0.15",
-    max_distance_m: "10",
+    target_type: state.impactAnalysis?.targetType || "all",
+    min_depth_m: String(state.impactAnalysis?.minDepthM ?? 0.15),
+    max_distance_m: String(state.impactAnalysis?.maxDistanceM ?? 10),
     bridge_influence_radius_m: String(
       state.impactAnalysis?.bridgeInfluenceRadiusM ?? 80,
     ),
   });
+  if (state.impactAnalysis?.objectIds != null) params.set("object_ids", JSON.stringify(state.impactAnalysis.objectIds));
+  if (state.impactAnalysis?.filters) params.set("filters", JSON.stringify(state.impactAnalysis.filters));
   if (timeline.mode === "time_slice") {
     params.set("time_h", String(timeline.current_hydrodynamic_time_h));
   }
@@ -6217,6 +6398,7 @@ async function refreshImpactAnalysisForTimeline() {
     });
     if (!res.ok) throw new Error(await res.text());
     const result = await res.json();
+    if (result.error) throw new Error(result.error);
     if (seq !== state.impactRefreshSeq) return;
     registerImpactAnalysisResult(result, { render: false });
     renderImpactAnalysisResult(result);
@@ -6505,7 +6687,7 @@ function renderImpactList(result) {
       groups.get(item.object_type).push(item);
     });
     // Keep categories stable as depths change. Within a category show risk, then depth.
-    const order = ["Road", "Bridge", "EvacuationRoute", "EvacuationUnit", "EvacuationSite", "Facility"];
+    const order = ["Road", "Bridge", "EvacuationRoute", "EvacuationUnit", "EvacuationSite", "Facility", "Station"];
     [...groups].sort(([a], [b]) => (order.indexOf(a) < 0 ? 99 : order.indexOf(a)) - (order.indexOf(b) < 0 ? 99 : order.indexOf(b)))
       .forEach(([type, items]) => {
         const section = document.createElement("details");
@@ -6949,11 +7131,16 @@ function readableTool(name, args) {
     count: "统计数量",
     inspect: "查看定义",
     run_flood_forecast: "运行洪水预测",
-    run_emergency_cycle: "运行应急研判闭环",
+    assess_flood_emergency: "单次应急研判",
     analyze_inundation_impacts: "分析淹没影响",
     ui_show_objects: "地图显示",
     ui_show_event_marker: "地图标记事件",
-    ui_clear_map: "清空地图",
+    ui_hide_objects: "隐藏指定对象",
+    ui_hide_forecast: "隐藏淹没结果",
+    ui_reset_map: "重置整个地图",
+    find_nearby_objects: "查询附近对象",
+    get_flood_status: "查询淹没状态",
+    plan_route: "规划路线",
     ui_focus_object: "地图定位",
     ui_open_emergency_directive_editor: "生成应急指令初稿",
     ui_set_inundation_alert: "设置流域淹没警戒",
@@ -7237,8 +7424,9 @@ function renderImpactReadiness() {
   const busy = Boolean(state.impactRefreshController);
   button.disabled = !ready || busy;
   button.textContent = busy ? "分析中…" : state.impactAnalysis?.lastResult ? "重新分析当前范围" : "分析当前范围";
+  const scope = state.impactAnalysis?.lastResult?.analysis_scope;
   document.getElementById("impactReadiness").textContent = ready
-    ? `淹没预测 ${state.hydrodynamicTimeline.forecastVersion || ""} 已就绪`
+    ? `淹没预测 ${state.hydrodynamicTimeline.forecastVersion || ""} 已就绪${scope?.mode === "selected" ? ` · 指定 ${scope.matched_count} 个对象` : ""}`
     : "尚无淹没预测";
   if (!state.impactRequested && !state.impactAnalysis) {
     document.getElementById("impactCount").textContent = "--";

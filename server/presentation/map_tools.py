@@ -66,17 +66,17 @@ def register_map_tools(tools: ToolRegistry, resolver,
                         "type": "object",
                         "properties": {
                             "object_type": {"type": "string", "enum": object_types},
-                            "filters": {"type": "object", "description": "对象过滤条件，例如学校为 {\"facility_type\":\"school\"}"},
+                            "filters": {"type": "object", "description": "对象过滤条件，例如学校为 {\"facility_type\":\"school\"}；水动力只支持 forecast_id、time_h、view=current/time_slice/envelope"},
                             "label": {"type": "string", "description": "地图图层显示名称，可选"},
                             "fit": {"type": "boolean", "description": "是否缩放到该对象范围"},
                             "refresh": {"type": "boolean", "description": "是否刷新已有图层"},
                             "object_ids": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "description": "需要显示或高亮的对象 ID 列表，可选；show_only_object_ids=true 时只显示这些对象",
+                                "description": "只显示这些对象 ID；省略表示按 filters 查询；空数组表示不显示任何匹配对象",
                             },
                             "highlight": {"type": "boolean", "description": "是否高亮 object_ids 指定对象"},
-                            "show_only_object_ids": {"type": "boolean", "description": "是否只加载 object_ids 指定对象，适合影响分析结果"},
+                            "mode": {"type": "string", "enum": ["add", "replace"], "description": "默认 add 追加显示；仅用户明确要求替换同类型全部图层时使用 replace"},
                             "simplify_tolerance": {"type": "number", "description": "大型面对象简化容差"},
                         },
                         "required": ["object_type"],
@@ -94,24 +94,23 @@ def register_map_tools(tools: ToolRegistry, resolver,
     ))
 
     tools.register(ToolDef(
-        name="ui_clear_map",
-        parameters={
-            "type": "object",
-            "properties": {
-                "target": {
-                    "type": "string",
-                    "enum": ["map", "inundation"],
-                    "description": "map 表示重置地图；inundation 表示只清除淹没范围/水动力结果，不改变地图视野",
-                },
-                "context": {"type": "string", "description": "地图上下文短标题"},
-                "note": {"type": "string", "description": "给用户的简短说明"},
-            },
-            "required": [],
-        },
-        handler=action_builder.clear_map,
-        max_result_chars=2000,
-        **presentation_tool_kwargs(ontology, "ui_clear_map"),
+        name="ui_hide_objects",
+        parameters={"type": "object", "properties": {
+            "selection_id": {"type": "string", "description": "前端当前可见集合或先前显示工具返回的 selection_id，优先用于‘这些’"},
+            "object_type": {"type": "string", "enum": object_types},
+            "object_ids": {"type": "array", "items": {"type": "string"}, "description": "只隐藏指定 ID，空列表不隐藏任何对象"},
+            "filters": {"type": "object", "description": "隐藏匹配条件的对象；不传 ID 和 filters 则隐藏整个指定类型"},
+        }},
+        handler=lambda args: action_builder.hide_objects(args, object_types),
+        max_result_chars=8000,
+        **presentation_tool_kwargs(ontology, "ui_hide_objects"),
     ))
+    for name, handler in (("ui_reset_map", action_builder.reset_map), ("ui_hide_forecast", action_builder.hide_forecast)):
+        tools.register(ToolDef(
+            name=name, parameters={"type": "object", "properties": {}, "additionalProperties": False},
+            handler=handler, max_result_chars=2000,
+            **presentation_tool_kwargs(ontology, name),
+        ))
 
     tools.register(ToolDef(
         name="ui_set_inundation_alert",
@@ -131,7 +130,8 @@ def register_map_tools(tools: ToolRegistry, resolver,
     ))
 
     focus_def = presentation_tool(ontology, "ui_focus_object")
-    focus_object_types = _presentation_object_types(ontology, focus_def)
+    focus_object_types = [name for name in _presentation_object_types(ontology, focus_def)
+                          if name not in {"HydrodynamicGridCell", "InundationForecastCell", "Watershed", "County", "Town"}]
     tools.register(ToolDef(
         name="ui_focus_object",
         parameters={
@@ -140,13 +140,13 @@ def register_map_tools(tools: ToolRegistry, resolver,
                 "object_type": {
                     "type": "string",
                     "enum": focus_object_types,
-                    "description": "选中对象类型，可选",
+                    "description": "要定位的对象类型",
                 },
-                "object_id": {"type": "string", "description": "选中对象 ID，可选"},
+                "object_id": {"type": "string", "description": "要定位的对象 ID"},
                 "context": {"type": "string", "description": "地图上下文短标题"},
                 "note": {"type": "string", "description": "给用户的简短说明"},
             },
-            "required": [],
+            "required": ["object_type", "object_id"],
         },
         handler=lambda args: action_builder.focus_object(args, focus_object_types),
         max_result_chars=2000,

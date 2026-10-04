@@ -108,15 +108,15 @@ def run_flood_forecast(resolver, forecast_id: str = "latest",
     return {"forecast": run}
 
 
-def run_emergency_cycle(resolver, force_forecast: bool = False,
-                        force_analysis: bool = False) -> dict[str, Any]:
-    forecast_result = run_flood_forecast(resolver, forecast_id="latest", force=force_forecast)
-    if "error" in forecast_result:
-        return forecast_result
-    forecast = forecast_result["forecast"]
-    if not force_analysis:
+def assess_flood_emergency(resolver, refresh: bool = False) -> dict[str, Any]:
+    """One assessment of an existing forecast; does not start playback or run CNN."""
+    rows = read_forecast_runs()
+    if not rows or rows[-1].get("status") != "completed":
+        return {"status": "forecast_unavailable", "error": "当前轮次没有已完成预测，无法进行单次应急研判。"}
+    forecast = rows[-1]
+    if not refresh:
         cached = read_cached_emergency_cycle(forecast)
-        if cached:
+        if cached and cached.get("assessment_mode") == "single":
             return cached
 
     cells = query_forecast_cells({"forecast_id": LATEST_FORECAST_ID})
@@ -133,7 +133,11 @@ def run_emergency_cycle(resolver, force_forecast: bool = False,
         "schema_version": FORECAST_SCHEMA_VERSION,
         "cycle_id": f"cycle_{LATEST_FORECAST_ID}",
         "status": "completed",
-        "stage": "observe_forecast_warn_dispatch",
+        "assessment_mode": "single",
+        "analysis_view": "envelope",
+        "continuous": False,
+        "executed_actions": [],
+        "stage": "assess_existing_forecast",
         "observations": hydrology_inputs_from_forecast(forecast),
         "forecast": forecast,
         "warning": warning,
@@ -180,6 +184,7 @@ def ensure_latest_forecast_locked(resolver, force: bool = False) -> dict[str, An
         latest_boundary_flow = read_latest_forecast_input()
         if (
             rows
+            and rows[-1].get("workspace_id") == active_workspace_id()
             and rows[-1].get("schema_version") == FORECAST_SCHEMA_VERSION
             and cached_forecast_matches_input(rows[-1], latest_boundary_flow)
             and cached_forecast_outputs_available(rows[-1])

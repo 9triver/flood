@@ -213,12 +213,12 @@ class ChatServiceBoundaryTest(unittest.TestCase):
         )
 
         forecast = service.forecast(force=True)
-        cycle = service.autonomy_cycle(force_forecast=True)
+        cycle = service.assess_flood_emergency(refresh=True)
         known = service.get_object("Road", "known")
         missing = service.get_object("Road", "missing")
 
         self.assertEqual("run_flood_forecast", forecast["function"])
-        self.assertEqual("run_emergency_cycle", cycle["function"])
+        self.assertEqual("assess_flood_emergency", cycle["function"])
         self.assertEqual("known", known["object"]["road_id"])
         self.assertIsNone(missing["object"])
 

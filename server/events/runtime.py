@@ -9,6 +9,7 @@ from domains.flood.runtime.boundary_flow import (
     BoundaryFlowPlayback,
     BoundaryFlowPlaybackSource,
 )
+from domains.flood.runtime.forecast_context import resolve_forecast_context
 from domains.flood.runtime.playback_sources import PlaybackSourceRegistry
 from domains.flood.runtime.workspace import WORKSPACES, active_workspace_id
 from server.events.agent_processor import EventAgentProcessor
@@ -183,7 +184,7 @@ class EventRuntime:
             self._published_inundation_sources.clear()
             self._published_impact_sources.clear()
             self._clear_event_queue()
-            WORKSPACES.update_manifest(status="ready")
+            WORKSPACES.update_manifest(status="ready", simulation_time=None)
             self._append_output_locked("runtime_status", {
                 "type": "runtime_status",
                 "status": "reset",
@@ -388,6 +389,7 @@ class EventRuntime:
                 "output_count": len(self.outputs),
                 "workspace_id": active_workspace_id(),
                 "playback_source": dict(self._current_playback_source),
+                "forecast_context": resolve_forecast_context(view="envelope"),
                 **playback_status,
                 "step_available": (
                     self._playback_paused
@@ -466,6 +468,7 @@ class EventRuntime:
                             and not self._playback_processing
                         ):
                             heartbeat = {
+                                **self.status(),
                                 "type": "runtime_status",
                                 "label": "等待启动边界流量回放",
                                 "detail": (
@@ -526,9 +529,13 @@ class EventRuntime:
         data = {**data, "workspace_id": active_workspace_id()}
         observation = (data.get("payload") or {}).get("observation") or {}
         with self.condition:
+            if active_workspace_id() != WORKSPACES.current_id:
+                return
+            WORKSPACES.update_manifest(status="active", simulation_time=observation.get("simulation_time") or observation.get("observed_at"))
             self._append_output_locked("boundary_flow_data", {
                 "type": "boundary_flow_data",
                 "label": "四边界预测流量",
+                "forecast_context": resolve_forecast_context(view="envelope"),
                 "event": data,
                 "detail": boundary_flow_forecast_detail(observation),
                 "workspace_id": active_workspace_id(),

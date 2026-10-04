@@ -21,6 +21,7 @@ from .forecast_constants import LATEST_FORECAST_ID
 from .forecast_query import query_forecast_cells
 from .forecast_geometry import row_point
 from .hydrodynamic_grid import forecast_time_context
+from .forecast_context import resolve_routing_context, unavailable_forecast
 from .route_safety import (
     build_flood_avoidance_areas,
     empty_flood_areas,
@@ -37,7 +38,7 @@ DEFAULT_BLOCKED_DEPTH_M = 0.30
 DEFAULT_FOOT_BLOCKED_DEPTH_M = 0.15
 DEFAULT_MAX_ENDPOINT_DISTANCE_M = 800.0
 DEFAULT_MAX_DETOUR_RATIO = 10.0
-def plan_evacuation_route(
+def plan_route(
     resolver,
     start_object_type: str = "EvacuationUnit",
     start_object_id: str = "",
@@ -50,9 +51,9 @@ def plan_evacuation_route(
     time_h: float | str | None = None,
     blocked_depth_m: float | str | None = None,
     profile: str = "car",
-    avoid_flood: bool = True,
     max_endpoint_distance_m: float = DEFAULT_MAX_ENDPOINT_DISTANCE_M,
     max_detour_ratio: float = DEFAULT_MAX_DETOUR_RATIO,
+    view: str = "current",
 ) -> dict[str, Any]:
     _, start, start_name = resolve_start(
         resolver, start_object_type, start_object_id, start_lon, start_lat,
@@ -89,11 +90,15 @@ def plan_evacuation_route(
     threshold = max(0.0, float(
         default_threshold if blocked_depth_m in (None, "") else blocked_depth_m
     ))
-    analysis_time_h = coerce_optional_float(time_h)
-    forecast_key = LATEST_FORECAST_ID if forecast_id in ("", "latest") else forecast_id
-    time_fields = forecast_analysis_fields(forecast_key, analysis_time_h)
+    context = resolve_routing_context(forecast_id, time_h, view)
+    if not context["available"]:
+        return unavailable_forecast(context)
+    forecast_verified = context["constraint_source"] == "forecast"
+    analysis_time_h = context["time_h"]
+    forecast_key = (LATEST_FORECAST_ID if forecast_id in ("", "latest") else forecast_id) if forecast_verified else ""
+    time_fields = forecast_analysis_fields(forecast_key, analysis_time_h) if forecast_verified else {}
     flood_areas = empty_flood_areas(threshold)
-    if avoid_flood:
+    if forecast_verified:
         filters: dict[str, Any] = {"forecast_id": forecast_key}
         if analysis_time_h is not None:
             filters["time_h"] = analysis_time_h
@@ -104,6 +109,9 @@ def plan_evacuation_route(
             "destination_in_blocked_area": point_in_areas(destination, flood_areas["feature_collection"]),
         })
 
+    flood_areas["summary"].update({"requested": True, "forecast_verified": forecast_verified,
+                                   "validation": "checked" if forecast_verified else "initial_dry",
+                                   "constraint_source": context["constraint_source"], "basis": context.get("basis", "")})
     amap_key = routing_setting("AMAP_WEB_SERVICE_KEY", "")
     if not amap_key:
         return {
@@ -119,13 +127,19 @@ def plan_evacuation_route(
     try:
         request_payload = amap_request(start, destination, routing_profile)
         response = call_amap(amap_key, request_payload, timeout_seconds)
+        current_context = resolve_routing_context(forecast_id, time_h, view)
+        if not current_context["available"]:
+            return unavailable_forecast(current_context)
+        signature_fields = ("workspace_id", "constraint_source", "forecast_input_id", "forecast_version", "time_h")
+        if any(current_context.get(key) != context.get(key) for key in signature_fields):
+            return {"status": "flood_state_changed", "error": "规划期间洪水状态已更新，请按当前状态重新规划。", "retryable": True}
         candidates = amap_route_paths(response, start, destination, routing_profile)
         path, route_evidence, routing_diagnostics = select_amap_route(
             candidates,
             start,
             destination,
             flood_areas["feature_collection"],
-            flood_areas["summary"].get("enabled", False),
+            True,
             max_endpoint_distance_m=max(
                 0.0, float(max_endpoint_distance_m or DEFAULT_MAX_ENDPOINT_DISTANCE_M),
             ),
@@ -141,7 +155,7 @@ def plan_evacuation_route(
             "flood_avoidance": flood_areas["summary"],
             **time_fields,
         }
-        if exc.status == "no_safe_route":
+        if exc.status in {"no_safe_route", "no_route", "invalid_route"}:
             result["retryable"] = False
         if exc.details:
             result["routing_diagnostics"] = exc.details
@@ -179,6 +193,7 @@ def plan_evacuation_route(
             },
             "fit": True,
         },
+        "flood_context": context,
         "flood_avoidance": flood_areas["summary"],
         "routing_diagnostics": routing_diagnostics,
         **time_fields,
@@ -272,7 +287,7 @@ def amap_route_paths(response: dict[str, Any], start: tuple[float, float],
                      destination: tuple[float, float], profile: str) -> list[dict[str, Any]]:
     paths = ((response.get("route") or {}).get("paths") or [])
     if not paths:
-        raise RoutingEngineError("高德未找到可通行路线。", status="no_safe_route")
+        raise RoutingEngineError("高德未找到可通行路线。", status="no_route")
     candidates = []
     for candidate_index, route in enumerate(paths, start=1):
         coordinates: list[list[float]] = []
@@ -372,6 +387,7 @@ def make_route_record(*, path: dict[str, Any], start: tuple[float, float],
     signature = json.dumps({
         "start": start,
         "destination": destination,
+        "flood_validation": flood_summary["validation"],
         "forecast_id": forecast_id,
         "time_h": time_h,
         "blocked_depth_m": blocked_depth_m,
@@ -391,6 +407,8 @@ def make_route_record(*, path: dict[str, Any], start: tuple[float, float],
         "source_name": "",
         "name_source": "generated_by_routing_engine",
         "route_type": "transfer",
+        "flood_validation": flood_summary["validation"],
+        "flood_constraint_source": flood_summary["constraint_source"],
         "status": "planned",
         "road_detail": " -> ".join(road_names[:12]),
         "origin_unit_id": (
@@ -416,7 +434,7 @@ def make_route_record(*, path: dict[str, Any], start: tuple[float, float],
         ),
         "forecast_id": forecast_id,
         "time_h": time_h,
-        **forecast_analysis_fields(forecast_id, time_h),
+        **(forecast_analysis_fields(forecast_id, time_h) if flood_summary["forecast_verified"] else {}),
         "blocked_depth_m": blocked_depth_m,
         "flood_area_count": int(flood_summary.get("area_count") or 0),
         "flood_source_cell_count": int(flood_summary.get("source_cell_count") or 0),

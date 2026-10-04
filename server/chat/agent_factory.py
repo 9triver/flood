@@ -78,15 +78,55 @@ def compact_agent_query_result(raw_result: str) -> str:
     return json.dumps(compact(payload), ensure_ascii=False, default=str)
 
 
+def validate_query_filters(ontology: Ontology, object_type: str, filters: Any) -> str | None:
+    if filters is None:
+        return None
+    if not isinstance(filters, dict):
+        return "filters must be an object"
+    definition = ontology.objects.get(object_type)
+    if definition is None:
+        return f"unknown object_type: {object_type}"
+    fields = set(definition.properties)
+    if object_type in {"InundationForecastCell", "HydrodynamicGridCell"}:
+        fields.update({"forecast_id", "time_h", "result"})
+    for key in filters:
+        field, _, operator = key.partition("__")
+        if field not in fields or operator not in {"", "eq", "ne", "in", "like", "gt", "gte", "lt", "lte"}:
+            return f"unsupported filter for {object_type}: {key}; query the object's declared fields first"
+    return None
+
+
+def configure_domain_tool_schemas(harness: Harness) -> None:
+    for name, array_fields in (("find_nearby_objects", ["exclude_object_ids"]), ("analyze_inundation_impacts", ["object_ids"])):
+        tool = harness.tools.get(name)
+        if tool:
+            for field in array_fields:
+                tool.parameters["properties"][field]["items"] = {"type": "string"}
+    nearby = harness.tools.get("find_nearby_objects")
+    if nearby:
+        nearby.max_result_chars = 32000
+    for name in ("plan_route", "analyze_inundation_impacts", "get_flood_status"):
+        tool = harness.tools.get(name)
+        if tool:
+            tool.parameters["properties"]["view"]["enum"] = ["current", "time_slice", "envelope"]
+    route = harness.tools.get("plan_route")
+    if route:
+        route.parameters["properties"]["profile"]["enum"] = ["car", "foot"]
+
+
 def configure_agent_query_tools(harness: Harness) -> None:
-    for tool_name in ("query", "query_links", "search"):
+    for tool_name in ("query", "count", "query_links", "search"):
         tool = harness.tools.get(tool_name)
         if not tool:
             continue
         original_handler = tool.handler
-        tool.handler = lambda args, handler=original_handler: (
-            compact_agent_query_result(handler(args))
-        )
+        def handler(args, original=original_handler, name=tool_name):
+            if name in {"query", "count"}:
+                error = validate_query_filters(harness.ontology, args.get("object_type", ""), args.get("filters"))
+                if error:
+                    return json.dumps({"error": error}, ensure_ascii=False)
+            return compact_agent_query_result(original(args))
+        tool.handler = handler
         tool.usage_prompt = (
             f"{tool.usage_prompt} 返回结果省略大型 geometry 坐标并用 "
             "geometry_available 标记；对象仍可通过 ui_* 地图工具按完整"
@@ -150,6 +190,7 @@ class FloodAgentFactory:
             ),
         )
         configure_agent_query_tools(harness)
+        configure_domain_tool_schemas(harness)
         register_map_tools(harness.tools, resolver, ontology)
         register_directive_tools(harness.tools, ontology)
         harness.hooks.register("post_tool_call", post_tool_call)

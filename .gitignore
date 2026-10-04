@@ -22,6 +22,7 @@ agent/.venv/
 # Local workbench: source data, reference docs, model experiments
 local/
 temp/
+/集水区/
 
 # Local domain tool secrets
 domains/tools/.env

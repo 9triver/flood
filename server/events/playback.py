@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from domains.flood.runtime.workspace import active_workspace_id, workspace_scope
 from domains.flood.runtime.boundary_flow import (
     BoundaryFlowPlayback,
     BoundaryFlowPlaybackSource,
@@ -98,14 +99,15 @@ class BoundaryFlowPlaybackRunner:
             time.sleep(1.0)
             if not is_running(generation):
                 continue
-            self.play_generation(
-                generation=generation,
-                is_running=is_running,
-                publish_observation=publish_observation,
-                publish_policy_event=publish_policy_event,
-                finish_sequence=finish_sequence,
-                sleep_while_running=sleep_while_running,
-            )
+            with workspace_scope(active_workspace_id()):
+                self.play_generation(
+                    generation=generation,
+                    is_running=is_running,
+                    publish_observation=publish_observation,
+                    publish_policy_event=publish_policy_event,
+                    finish_sequence=finish_sequence,
+                    sleep_while_running=sleep_while_running,
+                )
 
     def play_generation(self, *, generation: int,
                         is_running: Callable[[int], bool],
@@ -114,8 +116,9 @@ class BoundaryFlowPlaybackRunner:
                         finish_sequence: Callable[[int, dict[str, Any] | None], None],
                         sleep_while_running: Callable[[float, int], None]) -> None:
         last_observation: dict[str, Any] | None = None
+        playback = self.playback
         while is_running(generation):
-            observation_event, policy_events = self.playback.next_events(
+            observation_event, policy_events = playback.next_events(
                 rolling=True,
                 trigger_source="automatic_playback",
             )

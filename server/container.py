@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from domains.flood.runtime.workspace import WORKSPACES
 from server.agent_runs import AgentRunManager
 from server.directives import DirectiveStore
 from server.events import EventRuntime
@@ -33,6 +34,7 @@ def build_application() -> ApplicationContext:
     and presentation side effects.
     """
 
+    WORKSPACES.begin_session()
     app = FloodApp()
     return ApplicationContext(
         app=app,

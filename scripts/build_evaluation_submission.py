@@ -444,16 +444,15 @@ def build_tool_skill_examples() -> list[dict[str, Any]]:
             },
         },
         {
-            "tool_or_skill_name": "plan_evacuation_route",
-            "aliases": ["避洪路线规划", "转移路线规划"],
-            "purpose": "根据起点、安置点、预测淹没水深和道路约束规划避洪转移路线。",
+            "tool_or_skill_name": "plan_route",
+            "aliases": ["路线规划", "避洪路线规划", "转移路线规划"],
+            "purpose": "根据当前演示洪水状态规划路线；未开始演进视为无洪水，开始后按有效预测避洪。",
             "parameter_mode": "structured",
             "input_parameters": [
                 {"name": "start_object_type", "type": "string", "required": False},
                 {"name": "start_object_id", "type": "string", "required": False},
                 {"name": "destination_site_id", "type": "string", "required": False},
                 {"name": "forecast_id", "type": "string", "required": False},
-                {"name": "avoid_flood", "type": "boolean", "required": False},
             ],
             "success_return_type": "object",
             "failure_return_form": {

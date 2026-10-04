@@ -85,7 +85,7 @@ def select_amap_route(candidates: list[dict[str, Any]], start: tuple[float, floa
                       destination: tuple[float, float], flood_areas: dict[str, Any],
                       flood_avoidance_enabled: bool, max_endpoint_distance_m: float,
                       max_detour_ratio: float) -> tuple[dict[str, Any], dict[str, float], dict[str, Any]]:
-    diagnostics: dict[str, Any] = {"candidate_count": len(candidates), "safe_candidate_count": 0,
+    diagnostics: dict[str, Any] = {"candidate_count": len(candidates), "accepted_candidate_count": 0,
                                    "selected_candidate_index": None, "rejected_candidates": []}
     accepted = []
     for path in candidates:
@@ -102,7 +102,7 @@ def select_amap_route(candidates: list[dict[str, Any]], start: tuple[float, floa
             diagnostics["rejected_candidates"].append({**summary, "reason": exc.status, "detail": str(exc)})
             continue
         accepted.append((path, evidence))
-    diagnostics["safe_candidate_count"] = len(accepted)
+    diagnostics["accepted_candidate_count"] = len(accepted)
     if not accepted:
         if any(item.get("reason") == "intersects_flood" for item in diagnostics["rejected_candidates"]):
             raise RoutingEngineError(f"高德返回的 {len(candidates)} 条候选路线均未满足当前预测淹没约束。", status="no_safe_route", details=diagnostics)

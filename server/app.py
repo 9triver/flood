@@ -21,6 +21,7 @@ from oag.runtime.events import event_to_dict  # noqa: E402
 from domains.flood.runtime.impact_analysis import (  # noqa: E402
     BRIDGE_INFLUENCE_RADIUS_M,
 )
+from domains.flood.runtime.workspace import active_workspace_id, workspace_scope
 from server.container import ApplicationContext, build_application  # noqa: E402
 from server.evaluation_api import (  # noqa: E402
     EvaluationApiError,
@@ -118,6 +119,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(self.context.event_runtime.set_auto_pause(
                     payload.get("auto_pause_enabled"),
                 ))
+            if parsed.path == "/api/agent/map-receipt":
+                ok = self.context.runs.record_map_receipt(payload.get("run_id", ""), payload.get("receipt", {}))
+                return self._json({"ok": ok}, status=200 if ok else 400)
             if parsed.path == "/api/agent/confirm":
                 return self._confirm(payload)
             if parsed.path == "/api/directives":
@@ -164,6 +168,8 @@ class Handler(BaseHTTPRequestHandler):
             selected = {}
         if not message:
             return self._json({"error": "message is required"}, status=400)
+        if selected.get("workspace_id") and selected["workspace_id"] != active_workspace_id():
+            return self._json({"error": "演示已切换，请刷新当前工作空间后重试。"}, status=409)
         run = self.context.runs.start(session_id, message, selected)
         return self._sse(self.context.runs.stream(run, since=0))
 
@@ -263,9 +269,10 @@ class Handler(BaseHTTPRequestHandler):
         wet_only = str((params.get("wet_only") or [""])[0]).lower() in {"1", "true", "yes", "on"}
         time_h = _coerce_optional_float((params.get("time_h") or [""])[0])
         tile_crs = (params.get("tile_crs") or ["wgs84"])[0]
-        data = self.context.app.hydrodynamic_grid_tile(
-            z, x, y, forecast_id, wet_only, time_h, tile_crs,
-        )
+        with workspace_scope(active_workspace_id()):
+            data = self.context.app.hydrodynamic_grid_tile(
+                z, x, y, forecast_id, wet_only, time_h, tile_crs,
+            )
         body = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         use_gzip = len(body) >= 1024 and "gzip" in self.headers.get("Accept-Encoding", "").lower()
         if use_gzip:
@@ -283,23 +290,28 @@ class Handler(BaseHTTPRequestHandler):
     def _hydrodynamic_grid_meta(self, query: str):
         params = parse_qs(query)
         forecast_id = self._hydrodynamic_result_id(params)
-        return self._json(self.context.app.hydrodynamic_grid_stats(forecast_id))
+        with workspace_scope(active_workspace_id()):
+            data = self.context.app.hydrodynamic_grid_stats(forecast_id)
+        return self._json(data)
 
     def _impact_analysis(self, query: str):
         params = parse_qs(query)
-        result = self.context.app.analyze_inundation_impacts(
-            forecast_id=(params.get("forecast_id") or ["latest"])[0],
-            target_type=(params.get("target_type") or ["all"])[0],
-            min_depth_m=_coerce_float((params.get("min_depth_m") or ["0.15"])[0], 0.15),
-            max_distance_m=_coerce_float((params.get("max_distance_m") or ["10"])[0], 10.0),
-            time_h=_coerce_optional_float((params.get("time_h") or [""])[0]),
-            bridge_influence_radius_m=_coerce_float(
-                (params.get("bridge_influence_radius_m") or [
-                    str(BRIDGE_INFLUENCE_RADIUS_M)
-                ])[0],
-                BRIDGE_INFLUENCE_RADIUS_M,
-            ),
-        )
+        with workspace_scope(active_workspace_id()):
+            result = self.context.app.analyze_inundation_impacts(
+                forecast_id=(params.get("forecast_id") or ["latest"])[0],
+                object_ids=json.loads((params.get("object_ids") or ["null"])[0]),
+                filters=json.loads((params.get("filters") or ["{}"]) [0]),
+                target_type=(params.get("target_type") or ["all"])[0],
+                min_depth_m=_coerce_float((params.get("min_depth_m") or ["0.15"])[0], 0.15),
+                max_distance_m=_coerce_float((params.get("max_distance_m") or ["10"])[0], 10.0),
+                time_h=_coerce_optional_float((params.get("time_h") or [""])[0]),
+                bridge_influence_radius_m=_coerce_float(
+                    (params.get("bridge_influence_radius_m") or [
+                        str(BRIDGE_INFLUENCE_RADIUS_M)
+                    ])[0],
+                    BRIDGE_INFLUENCE_RADIUS_M,
+                ),
+            )
         return self._json(result)
 
     def _hydrodynamic_result_id(self, params: dict[str, list[str]]) -> str:

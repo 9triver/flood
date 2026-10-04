@@ -5,12 +5,14 @@ import time
 import uuid
 from typing import Any, Protocol
 
+from domains.flood.runtime.workspace import active_workspace_id, workspace_scope
 from server.serialization import format_sse
 
 
 class AgentRun:
     def __init__(self, run_id: str, session_id: str, message: str,
                  selected: dict | None = None):
+        self.workspace_id = active_workspace_id()
         self.run_id = run_id
         self.session_id = session_id
         self.message = message
@@ -29,7 +31,7 @@ class AgentRun:
             self.events.append({
                 "seq": self.seq,
                 "type": event_type,
-                "data": {**data, "seq": self.seq, "run_id": self.run_id},
+                "data": {**data, "seq": self.seq, "run_id": self.run_id, "workspace_id": self.workspace_id},
             })
             self.updated_at = time.time()
             self.condition.notify_all()
@@ -74,6 +76,20 @@ class AgentRunManager:
             return None
         with run.condition:
             return None if run.done or run.cancelled else run
+
+    def record_map_receipt(self, run_id: str, receipt: dict) -> bool:
+        run = self.get(run_id)
+        if not run or not isinstance(receipt, dict):
+            return False
+        operation_id = receipt.get("operation_id")
+        if not operation_id or receipt.get("status") not in {"completed", "partial", "failed"}:
+            return False
+        with run.condition:
+            if not any(event["type"] == "map_actions" and event["data"].get("operation_id") == operation_id for event in run.events):
+                return False
+            if not any(event["type"] == "map_action_receipt" and event["data"].get("operation_id") == operation_id for event in run.events):
+                run.append_event("map_action_receipt", receipt)
+        return True
 
     def cancel(self, run_id: str) -> bool:
         run = self.get(run_id)
@@ -130,7 +146,8 @@ class AgentRunManager:
 
     def _execute(self, run: AgentRun):
         try:
-            self.chat_streamer.stream_chat(run)
+            with workspace_scope(run.workspace_id):
+                self.chat_streamer.stream_chat(run)
         finally:
             run.append_event("done", {"type": "done"})
             run.mark_done()

@@ -50,6 +50,21 @@ class WorkspaceManager:
         with self._lock:
             return self._active_id
 
+    @property
+    def current_id(self) -> str | None:
+        """Process-wide active workspace, regardless of an in-flight request scope."""
+        with self._lock:
+            return self._active_id
+
+    def begin_session(self) -> dict[str, Any]:
+        """Start a clean server session; retained artifacts are history, not a checkpoint."""
+        with self._lock:
+            if self._active_id:
+                self.update_manifest(status="archived")
+            manifest = self.create()
+            self.update_manifest(status="ready", simulation_time=None)
+            return self.active_manifest()
+
     def create(self) -> dict[str, Any]:
         now = datetime.now(timezone.utc)
         workspace_id = f"run_{now.strftime('%Y%m%dT%H%M%SZ')}_{uuid.uuid4().hex[:8]}"
@@ -114,17 +129,18 @@ class WorkspaceManager:
         return path
 
     def update_manifest(self, **values: Any) -> None:
-        workspace_id = self.active_id
-        if not workspace_id:
-            return
-        path = self.path(workspace_id, create=True) / "manifest.json"
-        try:
-            manifest = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            manifest = {"workspace_id": workspace_id, "domain": "flood"}
-        manifest.update(values)
-        manifest["updated_at"] = datetime.now(timezone.utc).isoformat()
-        self._write_json(path, manifest)
+        with self._lock:
+            workspace_id = self.active_id
+            if not workspace_id:
+                return
+            path = self.path(workspace_id, create=True) / "manifest.json"
+            try:
+                manifest = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                manifest = {"workspace_id": workspace_id, "domain": "flood"}
+            manifest.update(values)
+            manifest["updated_at"] = datetime.now(timezone.utc).isoformat()
+            self._write_json(path, manifest)
 
     def active_manifest(self) -> dict[str, Any] | None:
         workspace_id = self.active_id
