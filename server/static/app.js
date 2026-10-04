@@ -112,8 +112,9 @@ const state = {
   boundaryFlowHistoryTimes: [],
   boundaryFlowChartObserver: null,
   boundaryFlowChartFrame: null,
-  conclusionToasts: [],
-  nextConclusionToastId: 1,
+  agentNotification: null,
+  autonomyTraceIds: new Set(),
+  notificationChains: new Set(),
   hydrodynamicTimeline: {
     mode: "time_slice",
     hours: [],
@@ -2167,7 +2168,10 @@ function startAutonomyStream() {
       void refreshPlaybackStatus();
     }
     if (shouldHideAutonomyTrace(data)) return;
-    addTrace(data.tag || "AGENT", data.label || "智能体事件处理", data.detail || "");
+    if (data.output_id && state.autonomyTraceIds.has(data.output_id)) return;
+    if (data.output_id) state.autonomyTraceIds.add(data.output_id);
+    const trace = addTrace(data.tag || "AGENT", data.label || "智能体事件处理", data.detail || "");
+    if (!data.replayed) notifyAgentTrace(data, trace);
   });
 
   es.addEventListener("map_actions", async (event) => {
@@ -2520,10 +2524,9 @@ function clearRuntimeWorkspaceView() {
   if (traceCount) traceCount.textContent = "0";
   if (chat) chat.innerHTML = "";
   resetDirectiveWorkspaceView();
-  state.conclusionToasts.forEach((item) => item.element?.remove());
-  state.conclusionToasts = [];
-  document.querySelectorAll("#conclusionToastRegion .conclusion-toast:not(.directive-draft-toast)")
-    .forEach((element) => element.remove());
+  dismissAgentNotification();
+  state.autonomyTraceIds.clear();
+  state.notificationChains.clear();
 }
 
 function resetDirectiveWorkspaceView() {
@@ -5244,14 +5247,16 @@ function connectChatStream({ message = "", assistant, runId = "", since = 0 }) {
 
   es.addEventListener("confirmation_required", (event) => {
     const data = parseEvent(event);
-    addTrace("ASK", `需要确认: ${data.tool_name}`, JSON.stringify(data.args || {}, null, 2));
+    const trace = addTrace("ASK", `需要确认: ${data.tool_name}`, JSON.stringify(data.args || {}, null, 2));
+    notifyAgentTrace({tag: "ASK", label: "需要确认", notification_key: state.activeRunId}, trace);
     appendConfirmation(data);
     finishStream(false);
   });
 
   es.addEventListener("question", (event) => {
     const data = parseEvent(event);
-    addTrace("ASK", "等待用户输入", data.question || "");
+    const trace = addTrace("ASK", "等待用户输入", data.question || "");
+    notifyAgentTrace({tag: "ASK", label: "等待用户输入", notification_key: state.activeRunId}, trace);
     appendQuestion(data);
     finishStream(false);
   });
@@ -5866,9 +5871,7 @@ function addTrace(tag, label, detail) {
   if (traceCount) traceCount.textContent = String(wrap.childElementCount);
   state.lastTrace = { key, item, count: 1 };
   wrap.scrollTop = wrap.scrollHeight;
-  if (String(label || "").trim() === "智能体结论") {
-    enqueueConclusionToast(label, detail);
-  }
+
   return item;
 }
 
@@ -5884,78 +5887,90 @@ function renderTraceDetail(tag, detail) {
   return `<details class="trace-detail-disclosure"><summary>${summary}</summary>${rendered}</details>`;
 }
 
-function enqueueConclusionToast(label, detail) {
-  const item = {
-    id: state.nextConclusionToastId++,
-    label: String(label || "智能体结论"),
-    detail: String(detail || ""),
-    dragX: 0,
-    dragY: 0,
-    element: null,
+function notifyAgentTrace(data, trace) {
+  const error = data.tag === "ERR" || data.tag === "BLOCK";
+  const needsInput = data.tag === "ASK";
+  if (!error && !needsInput && data.label !== "智能体结论") return;
+  const key = `${data.workspace_id || state.workspaceId || "manual"}:${data.notification_key || data.output_id || data.label}`;
+  const previous = state.agentNotification;
+  // Completed chains already dismissed or expired stay quiet on later stages.
+  if (!error && !needsInput && state.notificationChains.has(key) && previous?.key !== key) return;
+  state.notificationChains.add(key);
+  if (previous?.sticky && !error && !needsInput) return;
+  const title = error ? (data.label || "智能体处理失败") : needsInput ? "需要你的确认或补充" : "智能体研判已完成";
+  showAgentNotification({ key, title, trace, sticky: error || needsInput, needsInput, error });
+}
+
+function showAgentNotification({ key, title, trace, sticky = false, needsInput = false, error = false }) {
+  let item = state.agentNotification;
+  if (item?.key === key) {
+    item.trace = trace;
+    item.sticky = item.sticky || sticky;
+    item.needsInput = needsInput;
+    item.element.querySelector(".agent-notification-title").textContent = title;
+    item.element.querySelector(".agent-notification-view").textContent = needsInput ? "去处理" : error ? "查看原因" : "查看结论";
+    item.element.classList.toggle("is-attention", item.sticky);
+    pauseAgentNotification(item);
+    item.remaining = 6000;
+    resumeAgentNotification(item);
+    return;
+  }
+  dismissAgentNotification();
+  const element = document.createElement("article");
+  element.className = `agent-notification${sticky ? " is-attention" : ""}`;
+  element.innerHTML = `<span class="agent-notification-dot" aria-hidden="true"></span>
+    <strong class="agent-notification-title"></strong>
+    <button class="agent-notification-view" type="button">${needsInput ? "去处理" : error ? "查看原因" : "查看结论"}</button>
+    <button class="agent-notification-close" type="button" aria-label="关闭通知">×</button>`;
+  element.querySelector(".agent-notification-title").textContent = title;
+  item = { key, trace, sticky, needsInput, element, remaining: 6000, timer: null, started: 0, hovered: false };
+  state.agentNotification = item;
+  element.querySelector(".agent-notification-close").onclick = dismissAgentNotification;
+  element.querySelector(".agent-notification-view").onclick = () => {
+    setAgentDrawerOpen(true);
+    activateAgentPane(item.needsInput ? "chat" : "trace");
+    const target = item.needsInput ? document.getElementById("chatLog").lastElementChild : item.trace;
+    if (target?.isConnected) {
+      target.tabIndex = -1;
+      requestAnimationFrame(() => {
+        target.scrollIntoView({ block: "center", behavior: "smooth" });
+        target.focus({ preventScroll: true });
+        target.classList.add("is-notification-target");
+        window.setTimeout(() => target.classList.remove("is-notification-target"), 2200);
+      });
+    }
+    dismissAgentNotification();
   };
-  item.element = createConclusionToastElement(item);
-  state.conclusionToasts.push(item);
-  document.getElementById("conclusionToastRegion").appendChild(item.element);
-  bindConclusionToastDrag(item);
-  updateConclusionToastStack();
-  renderIcons();
-  requestAnimationFrame(() => {
-    item.element?.classList.add("is-visible");
-    clampConclusionToastsToMap();
-  });
+  element.addEventListener("mouseenter", () => { item.hovered = true; pauseAgentNotification(item); });
+  element.addEventListener("mouseleave", () => { item.hovered = false; resumeAgentNotification(item); });
+  element.addEventListener("focusin", () => pauseAgentNotification(item));
+  element.addEventListener("focusout", () => window.setTimeout(() => resumeAgentNotification(item), 0));
+  document.getElementById("agentNotificationRegion").appendChild(element);
+  resumeAgentNotification(item);
 }
 
-function createConclusionToastElement(item) {
-  const toast = document.createElement("article");
-  toast.className = "conclusion-toast";
-  toast.dataset.toastId = String(item.id);
-  toast.setAttribute("role", "status");
-  toast.innerHTML = `
-    <header class="conclusion-toast-drag-handle" title="拖动">
-      <div class="conclusion-toast-heading">
-        <i data-lucide="sparkles"></i>
-        <span>${escapeHtml(item.label)}</span>
-      </div>
-      <div class="conclusion-toast-header-actions">
-        <span class="conclusion-toast-queue" hidden></span>
-        <i class="conclusion-toast-grip" data-lucide="grip-horizontal" aria-hidden="true"></i>
-      </div>
-    </header>
-    <div class="conclusion-toast-body markdown-body">${renderMarkdown(item.detail)}</div>
-    <footer>
-      <button class="conclusion-dismiss" type="button" aria-label="关闭智能体结论">
-        <i data-lucide="x"></i>
-        <span>关闭</span>
-      </button>
-    </footer>
-  `;
-  toast.querySelector(".conclusion-dismiss").addEventListener("click", () => {
-    dismissConclusionToast(item.id);
-  });
-  return toast;
+function pauseAgentNotification(item) {
+  if (item.timer !== null) {
+    clearTimeout(item.timer);
+    item.remaining = Math.max(0, item.remaining - (performance.now() - item.started));
+    item.timer = null;
+  }
 }
 
-function dismissConclusionToast(id) {
-  const index = state.conclusionToasts.findIndex((item) => item.id === id);
-  if (index < 0) return;
-  const [item] = state.conclusionToasts.splice(index, 1);
-  item.element?.remove();
-  updateConclusionToastStack();
+function resumeAgentNotification(item) {
+  if (state.agentNotification !== item || item.sticky || item.hovered || item.element.contains(document.activeElement) || item.timer !== null) return;
+  item.started = performance.now();
+  item.timer = window.setTimeout(() => {
+    if (state.agentNotification === item) dismissAgentNotification();
+  }, item.remaining);
 }
 
-function updateConclusionToastStack() {
-  const total = state.conclusionToasts.length;
-  state.conclusionToasts.forEach((item, index) => {
-    const depth = Math.min(index, 4);
-    item.element.style.setProperty("--stack-x", `${depth * 7}px`);
-    item.element.style.setProperty("--stack-y", `${depth * 8}px`);
-    item.element.style.setProperty("--drag-x", `${item.dragX}px`);
-    item.element.style.setProperty("--drag-y", `${item.dragY}px`);
-    item.element.style.zIndex = String(Math.max(1, 1000 - index));
-    const count = item.element.querySelector(".conclusion-toast-queue");
-    count.hidden = index !== 0 || total < 2;
-    count.textContent = index === 0 && total > 1 ? `+${total - 1}` : "";
-  });
+function dismissAgentNotification() {
+  const item = state.agentNotification;
+  if (!item) return;
+  pauseAgentNotification(item);
+  item.element.remove();
+  state.agentNotification = null;
 }
 
 function bindConclusionToastDrag(item) {
@@ -6030,7 +6045,7 @@ function clampConclusionToastsToMap() {
   if (!bounds || !region) return;
   const availableHeight = Math.max(72, bounds.bottom - bounds.top - 108);
   region.style.setProperty("--conclusion-body-max-height", `${Math.min(360, availableHeight)}px`);
-  const items = [...state.conclusionToasts];
+  const items = [];
   if (state.directiveToast?.element && !state.directiveToast.element.hidden) {
     items.push(state.directiveToast);
   }
@@ -7020,6 +7035,7 @@ function submitQuestionAnswer(answer) {
 }
 
 function settlePendingQuestion() {
+  if (state.agentNotification?.needsInput) dismissAgentNotification();
   const item = state.pendingQuestion?.element;
   item?.querySelectorAll(".question-option, .question-cancel").forEach((button) => {
     button.disabled = true;
@@ -7028,6 +7044,7 @@ function settlePendingQuestion() {
 }
 
 async function runConfirm(approved) {
+  if (state.agentNotification?.needsInput) dismissAgentNotification();
   const assistant = addMessage("agent", "");
   const res = await fetch("/api/agent/confirm", {
     method: "POST",

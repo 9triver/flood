@@ -413,7 +413,7 @@ class EventAgentProcessor:
                 "type": "agent_trace",
                 "tag": "TEXT",
                 "label": "智能体结论",
-                "detail": compact_event_text(conclusion, limit=1800),
+                "detail": conclusion,
             }, generation)
 
     @staticmethod

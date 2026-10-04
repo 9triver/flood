@@ -5684,3 +5684,34 @@ body.is-cover-visible .app-shell {
 @media (max-width: 800px) { .situation-workbench-body { grid-template-columns: minmax(350px, 90vw) minmax(300px, 85vw) 260px; } .basin-workbench .telemetry-header-context { grid-template-columns: auto 1fr; } .basin-workbench .telemetry-forecast-window { grid-column: 1 / -1; border: 0; padding: 0; display: flex; gap: 6px; } }
 @media (min-width: 1101px) { .map-stage { --situation-dock-height: min(42vh, 390px); } }
 #basinFlowTable small { display: inline; margin-left: 6px; }
+
+.agent-notification-region {
+  position: absolute;
+  grid-column: 1 / 2;
+  grid-row: 1 / 2;
+  left: 54px;
+  bottom: 14px;
+  z-index: 950;
+  width: min(380px, calc(100% - 76px));
+  pointer-events: none;
+}
+.agent-notification {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 12px;
+  background: #fff;
+  border: 1px solid #d7e2e9;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px #14273a20;
+  pointer-events: auto;
+  font-size: 12px;
+}
+.agent-notification-dot { flex: 0 0 7px; height: 7px; border-radius: 50%; background: #238b70; }
+.agent-notification-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.agent-notification button { flex-shrink: 0; border: 0; background: none; padding: 4px; cursor: pointer; font: inherit; color: #2878b9; }
+.agent-notification .agent-notification-close { color: #718096; font-size: 18px; }
+.agent-notification button:focus-visible { outline: 2px solid #2878b9; border-radius: 3px; }
+.agent-notification.is-attention { border-color: #ddb674; }
+.agent-notification.is-attention .agent-notification-dot { background: #b77919; }
+.trace-item.is-notification-target { outline: 2px solid #93b9e8; outline-offset: -2px; }

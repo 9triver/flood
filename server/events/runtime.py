@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+import uuid
 from typing import Any, TYPE_CHECKING
 
 from domains.flood.runtime.boundary_flow import (
@@ -448,6 +449,7 @@ class EventRuntime:
         self.ensure_started()
         with self.condition:
             next_seq = max(0, len(self.outputs) - 80)
+            replay_ids = {item["data"].get("output_id") for item in self.outputs}
         while True:
             pending: list[dict[str, Any]] = []
             heartbeat: dict[str, Any] | None = None
@@ -480,7 +482,10 @@ class EventRuntime:
             if heartbeat:
                 yield format_sse("runtime_status", heartbeat)
             for item in pending:
-                yield format_sse(item["event"], item["data"])
+                yield format_sse(item["event"], {
+                    **item["data"],
+                    "replayed": item["data"].get("output_id") in replay_ids,
+                })
 
     def _wait_until_playback_running(self) -> int:
         with self.condition:
@@ -854,7 +859,11 @@ class EventRuntime:
             }
         item = {
             "event": event_name,
-            "data": {**data, "workspace_id": workspace_id},
+            "data": {
+                **data, "workspace_id": workspace_id,
+                "output_id": uuid.uuid4().hex,
+                "notification_key": self._processing_event_id or data.get("event_id"),
+            },
         }
         self.outputs.append(item)
         self._timeline_store.append(item, str(workspace_id or ""), WORKSPACES)
