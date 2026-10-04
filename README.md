@@ -93,14 +93,17 @@ uv run pytest agent/tests -q
 node --check server/static/app.js
 ```
 
-地图工具的浏览器回归需要已启动的本地服务，以及安装在 `local/validation` 的 Playwright 和 Chromium：
+三条任务链的端到端测试可自动启动隔离服务，不影响当前演示：
 
 ```bash
-NODE_PATH=local/validation/node_modules node tests/browser/map-tools.cjs
+npm ci --prefix tests/e2e
+npm exec --prefix tests/e2e -- playwright install chromium
+npm test --prefix tests/e2e
+# 使用 .env 中的真实模型验收自然语言及连续指代
+npm run test:live --prefix tests/e2e
 ```
 
-该测试使用真实对象数据、模拟预测元数据，不调用 LLM、不启动演进或修改工作空间。
-
+固定场景回归不调用 LLM；真实模型模式调用 LLM。两种模式均使用固定路由响应和预测夹具，覆盖查询筛选、安置点比较、路线与时间分析、草稿发出及后续复核。详见 [端到端用例说明](tests/e2e/README.md)。原有地图专项回归仍可通过 `NODE_PATH=tests/e2e/node_modules node tests/browser/map-tools.cjs` 在本地服务上运行。
 
 ## 智能体运行日志评测材料
 

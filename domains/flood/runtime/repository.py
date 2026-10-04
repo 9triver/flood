@@ -12,6 +12,7 @@ from .common import (
     apply_order,
     apply_window,
     id_field,
+    filter_values,
 )
 from .forecast_query import (
     count_forecast_cells,
@@ -24,7 +25,7 @@ from .directives import (
     query_emergency_directives,
 )
 from .hydrodynamic_grid import count_hydrodynamic_cells, query_hydrodynamic_cells
-from .route_store import read_planned_routes
+from .route_store import read_planned_routes, read_archived_route
 from .road_routes import build_road_routes, road_refs, road_route_id
 
 
@@ -48,6 +49,14 @@ class FloodRepository:
         if object_type == "EvacuationRoute":
             rows = [dict(row) for row in self._rows(object_type)]
             rows.extend(read_planned_routes())
+            selected_ids = (filters or {}).get("evacuation_route_id__in")
+            if (filters or {}).get("evacuation_route_id") is not None:
+                selected_ids = [(filters or {})["evacuation_route_id"]]
+            existing = {str(row["evacuation_route_id"]) for row in rows}
+            for ident in filter_values(selected_ids) if selected_ids is not None else []:
+                archived = read_archived_route(str(ident)) if str(ident) not in existing else None
+                if archived:
+                    rows.append(archived)
             rows = apply_filters(rows, filters)
             rows = apply_order(rows, order_by)
             return apply_window(rows, limit, offset)

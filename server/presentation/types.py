@@ -14,6 +14,8 @@ class MapAction(TypedDict, total=False):
     refresh: bool
     mode: str
     highlight: bool
+    replace_object_ids: list[str]
+    object_set_id: str
     selection_id: str
     simplify_tolerance: float
     mesh_only: bool

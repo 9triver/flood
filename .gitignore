@@ -18,6 +18,7 @@ htmlcov/
 .venv/
 agent/.venv/
 .oag_data/
+node_modules/
 
 # Local workbench: source data, reference docs, model experiments
 local/

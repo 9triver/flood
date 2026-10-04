@@ -1517,7 +1517,7 @@ async function loadObject(objectType, filters = {}, options = {}) {
   if (Array.isArray(requestedIds) && !requestedIds.length) return null;
   const resolvedFilters = filtersWithObjectIds(objectType, filters, requestedIds);
   const key = layerKey(objectType, resolvedFilters);
-  if (!options.refresh && options.mode !== "replace" && state.layerGroups.has(key)) {
+  if (!options.refresh && options.mode !== "replace" && !options.replaceObjectIds && state.layerGroups.has(key)) {
     const existing = state.layerGroups.get(key);
     if (!state.map.hasLayer(existing)) existing.addTo(state.map);
     setObjectButtonActive(objectType, true);
@@ -1539,6 +1539,7 @@ async function loadObject(objectType, filters = {}, options = {}) {
   if (!geojson.features?.length) throw new Error("没有可显示的对象几何，原有图层已保留");
   const returnedIds = new Set(geojson.features.map(feature => String(feature.properties?.[ID_FIELDS[objectType]])));
   if (requestedIds?.some(id => !returnedIds.has(String(id)))) throw new Error("部分指定对象没有可显示的几何，原有图层已保留");
+  if (options.replaceObjectIds) hideMapObjects({object_type: objectType, object_ids: options.replaceObjectIds});
   if (options.mode === "replace") removeObjectTypeLayers(objectType);
   else if (state.layerGroups.has(key)) removeLayer(key);
   const mapSelectable = !MAP_NON_SELECTABLE_OBJECTS.has(objectType);
@@ -1610,7 +1611,7 @@ function registerMapSelection(layer, objectType, options, key) {
   });
   const selectionId = options.selectionId || state.layerMeta.get(key)?.selectionId || `selection_${crypto.randomUUID()}`;
   const label = options.label || OBJECT_CONFIG[objectType]?.label || objectType;
-  state.mapSelections.set(selectionId, { objectType, objectIds: [...new Set(ids)], label });
+  state.mapSelections.set(selectionId, { objectType, objectIds: [...new Set(ids)], label, objectSetId: options.objectSetId });
   const meta = state.layerMeta.get(key);
   if (meta) meta.selectionId = selectionId;
 }
@@ -1624,7 +1625,7 @@ function visibleMapSelections() {
     const ids = selection.objectIds.filter(id => visible.has(id));
     if (!ids.length) continue;
     selections.push({ selection_id: selectionId, object_type: selection.objectType,
-      label: selection.label, count: ids.length,
+      label: selection.label, count: ids.length, object_set_id: ids.length === selection.objectIds.length ? selection.objectSetId : undefined,
       ...(ids.length <= 10 ? {object_ids: ids} : {}) });
   }
   return selections.slice(-20);
@@ -2754,6 +2755,7 @@ function renderDirectiveHistory() {
 
 function openDirectiveDraft(draft) {
   state.directiveDraft = {
+    basis: draft.basis || null,
     title: String(draft.title || ""),
     content: String(draft.content || ""),
     recipients: String(draft.recipients || ""),
@@ -2776,6 +2778,7 @@ function openIssuedDirective(directiveId) {
   const directive = state.directives.find((item) => item.directive_id === directiveId);
   if (!directive) return;
   state.directiveDraft = {
+    basis: directive.basis || null,
     directiveId: String(directive.directive_id || ""),
     title: String(directive.title || ""),
     content: String(directive.content || ""),
@@ -2890,6 +2893,13 @@ function renderDirectiveContext(status = {}) {
     );
     return;
   }
+  const basis = state.directiveDraft?.basis?.snapshot;
+  if (basis) {
+    workspaceElement.textContent = "草稿依据";
+    document.getElementById("directiveContextTime").textContent = formatMockTime(basis.simulation_time);
+    document.getElementById("directiveContextForecast").textContent = formatForecastVersion(basis.forecast_version);
+    return;
+  }
   workspaceElement.textContent = "当前演进";
   workspaceElement.removeAttribute("title");
   document.getElementById("directiveContextTime").textContent = formatMockTime(status.observed_at);
@@ -2928,6 +2938,7 @@ async function issueDirective() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         workspace_id: state.directiveDraft.workspaceId,
+        basis: state.directiveDraft.basis,
         title: state.directiveDraft.title,
         content: state.directiveDraft.content,
         recipients: state.directiveDraft.recipients,
@@ -2955,6 +2966,7 @@ function copyDirectiveToDraft(directiveId) {
   const directive = state.directives.find((item) => item.directive_id === directiveId);
   if (!directive) return;
   openDirectiveDraft({
+    basis: directive.basis,
     title: directive.title,
     content: directive.content,
     recipients: directive.recipients,
@@ -5398,12 +5410,14 @@ function connectChatStream({ message = "", assistant, runId = "", since = 0 }) {
     addTrace("CALL", readableTool(data.name, data.args || {}), JSON.stringify(data.args || {}, null, 2));
   });
 
+  listen("domain_result", (event) => {
+    const data = parseEvent(event);
+    if (data.name === "analyze_inundation_impacts") registerImpactAnalysisResult(data.result);
+  });
+
   listen("tool_result", (event) => {
     const data = parseEvent(event);
     addTrace(data.blocked ? "BLOCK" : "RESULT", data.name || "tool result", compactText(data.result || ""));
-    if (!data.blocked && data.name === "analyze_inundation_impacts") {
-      registerImpactAnalysisResult(parseToolJsonResult(data.result));
-    }
   });
 
   listen("reasoning", () => {});
@@ -5480,6 +5494,8 @@ async function executeActions(actions) {
         objectIds: action.object_ids,
         mode: action.mode || "add",
         selectionId: action.selection_id,
+        objectSetId: action.object_set_id,
+        replaceObjectIds: action.replace_object_ids,
         highlight: action.highlight,
       });
     }
@@ -7141,6 +7157,9 @@ function readableTool(name, args) {
     find_nearby_objects: "查询附近对象",
     get_flood_status: "查询淹没状态",
     plan_route: "规划路线",
+    refine_object_set: "筛选候选集合",
+    compare_evacuation_sites: "比较安置方案",
+    review_route: "复核既有路线",
     ui_focus_object: "地图定位",
     ui_open_emergency_directive_editor: "生成应急指令初稿",
     ui_set_inundation_alert: "设置流域淹没警戒",

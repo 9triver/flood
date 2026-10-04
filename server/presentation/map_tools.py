@@ -70,6 +70,8 @@ def register_map_tools(tools: ToolRegistry, resolver,
                             "label": {"type": "string", "description": "地图图层显示名称，可选"},
                             "fit": {"type": "boolean", "description": "是否缩放到该对象范围"},
                             "refresh": {"type": "boolean", "description": "是否刷新已有图层"},
+                            "replace_object_set_id": {"type": "string", "description": "明确只保留筛选结果时替换此原集合，保留其他对象；使用 refine_object_set 返回的 map_update 参数"},
+                            "object_set_id": {"type": "string", "description": "领域查询或筛选工具返回的对象集合，显示整个集合；不要同时传 object_ids/filters"},
                             "object_ids": {
                                 "type": "array",
                                 "items": {"type": "string"},

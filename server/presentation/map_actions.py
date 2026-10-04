@@ -8,7 +8,8 @@ from typing import Any, Collection
 
 from oag.ontology.schema import Ontology
 
-from domains.flood.runtime.common import MAPPABLE_OBJECTS, id_field
+from domains.flood.runtime.object_sets import read_object_set
+from domains.flood.runtime.common import MAPPABLE_OBJECTS, id_field, apply_filters
 from server.presentation.hydrodynamic import (
     build_hydrodynamic_action_plan,
     count_hydrodynamic,
@@ -50,11 +51,23 @@ class MapActionBuilder:
             for index, item in enumerate(requested):
                 if not isinstance(item, dict):
                     raise ValueError("each objects item must be an object")
+                item = dict(item)
+                if item.get("object_set_id"):
+                    if "object_ids" in item or item.get("filters"):
+                        raise ValueError("object_set_id cannot be combined with object_ids or filters; refine the set first")
+                    selected = read_object_set(item["object_set_id"], item.get("object_type"))
+                    item["object_type"] = selected["object_type"]
+                    item["object_ids"] = selected["object_ids"]
                 object_type = item.get("object_type")
                 if object_type not in allowed_object_types:
                     raise ValueError(f"object_type outside presentation tool scope: {object_type}")
                 if "show_only_object_ids" in item:
                     raise ValueError("show_only_object_ids was removed; object_ids always limits the displayed set")
+                replace_ids = None
+                if item.get("replace_object_set_id"):
+                    if not item.get("object_set_id") or item.get("mode", "add") != "add":
+                        raise ValueError("replace_object_set_id requires object_set_id and cannot be combined with mode=replace")
+                    replace_ids = read_object_set(item["replace_object_set_id"], object_type)["object_ids"]
                 mode = item.get("mode", "add")
                 if mode not in {"add", "replace"}:
                     raise ValueError("mode must be add or replace")
@@ -82,10 +95,12 @@ class MapActionBuilder:
                 if ids is not None:
                     # An empty set never means all objects, including in replace mode.
                     if not ids:
+                        if replace_ids is not None:
+                            actions.append({"type": "hide_objects", "object_type": object_type, "object_ids": replace_ids})
                         cards.append({"title": label, "value": "0", "detail": "对象集合为空，未请求地图变更"})
                         continue
-                    rows = self.resolver.query(object_type, filters)
                     field = id_field(object_type)
+                    rows = apply_filters(self.resolver.query(object_type, {f"{field}__in": ids}), filters)
                     matched = {str(row.get(field)) for row in rows}
                     missing = [value for value in ids if value not in matched]
                     if missing:
@@ -100,13 +115,15 @@ class MapActionBuilder:
                 action = {"type": "load_object", "object_type": object_type,
                           "filters": filters, "label": label, "fit": fit,
                           "mode": mode, "highlight": item.get("highlight", False),
-                          "selection_id": selection_id, "refresh": item.get("refresh", False)}
+                          "selection_id": selection_id, "refresh": item.get("refresh", False), "object_set_id": item.get("object_set_id")}
+                if replace_ids is not None:
+                    action["replace_object_ids"] = replace_ids
                 if ids is not None:
                     action["object_ids"] = ids
                 if tolerance is not None:
                     action["simplify_tolerance"] = tolerance
                 actions.append(action)
-                selections.append({"selection_id": selection_id, "object_type": object_type, "count": count, "label": label})
+                selections.append({"selection_id": selection_id, "object_type": object_type, "count": count, "label": label, "object_set_id": item.get("object_set_id")})
                 cards.append({"title": label, "value": str(count), "detail": "匹配对象数；已请求显示"})
         except (ValueError, TypeError) as exc:
             return _error(str(exc))
@@ -121,7 +138,7 @@ class MapActionBuilder:
         # Move each replacement ahead of other additions of that type.
         actions.sort(key=lambda action: 0 if action.get("mode") == "replace" else 1)
         return _payload(context=str(args.get("context") or default_context(actions)),
-                        actions=actions, cards=cards, note=default_note(actions), selections=selections)
+                        actions=actions, cards=cards, note="已请求更新指定候选集合。" if any(item.get("replace_object_set_id") for item in requested) else default_note(actions), selections=selections)
 
     def hide_objects(self, args: dict[str, Any], allowed_object_types: Collection[str]) -> str:
         selection_id = args.get("selection_id")

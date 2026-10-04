@@ -68,7 +68,7 @@ def find_nearby_objects(resolver, reference_object_type: str,
             "offset": offset, "next_offset": offset + len(results) if has_more else None,
             "has_more": has_more, "truncated": offset > 0 or has_more,
             "object_ids": [row["object_id"] for row in results], "results": results,
-            "unlocated_object_ids": unlocated}
+            "unlocated_object_ids": unlocated, "_matched_object_ids": [row["object_id"] for row in matches]}
 
 
 def _point(row):

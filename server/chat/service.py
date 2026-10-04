@@ -36,6 +36,7 @@ class FloodChatService:
             return
 
         agent_session_id = self.agent_session_id(run.session_id)
+        self.side_effects.begin_domain_results(agent_session_id)
         try:
             if self.agent.pending_tool_name(agent_session_id) == "ask_user":
                 event_stream = self.agent.confirm_tool(
@@ -65,12 +66,17 @@ class FloodChatService:
                 "content": f"智能体生成失败：{exc}",
             })
 
+        finally:
+            self.side_effects.end_domain_results(agent_session_id)
+
     @staticmethod
     def agent_session_id(session_id: str) -> str:
         return f"{active_workspace_id() or 'manual'}:{session_id}"
 
     def _append_pending_frontend_events(self, run: AgentRun,
                                         session_id: str) -> None:
+        for result in self.side_effects.pop_domain_results(session_id):
+            run.append_event("domain_result", {"type": "domain_result", **result})
         for result in self.side_effects.pop_map_events(session_id):
             run.append_event("map_actions", {
                 "type": "map_actions",

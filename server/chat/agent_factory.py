@@ -97,7 +97,7 @@ def validate_query_filters(ontology: Ontology, object_type: str, filters: Any) -
 
 
 def configure_domain_tool_schemas(harness: Harness) -> None:
-    for name, array_fields in (("find_nearby_objects", ["exclude_object_ids"]), ("analyze_inundation_impacts", ["object_ids"])):
+    for name, array_fields in (("find_nearby_objects", ["exclude_object_ids"]), ("analyze_inundation_impacts", ["object_ids"]), ("refine_object_set", ["exclude_object_ids"])):
         tool = harness.tools.get(name)
         if tool:
             for field in array_fields:
@@ -105,7 +105,7 @@ def configure_domain_tool_schemas(harness: Harness) -> None:
     nearby = harness.tools.get("find_nearby_objects")
     if nearby:
         nearby.max_result_chars = 32000
-    for name in ("plan_route", "analyze_inundation_impacts", "get_flood_status"):
+    for name in ("plan_route", "analyze_inundation_impacts", "get_flood_status", "compare_evacuation_sites", "review_route"):
         tool = harness.tools.get(name)
         if tool:
             tool.parameters["properties"]["view"]["enum"] = ["current", "time_slice", "envelope"]
@@ -198,7 +198,7 @@ class FloodAgentFactory:
             harness,
             llm_client,
             self.config["LLM_MODEL"],
-            db_dir=str(self.project_dir / ".oag_data"),
+            db_dir=str(self.config.get("OAG_DATA_DIR") or self.project_dir / ".oag_data"),
         )
 
     def _llm_extra_body(self) -> dict[str, Any]:

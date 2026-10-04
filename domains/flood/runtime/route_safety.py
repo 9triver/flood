@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import math
+import json
+
+from shapely.geometry import shape, Point, LineString
+from shapely import STRtree
 from typing import Any
 
 from .amap_client import RoutingEngineError
@@ -21,6 +25,21 @@ def empty_flood_areas(blocked_depth_m: float) -> dict[str, Any]:
 def build_flood_avoidance_areas(cells: list[dict[str, Any]], blocked_depth_m: float,
                                 max_areas: int = DEFAULT_MAX_FLOOD_AREAS,
                                 initial_grid_m: float = 120.0) -> dict[str, Any]:
+    wet_cells = [row for row in cells if float(row.get("depth_m") or 0) >= blocked_depth_m]
+    if wet_cells and all(row.get("geometry") for row in wet_cells):
+        features = []
+        for index, row in enumerate(wet_cells):
+            geometry = row["geometry"]
+            geometry = json.loads(geometry) if isinstance(geometry, str) else geometry
+            polygon = shape(geometry)
+            if polygon.is_empty or not polygon.is_valid or polygon.geom_type not in {"Polygon", "MultiPolygon"}:
+                raise ValueError("预测湿网格缺少有效面几何，无法校核路线")
+            features.append({"type": "Feature", "geometry": geometry, "properties": {"blocked_depth_m": blocked_depth_m}})
+        return {"feature_collection": {"type": "FeatureCollection", "features": features},
+                "summary": {"enabled": True, "blocked_depth_m": blocked_depth_m, "source_cell_count": len(features),
+                            "area_count": len(features), "aggregation_grid_m": 0, "method": "full_cell_polygon_intersection"}}
+    if any(row.get("geometry") for row in wet_cells):
+        raise ValueError("部分预测湿网格缺少几何，不能忽略这些网格进行路线校核")
     wet_points = [
         (float(row["centroid_lon"]), float(row["centroid_lat"]))
         for row in cells
@@ -37,6 +56,9 @@ def build_flood_avoidance_areas(cells: list[dict[str, Any]], blocked_depth_m: fl
         if len(rectangles) <= max_areas:
             break
         grid_m *= 1.5
+    if len(rectangles) > max_areas:
+        rectangles = [(min(r[0] for r in rectangles), min(r[1] for r in rectangles),
+                       max(r[2] for r in rectangles), max(r[3] for r in rectangles))]
     features = [{
         "type": "Feature", "id": f"flood_{index:03d}",
         "properties": {"blocked_depth_m": blocked_depth_m},
@@ -56,7 +78,7 @@ def aggregate_wet_points(points: list[tuple[float, float]], ref_lat: float,
                          grid_m: float) -> list[tuple[float, float, float, float]]:
     lon_step = grid_m / max(1.0, 111_320.0 * math.cos(math.radians(ref_lat)))
     lat_step = grid_m / 110_540.0
-    origin_lon, origin_lat = min(point[0] for point in points), min(point[1] for point in points)
+    origin_lon, origin_lat = min(point[0] for point in points) - lon_step / 2, min(point[1] for point in points) - lat_step / 2
     occupied = {(int(math.floor((lon - origin_lon) / lon_step)), int(math.floor((lat - origin_lat) / lat_step))) for lon, lat in points}
     by_row: dict[int, list[int]] = {}
     for x_index, y_index in occupied:
@@ -112,27 +134,21 @@ def select_amap_route(candidates: list[dict[str, Any]], start: tuple[float, floa
     return path, evidence, diagnostics
 
 
+def _area_index(feature_collection: dict[str, Any]):
+    if "_spatial_index" not in feature_collection:
+        polygons = [shape(feature["geometry"]) for feature in feature_collection.get("features", [])]
+        feature_collection["_spatial_index"] = STRtree(polygons)
+    return feature_collection["_spatial_index"]
+
+
 def path_intersects_areas(coordinates: list[list[float]], feature_collection: dict[str, Any]) -> bool:
     if len(coordinates) < 2:
         return False
-    for first, second in zip(coordinates, coordinates[1:]):
-        start, end = (float(first[0]), float(first[1])), (float(second[0]), float(second[1]))
-        sample_count = max(1, math.ceil(distance_m(start, end) / 20.0))
-        for index in range(sample_count + 1):
-            ratio = index / sample_count
-            point = (start[0] + (end[0] - start[0]) * ratio, start[1] + (end[1] - start[1]) * ratio)
-            if point_in_areas(point, feature_collection):
-                return True
-    return False
+    return bool(len(_area_index(feature_collection).query(LineString(coordinates), predicate="intersects")))
 
 
 def point_in_areas(point: tuple[float, float], feature_collection: dict[str, Any]) -> bool:
-    lon, lat = point
-    for feature in feature_collection.get("features") or []:
-        ring = ((feature.get("geometry") or {}).get("coordinates") or [[]])[0]
-        if ring and min(float(item[0]) for item in ring) <= lon <= max(float(item[0]) for item in ring) and min(float(item[1]) for item in ring) <= lat <= max(float(item[1]) for item in ring):
-            return True
-    return False
+    return bool(len(_area_index(feature_collection).query(Point(point), predicate="intersects")))
 
 
 def validate_route_path(path: dict[str, Any], start: tuple[float, float], destination: tuple[float, float],

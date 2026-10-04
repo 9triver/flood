@@ -13,7 +13,7 @@ from typing import Any, Iterator
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[3]
-RUNTIME_ROOT = PROJECT_DIR / "local" / "runtime" / "flood"
+RUNTIME_ROOT = Path(os.environ.get("FLOOD_RUNTIME_ROOT") or PROJECT_DIR / "local" / "runtime" / "flood").resolve()
 WORKSPACES_DIR = RUNTIME_ROOT / "workspaces"
 SHARED_CACHE_DIR = RUNTIME_ROOT / "cache"
 

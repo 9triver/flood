@@ -104,6 +104,13 @@ class EvacuationTimingTests(unittest.TestCase):
         self.time_steps = [0.5, 1.0, 1.5, 24.0]
         self.resolver = FakeResolver()
 
+    def test_deadline_preserves_selected_routes_water_depth_threshold(self):
+        self.resolver.route["profile"] = "foot"
+        self.resolver.route["blocked_depth_m"] = 0.15
+        result = self.analyze([0.0, 0.0, 0.2, 0.2])
+        self.assertEqual(result["parameters"]["blocked_depth_m"], 0.15)
+        self.assertEqual(result["deadline"]["first_unsafe_time_h"], 1.5)
+
     def tearDown(self):
         self.tempdir.cleanup()
 

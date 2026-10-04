@@ -6,6 +6,7 @@ import threading
 from datetime import datetime
 from typing import Any
 
+from server.directive_basis import validate_directive_basis
 from domains.flood.runtime.directives import (
     issued_directives_path,
     read_issued_directives,
@@ -54,6 +55,9 @@ class DirectiveStore:
         if priority not in DIRECTIVE_PRIORITIES:
             raise ValueError("priority 必须是 normal、urgent 或 critical")
 
+        basis = payload.get("basis")
+        if basis is not None:
+            validate_directive_basis(basis)
         now = datetime.now().astimezone()
         issued_path = issued_directives_path(self.workspaces, workspace_id)
         with self._lock:
@@ -66,9 +70,10 @@ class DirectiveStore:
                 "recipients": recipients,
                 "priority": priority,
                 "status": "issued",
-                "simulation_time": runtime_status.get("observed_at"),
+                "basis": basis,
+                "simulation_time": (basis or {}).get("snapshot", {}).get("simulation_time", runtime_status.get("observed_at")),
                 "forecast_version": _forecast_version(
-                    runtime_status.get("forecast_version")
+                    (basis or {}).get("snapshot", {}).get("forecast_version", runtime_status.get("forecast_version"))
                 ),
                 "issued_at": now.isoformat(timespec="seconds"),
             }

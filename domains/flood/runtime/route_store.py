@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,14 @@ def save_planned_route(route: dict[str, Any]) -> None:
         ]
         rows.append(route)
         target.parent.mkdir(parents=True, exist_ok=True)
+        # Keep prior route versions addressable by issued directives and follow-up reviews.
+        for historical in [*read_planned_routes(), route]:
+            ident = str(historical.get("evacuation_route_id") or "")
+            if re.fullmatch(r"[A-Za-z0-9_-]+", ident):
+                archive = target.parent / "archive" / f"{ident}.json"
+                archive.parent.mkdir(parents=True, exist_ok=True)
+                if not archive.exists():
+                    archive.write_text(json.dumps(historical, ensure_ascii=False), encoding="utf-8")
         body = "\n".join(json.dumps(row, ensure_ascii=False, sort_keys=True) for row in rows)
         temp_path = target.with_suffix(".jsonl.tmp")
         temp_path.write_text(f"{body}\n", encoding="utf-8")
@@ -52,6 +61,16 @@ def read_planned_routes() -> list[dict[str, Any]]:
         for line in target.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+
+
+def read_archived_route(route_id: str) -> dict | None:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", str(route_id)):
+        return None
+    path = planned_routes_path().parent / "archive" / f"{route_id}.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
 
 
 def normalize_planned_route(route: dict[str, Any]) -> dict[str, Any]:

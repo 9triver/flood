@@ -10,6 +10,8 @@ from __future__ import annotations
 from typing import Any
 
 from .forecast_context import forecast_input_context, resolve_forecast_context, get_flood_status, unavailable_forecast
+from .object_sets import save_object_set, set_summary, refine_object_set, read_object_set
+from .evacuation_options import compare_evacuation_sites, review_route
 from .nearby import find_nearby_objects
 from .evacuation_timing import analyze_latest_evacuation_time
 from .forecast import assess_flood_emergency, run_flood_forecast
@@ -26,8 +28,28 @@ class FloodRuntimeService:
                             limit: int = 10, filters: dict | None = None,
                             min_distance_m: float = 0, offset: int = 0,
                             exclude_object_ids: list[str] | None = None) -> dict[str, Any]:
-        return find_nearby_objects(self.resolver, reference_object_type, reference_object_id,
-                                   target_type, radius_m, limit, filters, min_distance_m, offset, exclude_object_ids)
+        result = find_nearby_objects(self.resolver, reference_object_type, reference_object_id,
+                                     target_type, radius_m, limit, filters, min_distance_m, offset, exclude_object_ids)
+        if "error" not in result:
+            matching_ids = result.pop("_matched_object_ids")
+            basis = {key: result[key] for key in ("reference", "radius_m", "min_distance_m", "filters", "excluded_object_ids")}
+            matching = save_object_set(target_type, matching_ids, basis=basis)
+            page = save_object_set(target_type, result["object_ids"], basis={**basis, "offset": offset, "limit": limit}, parent_set_id=matching["object_set_id"])
+            result["matching_set"] = set_summary(matching)
+            result["page_set"] = set_summary(page)
+        return result
+
+    def refine_object_set(self, object_set_id: str, filters: dict | None = None,
+                          exclude_object_ids: list[str] | None = None) -> dict:
+        return refine_object_set(self.resolver, object_set_id, filters, exclude_object_ids)
+
+    def compare_evacuation_sites(self, evacuation_unit_id: str, object_set_id: str,
+                                 required_capacity: int | None = None, view: str = "current",
+                                 time_h: float | None = None) -> dict:
+        return compare_evacuation_sites(self.resolver, evacuation_unit_id, object_set_id, required_capacity, view, time_h)
+
+    def review_route(self, evacuation_route_id: str, view: str = "current", time_h: float | None = None) -> dict:
+        return review_route(self.resolver, evacuation_route_id, view, time_h)
 
     def get_flood_status(self, view: str = "current", time_h: float | None = None) -> dict[str, Any]:
         return get_flood_status(view, time_h)
@@ -58,7 +80,16 @@ class FloodRuntimeService:
         view: str = "current",
         object_ids: list[str] | None = None,
         filters: dict[str, Any] | None = None,
+        object_set_id: str = "",
     ) -> dict[str, Any]:
+        if object_set_id:
+            if object_ids is not None:
+                return {"error": "object_set_id 与 object_ids 不能同时提供"}
+            try:
+                selected = read_object_set(object_set_id, target_type if target_type != "all" else None)
+                target_type, object_ids = selected["object_type"], selected["object_ids"]
+            except ValueError as exc:
+                return {"error": str(exc)}
         context = resolve_forecast_context(forecast_id, time_h, view)
         if not context["available"]:
             return unavailable_forecast(context)
@@ -78,6 +109,8 @@ class FloodRuntimeService:
             # Context validation above established that this is a valid dry result.
             result["status"] = "completed"
             result["basis"] = "对应的有效预测中没有淹没网格，不代表现场实测。"
+        if object_set_id and "analysis_scope" in result:
+            result["analysis_scope"]["object_set_id"] = object_set_id
         return result
 
 
@@ -87,7 +120,7 @@ class FloodRuntimeService:
         evacuation_unit_name: str = "",
         evacuation_route_id: str = "",
         forecast_id: str = "latest",
-        blocked_depth_m: float = 0.3,
+        blocked_depth_m: float | None = None,
         clearance_duration_min: float | None = None,
         safety_buffer_min: float = 0,
     ) -> dict[str, Any]:

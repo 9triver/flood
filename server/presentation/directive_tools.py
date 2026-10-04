@@ -7,6 +7,7 @@ from oag.ontology.schema import Ontology
 from oag.tools.registry import ToolDef, ToolRegistry
 
 from server.presentation.tool_metadata import presentation_tool_kwargs
+from server.directive_basis import build_directive_basis
 from server.serialization import parse_json_object
 
 
@@ -32,6 +33,8 @@ def register_directive_tools(tools: ToolRegistry, ontology: Ontology) -> None:
                     "type": "string",
                     "description": "指令接收单位或执行对象，多个对象用顿号分隔",
                 },
+                "evacuation_route_id": {"type": "string", "description": "本次建议采用的路线 ID，提供后会复核并随草稿保存依据"},
+                "object_set_id": {"type": "string", "description": "建议依据的对象集合，可选"},
                 "priority": {
                     "type": "string",
                     "enum": sorted(DIRECTIVE_PRIORITIES),
@@ -56,6 +59,7 @@ def build_directive_editor_result(args: dict[str, Any]) -> str:
     return json.dumps({
         "kind": "frontend_directive_editor",
         "draft": {
+            "basis": build_directive_basis(args.get("evacuation_route_id", ""), args.get("object_set_id", "")),
             "title": title,
             "content": content,
             "recipients": recipients,
@@ -75,6 +79,7 @@ def tool_result_to_directive_event(result: str) -> dict[str, Any] | None:
         return {
             "type": "directive_draft",
             "draft": {
+                "basis": draft.get("basis"),
                 "title": _required_text(draft, "title", 200),
                 "content": _required_text(draft, "content", 20_000),
                 "recipients": _required_text(draft, "recipients", 500),

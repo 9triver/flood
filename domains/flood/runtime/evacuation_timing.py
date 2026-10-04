@@ -31,7 +31,7 @@ def analyze_latest_evacuation_time(
     evacuation_unit_name: str = "",
     evacuation_route_id: str = "",
     forecast_id: str = "latest",
-    blocked_depth_m: float = DEFAULT_BLOCKED_DEPTH_M,
+    blocked_depth_m: float | None = None,
     clearance_duration_min: float | str | None = None,
     safety_buffer_min: float = 0.0,
 ) -> dict[str, Any]:
@@ -150,7 +150,10 @@ def analyze_latest_evacuation_time(
             forecast_id=normalize_result_forecast_id(forecast_id),
         )
 
-    threshold = max(0.0, float(blocked_depth_m or 0))
+    route_threshold = route.get("blocked_depth_m")
+    if route_threshold is None:
+        route_threshold = 0.15 if route.get("profile") == "foot" else DEFAULT_BLOCKED_DEPTH_M
+    threshold = max(0.0, float(route_threshold if blocked_depth_m in (None, "") else blocked_depth_m))
     duration = resolve_clearance_duration(
         route, route_points, clearance_duration_min,
     )

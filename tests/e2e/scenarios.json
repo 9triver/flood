@@ -1,0 +1,196 @@
+[
+  {
+    "id": "nearby",
+    "message": "显示平竹村1公里内的全部安置点",
+    "tools": [
+      {
+        "name": "find_nearby_objects",
+        "args": {
+          "reference_object_type": "EvacuationUnit",
+          "reference_object_id": "43",
+          "radius_m": 1000,
+          "limit": 100
+        },
+        "save": "near"
+      },
+      {
+        "name": "ui_show_objects",
+        "args": {
+          "objects": [
+            {
+              "object_type": "EvacuationSite",
+              "object_set_id": "$near.matching_set.object_set_id",
+              "fit": false
+            }
+          ]
+        },
+        "save": "near_map"
+      }
+    ]
+  },
+  {
+    "id": "capacity",
+    "message": "只保留刚才这些安置点中容量超过200人的，更新地图",
+    "tools": [
+      {
+        "name": "refine_object_set",
+        "args": {
+          "object_set_id": "$near.matching_set.object_set_id",
+          "filters": {
+            "capacity_person__gt": 200
+          }
+        },
+        "save": "filtered"
+      },
+      {
+        "name": "ui_show_objects",
+        "args": {
+          "objects": [
+            "$filtered.map_update"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "compare",
+    "message": "比较筛选后这些安置点，按平竹村163人选择容量足够且不在当前淹没范围内的地点，说明路线是否已验证",
+    "tools": [
+      {
+        "name": "compare_evacuation_sites",
+        "args": {
+          "evacuation_unit_id": "43",
+          "object_set_id": "$filtered.object_set_id",
+          "required_capacity": 163
+        },
+        "save": "options"
+      }
+    ]
+  },
+  {
+    "id": "route",
+    "message": "就用刚才推荐的安置点，从平竹村规划步行路线并显示",
+    "tools": [
+      {
+        "name": "plan_route",
+        "args": {
+          "start_object_type": "EvacuationUnit",
+          "start_object_id": "43",
+          "destination_site_id": "$options.recommended_site_id",
+          "profile": "foot"
+        },
+        "save": "route"
+      },
+      {
+        "name": "ui_show_objects",
+        "args": {
+          "objects": [
+            {
+              "object_type": "EvacuationRoute",
+              "object_ids": [
+                "$route.route.evacuation_route_id"
+              ],
+              "fit": false
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "review",
+    "message": "复核刚才那条路线在当前洪水状态下是否仍可通行，不要重新规划",
+    "tools": [
+      {
+        "name": "review_route",
+        "args": {
+          "evacuation_route_id": "$route.route.evacuation_route_id"
+        },
+        "save": "review"
+      }
+    ]
+  },
+  {
+    "id": "draft",
+    "message": "把刚才确认的路线写入转移准备指令草稿，接收对象同古镇政府，使用这批候选对象作为依据，只打开草稿不要发出",
+    "tools": [
+      {
+        "name": "ui_open_emergency_directive_editor",
+        "args": {
+          "title": "平竹村转移准备",
+          "recipients": "同古镇政府",
+          "priority": "urgent",
+          "content": "请核实安置点接收条件，并按已确认步行路线组织转移准备。发出后按现场指挥安排执行。",
+          "evacuation_route_id": "$route.route.evacuation_route_id",
+          "object_set_id": "$filtered.object_set_id"
+        },
+        "save": "draft"
+      }
+    ]
+  },
+  {
+    "id": "forecast_scope",
+    "message": "显示已有预测第6小时的淹没范围，只分析刚才筛选后那批安置点的影响，不重算预测",
+    "tools": [
+      {
+        "name": "ui_show_objects",
+        "args": {
+          "objects": [
+            {
+              "object_type": "HydrodynamicGridCell",
+              "filters": {
+                "forecast_id": "latest",
+                "time_h": 6
+              },
+              "fit": false
+            }
+          ]
+        }
+      },
+      {
+        "name": "analyze_inundation_impacts",
+        "args": {
+          "object_set_id": "$filtered.object_set_id",
+          "time_h": 6
+        },
+        "save": "impact"
+      }
+    ]
+  },
+  {
+    "id": "deadline",
+    "message": "根据已有24小时预测，分析平竹村沿刚才规划路线的最晚出发时间，不要重算预测或改用预定路线",
+    "tools": [
+      {
+        "name": "analyze_latest_evacuation_time",
+        "args": {
+          "evacuation_unit_id": "43",
+          "evacuation_route_id": "$route.route.evacuation_route_id"
+        },
+        "save": "deadline"
+      }
+    ]
+  },
+  {
+    "id": "review_issued",
+    "message": "用当前预测复核刚才发出的指令所采用的路线，不要重规划或发新指令",
+    "tools": [
+      {
+        "name": "query",
+        "args": {
+          "object_type": "EmergencyDirective",
+          "order_by": "-issued_at",
+          "limit": 1
+        },
+        "save": "issued"
+      },
+      {
+        "name": "review_route",
+        "args": {
+          "evacuation_route_id": "$issued.0.basis.evacuation_route_id"
+        },
+        "save": "review_changed"
+      }
+    ]
+  }
+]

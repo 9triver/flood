@@ -34,8 +34,8 @@ if TYPE_CHECKING:
 class FloodApp:
     """Stable application facade for HTTP and autonomous event runtimes."""
 
-    def __init__(self):
-        self.llm_config = load_env(PROJECT_DIR / ".env")
+    def __init__(self, config: dict[str, str] | None = None):
+        self.llm_config = config if config is not None else load_env(PROJECT_DIR / ".env")
         self.ontology, self.repository, self.registry = load_domain(DOMAIN_DIR)
         self.resolver = self.registry.get_resolver("flood_repository")
 
