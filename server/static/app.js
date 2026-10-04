@@ -66,6 +66,8 @@ const state = {
   playbackLongPressTriggered: false,
   lastMockObservation: null,
   rainfallForecast: [],
+  basinRainfallHistory: [],
+  basinTab: "rain",
   boundaryFlowForecast: null,
   mapTimeContext: {
     mode: "current",
@@ -79,6 +81,8 @@ const state = {
   stationRainfallForecast: new Map(),
   stationRainfallLayerInitialized: false,
   reservoirTelemetry: null,
+  reservoirDispatchTime: null,
+  reservoirDispatchChart: "flow",
   reservoirTelemetryObservedAt: null,
   reservoirTelemetryHistory: [],
   reservoirForecast: null,
@@ -130,6 +134,7 @@ const state = {
     playing: false,
   },
   impactAnalysis: null,
+  impactRequested: false,
   impactListView: {
     tab: "affected",
     type: "all",
@@ -464,6 +469,16 @@ function initMap() {
     window.requestAnimationFrame(syncStationPopupOpenState);
   });
   state.map.on("zoomend moveend resize", refreshRoadNameLabels);
+  state.map.on("resize", () => window.requestAnimationFrame(() => {
+    let lastPopup = null;
+    state.map.eachLayer((layer) => {
+      if (layer instanceof L.Popup && layer.isOpen()) {
+        layer.update();
+        lastPopup = layer;
+      }
+    });
+    if (lastPopup) keepPopupInsideMap(lastPopup);
+  }));
   setBasemap(readStoredBasemap(), { persist: false });
   initRainEffect();
 }
@@ -485,6 +500,7 @@ function keepPopupInsideMap(popup) {
   const popupRect = element.getBoundingClientRect();
   const mapRect = mapElement.getBoundingClientRect();
   const padding = 12;
+  const topPadding = element.querySelector(".dispatch-panel") ? 64 : padding;
   let offsetX = 0;
   let offsetY = 0;
   if (popupRect.left < mapRect.left + padding) {
@@ -492,8 +508,8 @@ function keepPopupInsideMap(popup) {
   } else if (popupRect.right > mapRect.right - padding) {
     offsetX = popupRect.right - mapRect.right + padding;
   }
-  if (popupRect.top < mapRect.top + padding) {
-    offsetY = popupRect.top - mapRect.top - padding;
+  if (popupRect.top < mapRect.top + topPadding) {
+    offsetY = popupRect.top - mapRect.top - topPadding;
   } else if (popupRect.bottom > mapRect.bottom - padding) {
     offsetY = popupRect.bottom - mapRect.bottom + padding;
   }
@@ -1037,6 +1053,44 @@ function layerObjectIcon(objectType, feature = {}, className = "layer-list-icon"
 }
 
 function bindEvents() {
+  document.querySelectorAll("[data-basin-tab]").forEach((button, index, buttons) => {
+    button.addEventListener("click", () => setBasinTab(button.dataset.basinTab));
+    button.addEventListener("keydown", (event) => {
+      let next = index;
+      if (event.key === "ArrowRight") next = (index + 1) % buttons.length;
+      else if (event.key === "ArrowLeft") next = (index + buttons.length - 1) % buttons.length;
+      else if (event.key === "Home") next = 0;
+      else if (event.key === "End") next = buttons.length - 1;
+      else return;
+      event.preventDefault(); buttons[next].click(); buttons[next].focus();
+    });
+  });
+  document.getElementById("runImpactAnalysis").addEventListener("click", () => {
+    state.impactRequested = true;
+    refreshImpactAnalysisForTimeline();
+  });
+  document.getElementById("openReservoirDispatch").addEventListener("click", async () => {
+    try {
+      await loadObject("Station", { station_type: "reservoir" }, { fit: false });
+      await focusObject({ object_type: "Station", object_id: LONGTAN_RESERVOIR_STATION_ID });
+    } catch (error) { addTrace("ERR", "水库定位失败", String(error)); }
+  });
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-dispatch-time], [data-dispatch-chart]");
+    if (!button) return;
+    event.preventDefault();
+    if (button.dataset.dispatchChart) {
+      state.reservoirDispatchChart = button.dataset.dispatchChart;
+    } else {
+      state.reservoirDispatchTime = button.dataset.dispatchTime || null;
+    }
+    refreshStationTelemetryMarkers();
+    window.requestAnimationFrame(() => {
+      state.featureIndex.forEach((entry) => {
+        if (entry.layer.isPopupOpen?.()) keepPopupInsideMap(entry.layer.getPopup());
+      });
+    });
+  });
   document.addEventListener("click", (event) => {
     const button = event.target.closest("[data-road-object-id]");
     if (!button) return;
@@ -2039,6 +2093,7 @@ function clearImpactAnalysisState() {
   state.impactRefreshSeq += 1;
   state.impactFocusSeq += 1;
   state.impactAnalysis = null;
+  state.impactRequested = false;
   state.impactMarkerLayer?.clearLayers();
   state.impactMarkers.clear();
   clearImpactObjectSelection({ removeLayer: true });
@@ -2065,6 +2120,7 @@ function clearImpactAnalysisState() {
   document.getElementById("impactNotice").hidden = true;
   document.getElementById("impactListSummary").textContent = "道路按已收录路段统计";
   if (list) list.innerHTML = '<p class="impact-empty">加载预测结果后查看影响分析</p>';
+  renderImpactReadiness();
 }
 
 function clearEventMarkers() {
@@ -2980,16 +3036,9 @@ function renderMockObservation(event) {
     applyMapTimeContext();
   }
   document.getElementById("telemetryTime").textContent = formatMockTime(simulationTime);
-  renderTelemetryWeather(observation.rainfall_mm);
-  setMockField("rainfall_mm", observation.rainfall_mm, 1);
-  setMockField("reservoir_level_m", observation.reservoir_level_m, 3);
-  setMockField("reservoir_inflow_m3s", observation.reservoir_inflow_m3s, 2);
-  setMockField("reservoir_release_m3s", observation.reservoir_release_m3s, 2);
-  BOUNDARY_FLOW_KEYS.forEach((key) => {
-    const target = document.querySelector(`[data-mock-boundary="${key}"]`);
-    const flow = observation.boundaries?.[key]?.flow_m3s;
-    if (target) target.textContent = formatMockNumber(flow, 2);
-  });
+  state.basinRainfallHistory = state.basinRainfallHistory.filter((row) => row.valid_time !== simulationTime);
+  state.basinRainfallHistory.push({ ...observation, valid_time: simulationTime });
+  state.basinRainfallHistory = state.basinRainfallHistory.slice(-48);
   recordBoundaryFlowObservation(observation);
   renderBoundaryFlowHistoryChart();
   renderForecastWindowSummary(observation);
@@ -3023,7 +3072,7 @@ function clearMockTelemetry() {
   setMapTimeContext({ mode: "current", currentAt: null });
   clearBoundaryFlowHistory();
   document.getElementById("telemetryTime").textContent = "--";
-  renderTelemetryWeather(null);
+  state.basinRainfallHistory = [];
   document.querySelectorAll("[data-mock-field], [data-mock-boundary]").forEach((element) => {
     element.textContent = "--";
   });
@@ -3195,8 +3244,8 @@ function renderBoundaryFlowHistoryChart() {
 }
 
 function renderForecastWindowSummary(observation) {
+  renderBasinWorkbench(observation);
   const flow = state.boundaryFlowForecast;
-  const assessment = state.reservoirAssessment;
   const window = document.getElementById("telemetryForecastWindow");
   const cnnVersion = state.hydrodynamicTimeline.forecastVersion;
   if (window) {
@@ -3207,43 +3256,6 @@ function renderForecastWindowSummary(observation) {
       ? `${timeRange} · CNN ${formatForecastVersion(cnnVersion)}`
       : timeRange;
   }
-  const flowPeak = document.getElementById("forecastFlowPeak");
-  const flowPeakTime = document.getElementById("forecastFlowPeakTime");
-  const thresholdTime = document.getElementById("forecastFlowThresholdTime");
-  const reservoirPeak = document.getElementById("forecastReservoirPeak");
-  const reservoirPeakTime = document.getElementById("forecastReservoirPeakTime");
-  const alert = document.getElementById("forecastReservoirAlert");
-  const alertTime = document.getElementById("forecastReservoirAlertTime");
-  if (flowPeak) flowPeak.textContent = flow ? formatMockNumber(flow.peak_total_flow_m3s, 1) : "--";
-  if (flowPeakTime) flowPeakTime.textContent = flow?.peak_at
-    ? `${formatRainfallChartTime(flow.peak_at)} · m³/s`
-    : "m³/s";
-  if (thresholdTime) thresholdTime.textContent = flow?.first_threshold_exceeded_at
-    ? formatRainfallChartTime(flow.first_threshold_exceeded_at)
-    : (flow ? "未超过" : "--");
-  if (reservoirPeak) reservoirPeak.textContent = assessment?.peak
-    ? formatReservoirLevel(assessment.peak.level_m)
-    : "--";
-  if (reservoirPeakTime) reservoirPeakTime.textContent = assessment?.peak?.valid_time
-    ? `${formatRainfallChartTime(assessment.peak.valid_time)} · m`
-    : "m";
-  if (alert) {
-    alert.textContent = forecastAlertSummaryLabel(assessment?.alert, Boolean(assessment));
-    alert.title = assessment?.alert ? reservoirAlertText(assessment.alert) : "";
-    alert.classList.toggle("is-alert", Boolean(assessment?.alert));
-  }
-  if (alertTime) alertTime.textContent = assessment?.alert?.triggered_at
-    ? formatRainfallChartTime(assessment.alert.triggered_at)
-    : "";
-}
-
-function forecastAlertSummaryLabel(alert, hasAssessment) {
-  if (!alert) return hasAssessment ? "无预警" : "--";
-  return {
-    critical: "超校核水位",
-    danger: "逼近校核水位",
-    warning: "接近设计水位",
-  }[alert.severity] || "已触发预警";
 }
 
 function expandFlowRange(min, max) {
@@ -3307,38 +3319,6 @@ function evolutionPlaybackStatusLabel() {
   if (state.playbackPhase === "finished") return "已完成";
   if (state.playbackPhase === "stopped") return "已停止";
   return state.lastMockObservation ? "待继续" : "等待数据";
-}
-
-function renderTelemetryWeather(value) {
-  const parsed = value === null || value === undefined || value === "" ? null : Number(value);
-  const rainfall = Number.isFinite(parsed) ? parsed : null;
-  const weather = telemetryWeatherForRainfall(rainfall);
-  const container = document.getElementById("telemetryWeather");
-  container.dataset.weather = weather.key;
-  document.getElementById("telemetryWeatherIcon").innerHTML = `<i data-lucide="${weather.icon}"></i>`;
-  document.getElementById("telemetryWeatherLabel").textContent = weather.label;
-  document.getElementById("telemetryWeatherDetail").textContent = rainfall === null
-    ? "当前时段降雨 -- mm"
-    : `当前时段降雨 ${rainfall.toFixed(1)} mm`;
-  renderIcons();
-}
-
-function telemetryWeatherForRainfall(rainfall) {
-  if (rainfall === null) return { key: "waiting", label: "等待数据", icon: "cloud-sun" };
-  const key = rainfallLevel(rainfall);
-  return {
-    dry: { key, label: "无降雨", icon: "cloud-sun" },
-    light: { key, label: "小雨", icon: "cloud-drizzle" },
-    moderate: { key, label: "中雨", icon: "cloud-rain" },
-    heavy: { key, label: "大雨", icon: "cloud-rain-wind" },
-    storm: { key, label: "暴雨", icon: "cloud-lightning" },
-    severe: { key, label: "大暴雨", icon: "cloud-lightning" },
-  }[key];
-}
-
-function setMockField(field, value, digits) {
-  const target = document.querySelector(`[data-mock-field="${field}"]`);
-  if (target) target.textContent = formatMockNumber(value, digits);
 }
 
 function formatMockNumber(value, digits) {
@@ -4039,6 +4019,10 @@ function popupHtml(objectType, feature) {
       ${steps.length ? `<div class="popup-meta">导航步骤 ${steps.length} 步，点击路线查看详情</div>` : ""}
     `;
   }
+  if (objectType === "Reservoir" && props.reservoir_id === "longtan") {
+    return `<div class="popup-title">${escapeHtml(name)}</div>
+      ${reservoirTelemetryPopupHtml(reservoirTelemetryForProps(props))}`;
+  }
   if (objectType === "Station") {
     const stationType = objectIconInfo(objectType, feature).label;
     const rainfall = stationRainfallForProps(props);
@@ -4062,10 +4046,10 @@ function objectPopupOptions(objectType) {
     closeOnClick: false,
     closeButton: true,
   };
-  if (objectType !== "Station") return options;
+  if (!["Station", "Reservoir"].includes(objectType)) return options;
   return {
     ...options,
-    maxWidth: 320,
+    maxWidth: 400,
     autoPanPaddingTopLeft: L.point(18, 18),
     autoPanPaddingBottomRight: L.point(18, 18),
   };
@@ -4231,6 +4215,10 @@ function ensureStationRainfallLayer(readings) {
 
 function refreshStationTelemetryMarkers() {
   state.featureIndex.forEach((entry) => {
+    if (entry.objectType === "Reservoir") {
+      entry.layer.setPopupContent?.(popupHtml("Reservoir", entry.feature));
+      return;
+    }
     if (entry.objectType !== "Station") return;
     const props = entry.feature?.properties || {};
     if (!["meteorological", "reservoir"].includes(props.station_type)) return;
@@ -4285,9 +4273,9 @@ function stationRainfallForProps(props = {}) {
 }
 
 function reservoirTelemetryForProps(props = {}) {
-  if (props.station_type !== "reservoir") return null;
+  if (props.station_type !== "reservoir" && props.reservoir_id !== "longtan") return null;
   const stationId = String(props.station_id || props.station_code || "");
-  if (stationId !== LONGTAN_RESERVOIR_STATION_ID) return null;
+  if (stationId !== LONGTAN_RESERVOIR_STATION_ID && props.reservoir_id !== "longtan") return null;
   const current = state.reservoirTelemetry;
   if (!current || state.mapTimeContext.mode !== "time_slice") {
     return current ? {
@@ -4473,11 +4461,13 @@ function rainfallLevel(value) {
 }
 
 function updateReservoirTelemetry(observation, observedAt) {
+  state.reservoirDispatchTime = null;
   const reservoirLevel = finiteTelemetryNumber(observation?.reservoir_level_m);
   const current = observedAt && reservoirLevel !== null
     ? {
       station_id: LONGTAN_RESERVOIR_STATION_ID,
       reservoir_id: "longtan",
+      reservoir_dispatch: observation.reservoir_dispatch || null,
       reservoir_level_m: reservoirLevel,
       reservoir_inflow_m3s: finiteTelemetryNumber(observation.reservoir_inflow_m3s),
       reservoir_release_m3s: finiteTelemetryNumber(observation.reservoir_release_m3s),
@@ -4506,6 +4496,7 @@ function recordReservoirTelemetryHistory(current, observedAt) {
     .filter((point) => point.observed_time !== time);
   history.push({
     observed_time: time,
+    reservoir_dispatch: current.reservoir_dispatch,
     reservoir_level_m: current.reservoir_level_m,
     reservoir_inflow_m3s: current.reservoir_inflow_m3s,
     reservoir_release_m3s: current.reservoir_release_m3s,
@@ -4523,6 +4514,7 @@ function normalizeReservoirForecast(forecast) {
       reservoir_inflow_m3s: finiteTelemetryNumber(point?.reservoir_inflow_m3s),
       reservoir_release_m3s: finiteTelemetryNumber(point?.reservoir_release_m3s),
       status: point?.status || null,
+      reservoir_dispatch: point?.reservoir_dispatch || null,
     }))
     .filter((point) => point.valid_time && point.reservoir_level_m !== null);
   return { ...forecast, series };
@@ -4559,31 +4551,87 @@ function reservoirStatusKey(status) {
   return ["normal", "warning", "danger", "critical"].includes(key) ? key : "normal";
 }
 
+const DISPATCH_STATES = {
+  NORMAL: { label: "正常蓄水", color: "#238b57" },
+  PRERELEASE: { label: "预泄判定", color: "#a47708" },
+  FULL_CAPACITY: { label: "全能力下泄", color: "#c46114" },
+  DRAWDOWN: { label: "退水腾库", color: "#087f8c" },
+  EMERGENCY: { label: "应急下泄判定", color: "#c62828" },
+};
+
+function reservoirDispatchPoints() {
+  return reservoirChartTimeline(state.reservoirTelemetryHistory, state.reservoirForecast?.series || []);
+}
+
+function selectedReservoirDispatchPoint() {
+  const points = reservoirDispatchPoints();
+  const requested = state.reservoirDispatchTime
+    || (state.mapTimeContext.mode === "time_slice" ? state.mapTimeContext.validAt : state.reservoirTelemetryObservedAt);
+  const target = Date.parse(requested);
+  // Decisions are discrete hourly results; never interpolate state/reason/capacity.
+  if (!Number.isFinite(target)) return null;
+  if (!points.length || target < Date.parse(points[0].time) || target > Date.parse(points.at(-1).time)) return null;
+  return points.findLast((point) => Date.parse(point.time) <= target) || null;
+}
+
 function reservoirTelemetryPopupHtml(telemetry) {
-  if (!telemetry) return "";
-  const assessment = state.reservoirAssessment;
-  const forecast = telemetry.display_mode === "forecast";
-  const currentStatus = telemetry.status || assessment?.current?.status;
-  const statusKey = reservoirStatusKey(currentStatus);
-  return `
-    <div class="station-reservoir-panel">
-      <div class="station-reservoir-current is-${statusKey}">
-        <div class="station-reservoir-current-head">
-          <span>${forecast ? "当前地图预测" : "当前模拟观测"}</span>
-          <time>${escapeHtml(formatRainfallChartTime(telemetry.display_time || state.reservoirTelemetryObservedAt))}</time>
-          <strong>${escapeHtml(currentStatus?.label || "正常")}</strong>
-        </div>
-        <div class="station-reservoir-current-values">
-          <div><span>水库水位</span><strong>${escapeHtml(formatReservoirLevel(telemetry.reservoir_level_m))}</strong><small>m</small></div>
-          <div><span>入库流量</span><strong>${escapeHtml(formatReservoirFlow(telemetry.reservoir_inflow_m3s))}</strong><small>m³/s</small></div>
-          <div><span>泄洪流量</span><strong>${escapeHtml(formatReservoirFlow(telemetry.reservoir_release_m3s))}</strong><small>m³/s</small></div>
-        </div>
-      </div>
-      ${reservoirLevelChartHtml()}
-      ${reservoirFlowChartHtml()}
-      ${reservoirForecastAssessmentHtml()}
+  if (!telemetry) return `<div class="station-reservoir-panel dispatch-empty">开始演进后查看水库模拟调度过程。</div>`;
+  const point = selectedReservoirDispatchPoint();
+  const decision = point?.reservoir_dispatch;
+  const info = DISPATCH_STATES[decision?.state];
+  const future = point && Date.parse(point.time) > Date.parse(state.reservoirTelemetryObservedAt);
+  const thresholds = decision?.thresholds;
+  const stats = point ? [
+    ["入库流量", formatReservoirFlow(point.reservoir_inflow_m3s), "m³/s"],
+    ["计算泄流", formatReservoirFlow(point.reservoir_release_m3s), "m³/s"],
+    ["时段末水位", formatReservoirLevel(point.reservoir_level_m), "m"],
+  ].map(([label, value, unit]) => `<div><span>${label}</span><strong>${escapeHtml(value)}</strong><small>${unit}</small></div>`).join("") : "";
+  return `<div class="station-reservoir-panel dispatch-panel">
+    <header class="dispatch-head" style="--dispatch-color:${info?.color || "#64748b"}">
+      <div><span>模拟调度 · ${!point ? "暂无数据" : future ? "未来预计算" : "已回放"}</span>
+        <h3>${escapeHtml(info?.label || "暂无调度记录")}</h3></div>
+      <button type="button" data-dispatch-time="" title="跟随当前地图时间">跟随时间</button>
+    </header>
+    <div class="dispatch-time">${point ? escapeHtml(formatMockTime(point.time)) : "该时刻不在当前可查看的调度范围内"}</div>
+    <div class="dispatch-metrics">${stats}</div>
+    <div class="dispatch-chart-tabs" role="group" aria-label="调度过程图">
+      <button type="button" data-dispatch-chart="flow" aria-pressed="${state.reservoirDispatchChart === "flow"}">入流 / 泄流</button>
+      <button type="button" data-dispatch-chart="level" aria-pressed="${state.reservoirDispatchChart === "level"}">库水位</button>
     </div>
-  `;
+    ${state.reservoirDispatchChart === "level" ? reservoirLevelChartHtml() : reservoirFlowChartHtml()}
+    ${reservoirDispatchTimelineHtml(point)}
+    ${decision ? `<details class="dispatch-reason">
+      <summary>调度依据与约束</summary>
+    ${thresholds ? `<div class="dispatch-limits">汛限 ${thresholds.flood_limit_level_m.toFixed(2)} · 设计 ${thresholds.design_flood_level_m.toFixed(2)} · 校核 ${thresholds.check_flood_level_m.toFixed(2)} m</div>` : ""}
+      <p>${escapeHtml(decision.reason || "暂无判定依据")}</p>
+      <dl><div><dt>时段初水位（泄流能力依据）</dt><dd>${escapeHtml(formatReservoirLevel(decision.start_level_m))} m</dd></div><div><dt>预泄所需平均流量</dt><dd>${escapeHtml(formatReservoirFlow(decision.required_release_m3s))} m³/s</dd></div>
+      <div><dt>当前泄流能力</dt><dd>${escapeHtml(formatReservoirFlow(decision.available_release_m3s))} m³/s</dd></div>
+      <div><dt>全能力下泄预计最高水位</dt><dd>${escapeHtml(formatReservoirLevel(decision.forecast_max_level_full_m))} m</dd></div></dl>
+      <p class="dispatch-constraint">${escapeHtml(decision.constraint || "")}</p>
+      ${decision.curve_extrapolated ? '<p class="dispatch-constraint">本时段结果包含曲线范围外推。</p>' : ""}
+    </details>` : ""}
+    <footer class="dispatch-footnote">虚线为预计算 · 点击状态带查看 · 模拟调度</footer>
+  </div>`;
+}
+
+function reservoirDispatchTimelineHtml(selected) {
+  const points = reservoirDispatchPoints();
+  const segments = points.map((point) => {
+    const info = DISPATCH_STATES[point.reservoir_dispatch?.state];
+    const future = Date.parse(point.time) > Date.parse(state.reservoirTelemetryObservedAt);
+    const label = `${formatMockTime(point.time)} · ${future ? "未来预计算" : "已回放"} · ${info?.label || "暂无记录"}`;
+    return `<button type="button" class="dispatch-segment${future ? " is-future" : ""}" style="--dispatch-color:${info?.color || "#cbd5e1"}" data-dispatch-time="${escapeHtml(point.time)}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}" aria-pressed="${point.time === selected?.time}"></button>`;
+  }).join("");
+  const legend = Object.values(DISPATCH_STATES).map((info) => `<span style="--dispatch-color:${info.color}">${info.label}</span>`).join("");
+  return `<section class="dispatch-timeline"><strong>逐时调度状态</strong><div class="dispatch-track">${segments}</div><div class="dispatch-legend">${legend}</div></section>`;
+}
+
+function reservoirDispatchCursorHtml(timeline, width, bottom) {
+  const selected = selectedReservoirDispatchPoint();
+  const index = timeline.findIndex((point) => point.time === selected?.time);
+  if (index < 0) return "";
+  const x = reservoirChartXFactory(timeline.length, width)(index);
+  return `<line class="dispatch-cursor" x1="${x}" x2="${x}" y1="7" y2="${bottom}"></line>`;
 }
 
 function reservoirLevelChartHtml() {
@@ -4593,10 +4641,15 @@ function reservoirLevelChartHtml() {
   const levels = timeline
     .map((point) => finiteTelemetryNumber(point.reservoir_level_m))
     .filter((value) => value !== null);
-  const thresholds = state.reservoirAssessment?.thresholds;
+  const dispatchLimits = state.reservoirTelemetry?.reservoir_dispatch?.thresholds;
+  const thresholds = dispatchLimits ? {
+    normal_pool_level_m: dispatchLimits.flood_limit_level_m,
+    design_flood_level_m: dispatchLimits.design_flood_level_m,
+    check_flood_level_m: dispatchLimits.check_flood_level_m,
+  } : state.reservoirAssessment?.thresholds;
   if (!levels.length || !thresholds) return "";
 
-  const width = 280;
+  const width = 340;
   const chartTop = 12;
   const chartBottom = 94;
   const normalPool = Number(thresholds.normal_pool_level_m);
@@ -4648,6 +4701,7 @@ function reservoirLevelChartHtml() {
       <svg viewBox="0 0 ${width} 100" role="img" aria-label="实线为模拟观测，虚线为未来24小时预测">
         ${bands}
         ${thresholdLines}
+        ${reservoirDispatchCursorHtml(timeline, width, chartBottom)}
         <path class="station-reservoir-level-line is-observed" d="${observedPath}"></path>
         <path class="station-reservoir-level-line is-forecast" d="${forecastPath}"></path>
         <line class="station-reservoir-now" x1="${nowX.toFixed(2)}" y1="7" x2="${nowX.toFixed(2)}" y2="${chartBottom + 2}"></line>
@@ -4668,7 +4722,7 @@ function reservoirFlowChartHtml() {
   ]).filter((value) => value !== null);
   if (!values.length) return "";
 
-  const width = 280;
+  const width = 340;
   const chartTop = 12;
   const chartBottom = 82;
   const maxFlow = Math.max(1, ...values) * 1.08;
@@ -4704,9 +4758,11 @@ function reservoirFlowChartHtml() {
         <line class="station-reservoir-grid" x1="0" y1="${((chartTop + chartBottom) / 2).toFixed(2)}" x2="${width}" y2="${((chartTop + chartBottom) / 2).toFixed(2)}"></line>
         <line class="station-reservoir-axis" x1="0" y1="${chartBottom}" x2="${width}" y2="${chartBottom}"></line>
         ${paths}
+        ${reservoirDispatchCursorHtml(timeline, width, chartBottom)}
         <line class="station-reservoir-now" x1="${nowX.toFixed(2)}" y1="7" x2="${nowX.toFixed(2)}" y2="${chartBottom + 2}"></line>
         <text class="station-reservoir-max-label" x="2" y="10">${escapeHtml(formatReservoirFlow(maxFlow))}</text>
       </svg>
+      ${reservoirChartTimesHtml(timeline, nowX / width * 100)}
     </div>
   `;
 }
@@ -6070,6 +6126,7 @@ function parseToolJsonResult(value) {
 }
 
 function registerImpactAnalysisResult(result, options = {}) {
+  state.impactRequested = true;
   if (!result || typeof result !== "object") return;
   if (!["completed", "partial", "no_forecast_cells"].includes(result.status)) return;
   const params = result.parameters || {};
@@ -6098,6 +6155,8 @@ function registerImpactAnalysisResult(result, options = {}) {
 }
 
 function scheduleImpactAnalysisRefresh() {
+  renderImpactReadiness();
+  if (!state.impactRequested) return;
   if (!["time_slice", "envelope"].includes(currentHydrodynamicTimelineContext().mode)) return;
   if (state.hydrodynamicTimeline.playing) return;
   if (state.impactRefreshTimer) window.clearTimeout(state.impactRefreshTimer);
@@ -6131,6 +6190,7 @@ async function refreshImpactAnalysisForTimeline() {
   const controller = new AbortController();
   state.impactRefreshController?.abort();
   state.impactRefreshController = controller;
+  renderImpactReadiness();
   setImpactAnalysisLoading(
     timeline.current_hydrodynamic_time_h,
     timeline.current_hydrodynamic_valid_at,
@@ -6153,6 +6213,7 @@ async function refreshImpactAnalysisForTimeline() {
   } finally {
     if (state.impactRefreshController === controller) {
       state.impactRefreshController = null;
+      renderImpactReadiness();
     }
   }
 }
@@ -6203,6 +6264,7 @@ function setImpactScopeLabel(element, hour, validAt, envelope = false) {
 }
 
 function renderImpactAnalysisResult(result) {
+  state.impactRequested = true;
   const { impacts, nearby, routes: routeImpacts } = impactListData(result);
   const detailImpacts = [...impacts, ...nearby, ...routeImpacts,
     ...routeImpacts.flatMap((item) => [...(item.segment_impacts || []), ...(item.nearby_segment_impacts || [])])];
@@ -6216,6 +6278,7 @@ function renderImpactAnalysisResult(result) {
   };
   renderImpactMarkers([...impacts, ...nearby]);
   renderImpactList(result);
+  renderImpactReadiness();
   updateSelectedImpactDetails(detailImpacts);
 }
 
@@ -7057,4 +7120,114 @@ function getSessionId() {
     window.localStorage.setItem(key, value);
   }
   return value;
+}
+
+const BASIN_RAIN_FIELDS = [
+  ["interval1_rainfall_mm", "区间 1", "381 km²", "#1f7a5c"],
+  ["interval2_rainfall_mm", "区间 2", "85 km²", "#2878b9"],
+  ["reservoir_rainfall_mm", "水库上游", "36 km²", "#a15f13"],
+];
+
+function setBasinTab(tab) {
+  state.basinTab = tab;
+  document.querySelectorAll("[data-basin-tab]").forEach((button) => {
+    const active = button.dataset.basinTab === tab;
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
+    document.getElementById(button.getAttribute("aria-controls")).hidden = !active;
+  });
+}
+
+function basinNumber(value, digits = 2) {
+  const number = finiteTelemetryNumber(value);
+  return number === null ? "--" : number.toFixed(digits);
+}
+
+function basinPeak(points, field) {
+  const valid = points.filter((row) => finiteTelemetryNumber(row?.[field]) !== null);
+  return valid.length ? valid.reduce((best, row) => Number(row[field]) > Number(best[field]) ? row : best) : null;
+}
+
+function basinTable(headers, rows) {
+  return `<table class="basin-table"><thead><tr>${headers.map(h => `<th scope="col">${h}</th>`).join("")}</tr></thead><tbody>${rows.map(cells => `<tr>${cells.map((cell, index) => index === 0 ? `<th scope="row">${cell}</th>` : `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+}
+
+function renderBasinWorkbench(observation) {
+  const future = observation?.rainfall_forecast || [];
+  const hours = future.length;
+  const period = !observation || hours === 24 ? "未来 24h" : `剩余 ${hours}h`;
+  const rainRows = BASIN_RAIN_FIELDS.map(([field, label, area, color]) => {
+    const values = future.map(row => finiteTelemetryNumber(row[field]));
+    const complete = values.length && values.every(value => value !== null);
+    const peak = basinPeak(future, field);
+    return [`<span class="basin-dot" style="background:${color}"></span>${label} <small>${area}</small>`,
+      `<strong>${basinNumber(observation?.[field])}</strong>`,
+      complete ? values.reduce((a, b) => a + b, 0).toFixed(2) : "--",
+      `${basinNumber(peak?.[field])}<small>${peak ? escapeHtml(formatRainfallChartTime(peak.valid_time)) : "--"}</small>`];
+  });
+  document.getElementById("basinRainTable").innerHTML = basinTable(
+    ["分区 / 控制面积", "当前雨量", `${period}累计`, "最大时段 / 时刻"], rainRows);
+  document.getElementById("basinRainNote").textContent = observation
+    ? `面雨量输入 · mm / 时段；累计不含当前时段。${hours < 24 ? "输入尾段不足 24 小时。" : ""}测站雨量在 marker 中查看。`
+    : "等待降雨输入；三个分区分别驱动产流。";
+  renderBasinRainChart(observation);
+  const flows = observation?.boundary_flow_forecast?.series || [];
+  const currentTime = observation?.simulation_time || observation?.observed_at;
+  const flowRows = BOUNDARY_FLOW_KEYS.map(key => {
+    const current = observation?.boundaries?.[key]?.flow_m3s;
+    const points = observation ? [{ valid_time: currentTime, value: current }, ...flows.map(row => ({ valid_time: row.valid_time, value: row.boundaries?.[key]?.flow_m3s }))] : [];
+    const peak = basinPeak(points, "value");
+    const source = key === "tonggu" ? "区间2 × 0.946" : key === "upstream" ? "水库计算泄流" : "分区面雨量产流";
+    return [`<span class="basin-dot" style="background:${BOUNDARY_FLOW_COLORS[key]}"></span>${BOUNDARY_FLOW_LABELS[key]}<small>${source}</small>`, `<strong>${basinNumber(current)}</strong>`, basinNumber(peak?.value), peak ? escapeHtml(formatRainfallChartTime(peak.valid_time)) : "--"];
+  });
+  document.getElementById("basinFlowTable").innerHTML = basinTable(["CNN 边界 / 来源", "当前流量", "窗口峰值", "峰值时刻"], flowRows);
+  const threshold = observation?.boundary_flow_forecast?.first_threshold_exceeded_at;
+  document.getElementById("basinFlowNote").textContent = observation
+    ? `派生流量 · m³/s · ${flows.length}h窗口含当前点；四边界合计首次超 230：${threshold ? formatRainfallChartTime(threshold) : "未超过"}`
+    : "等待产流与水库调度计算。";
+  const decision = observation?.reservoir_dispatch;
+  const label = DISPATCH_STATES[decision?.state]?.label || "等待调度数据";
+  const reservoirFuture = observation?.reservoir_forecast?.series || [];
+  const reservoirWindow = observation ? [observation, ...reservoirFuture] : [];
+  const dispatchRows = [["reservoir_inflow_m3s", "入库流量 · m³/s"], ["reservoir_release_m3s", "计算泄流 · m³/s"], ["reservoir_level_m", "时段末水位 · m"]].map(([field, name]) => {
+    const peak = basinPeak(reservoirWindow, field);
+    return [name, `<strong>${basinNumber(observation?.[field])}</strong>`, basinNumber(peak?.[field])];
+  });
+  document.getElementById("basinDispatchSummary").innerHTML = `<div class="basin-dispatch-state"><strong>${escapeHtml(label)}</strong><span>模拟调度 · 演进当前</span></div>
+    <p class="basin-note">${escapeHtml(decision?.constraint || "开始演进后查看模拟调度状态。")}</p>
+    ${basinTable(["水库指标", "演进当前", `未来${reservoirFuture.length}h窗口最大`], dispatchRows)}
+    <div class="basin-note">判定原因和完整过程通过水库 marker 查看。</div>`;
+}
+
+function renderBasinRainChart(observation) {
+  const element = document.getElementById("basinRainChart");
+  if (!observation) { element.innerHTML = ""; return; }
+  const past = state.basinRainfallHistory;
+  const future = observation.rainfall_forecast || [];
+  const points = [...past, ...future];
+  const maximum = Math.max(1, ...points.flatMap(row => BASIN_RAIN_FIELDS.map(([field]) => Number(row[field]) || 0)));
+  const x = i => 22 + i / Math.max(1, points.length - 1) * 294;
+  const y = v => 40 - v / maximum * 32;
+  const path = (rows, field, offset) => rows.map((row, i) => finiteTelemetryNumber(row[field]) === null ? "" : `${i ? "L" : "M"}${x(i + offset).toFixed(2)},${y(Number(row[field])).toFixed(2)}`).join(" ");
+  const lines = BASIN_RAIN_FIELDS.map(([field, label, , color]) => `<path d="${path(past, field, 0)}" stroke="${color}"/><path d="${path(past.length ? [past.at(-1), ...future] : future, field, Math.max(0, past.length - 1))}" stroke="${color}" stroke-dasharray="3 3"><title>${label} · 未来输入</title></path>`).join("");
+  element.innerHTML = `<span>三分区雨量 · 实线已回放 / 虚线未来输入</span><svg viewBox="0 0 320 54" role="img" aria-label="三分区面雨量过程"><g fill="none" stroke-width="1.3">${lines}<path d="M${x(Math.max(0, past.length - 1))},3V42" stroke="#64748b" stroke-dasharray="2 3"/></g><text x="0" y="10">${maximum.toFixed(1)}</text><text x="22" y="53">${escapeHtml(formatMockClock(points[0]?.valid_time))}</text><text x="316" y="53" text-anchor="end">${escapeHtml(formatMockClock(points.at(-1)?.valid_time))}</text></svg>`;
+}
+
+function renderImpactReadiness() {
+  const timeline = currentHydrodynamicTimelineContext();
+  const ready = ["time_slice", "envelope"].includes(timeline.mode) && Boolean(state.hydrodynamicTimeline.layer);
+  const button = document.getElementById("runImpactAnalysis");
+  const busy = Boolean(state.impactRefreshController);
+  button.disabled = !ready || busy;
+  button.textContent = busy ? "分析中…" : state.impactAnalysis?.lastResult ? "重新分析当前范围" : "分析当前范围";
+  document.getElementById("impactReadiness").textContent = ready
+    ? `淹没预测 ${state.hydrodynamicTimeline.forecastVersion || ""} 已就绪`
+    : "尚无淹没预测";
+  if (!state.impactRequested && !state.impactAnalysis) {
+    document.getElementById("impactCount").textContent = "--";
+    document.getElementById("impactNearbyCount").textContent = "--";
+    document.getElementById("impactStatus").textContent = ready ? "未分析" : "等待预测";
+    document.getElementById("impactList").innerHTML = `<p class="impact-empty">${ready ? "淹没预测已就绪，尚未进行对象级影响分析。点击上方按钮分析当前范围。" : "加载淹没预测后，可对道路、桥梁等对象进行影响分析。"}</p>`;
+    if (ready) setImpactScopeLabel(document.getElementById("impactTimeLabel"), timeline.current_hydrodynamic_time_h, timeline.current_hydrodynamic_valid_at, timeline.mode === "envelope");
+  }
 }

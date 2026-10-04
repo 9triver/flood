@@ -30,7 +30,7 @@ from server.events.playback import (
 from server.presentation.event_maps import filter_event_map_event
 
 
-CSV_PATH = PROJECT_DIR / "domains" / "flood" / "data" / "mock" / "boundary_flow.csv"
+CSV_PATH = PROJECT_DIR / "domains" / "flood" / "data" / "mock" / "rainfall.csv"
 ONTOLOGY = Ontology.load(PROJECT_DIR / "domains" / "flood" / "ontology.yaml")
 
 
@@ -150,6 +150,7 @@ class BoundaryFlowPolicyTest(unittest.TestCase):
                 "reservoir_inflow_m3s": 11.0,
                 "reservoir_release_m3s": 6.0,
                 "reservoir_level_m": 245.1,
+                "reservoir_dispatch": self.source.rows[1]["reservoir_dispatch"],
                 "status": {
                     "key": "normal",
                     "label": "正常",
@@ -295,7 +296,7 @@ class BoundaryFlowPolicyTest(unittest.TestCase):
             )
             self.assertEqual(
                 {point["source"] for point in boundary["series"]},
-                {"csv_forecast"},
+                {"rainfall_runoff_dispatch"},
             )
 
     def test_threshold_is_strictly_greater_than_230(self):
@@ -446,7 +447,7 @@ class BoundaryFlowPlaybackRunnerTest(unittest.TestCase):
 
             self.assertEqual(
                 transitions,
-                [(52, 5.0, "forecast")],
+                [(54, 5.0, "forecast")],
             )
 
     def test_runner_continues_after_forecast_request_until_csv_eof(self):

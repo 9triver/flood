@@ -30,7 +30,7 @@ from server.events import EventRuntime
 
 
 BUILTIN_CSV = (
-    PROJECT_DIR / "domains" / "flood" / "data" / "mock" / "boundary_flow.csv"
+    PROJECT_DIR / "domains" / "flood" / "data" / "mock" / "rainfall.csv"
 )
 
 
@@ -49,7 +49,7 @@ class PlaybackSourceValidationTest(unittest.TestCase):
         summary = validate_playback_source(content)
 
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "boundary_flow.csv"
+            path = Path(directory) / "rainfall.csv"
             path.write_bytes(content)
             rows = load_boundary_flow_rows(path)
 
@@ -60,7 +60,7 @@ class PlaybackSourceValidationTest(unittest.TestCase):
 
     def test_requires_base_columns(self):
         lines = _csv_content(25).decode("utf-8").splitlines()
-        lines[0] = lines[0].replace(",rainfall_mm", "")
+        lines[0] = lines[0].replace(",reservoir_rainfall_mm", "")
 
         with self.assertRaisesRegex(PlaybackSourceValidationError, "CSV 必须包含字段"):
             validate_playback_source("\n".join(lines).encode("utf-8"))
@@ -168,7 +168,7 @@ class PlaybackSourceRegistryTest(unittest.TestCase):
         stored = json.loads(
             (workspace / "inputs" / "playback_source.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(stored["workspace_path"], "inputs/boundary_flow.csv")
+        self.assertEqual(stored["workspace_path"], "inputs/rainfall.csv")
 
     def test_uploaded_station_rainfall_is_deterministic_and_preserves_mean(self):
         uploaded = self.registry.upload("custom.csv", _csv_content(25))
@@ -198,7 +198,7 @@ class PlaybackSourceRegistryTest(unittest.TestCase):
         self.assertEqual(status["playback_source"]["source_id"], uploaded.source_id)
         self.assertEqual(status["total_rows"], 25)
         self.assertEqual(manifest["playback_source"]["source_id"], uploaded.source_id)
-        self.assertTrue((workspace / "inputs" / "boundary_flow.csv").is_file())
+        self.assertTrue((workspace / "inputs" / "rainfall.csv").is_file())
 
 
 def _csv_content(row_count: int, *, slash_dates: bool = False) -> bytes:
@@ -213,7 +213,7 @@ def _csv_content(row_count: int, *, slash_dates: bool = False) -> bytes:
             )
         else:
             timestamp = f"{observed_at:%Y-%m-%d %H:%M}"
-        lines.append(f"{timestamp},0.5")
+        lines.append(f"{timestamp},0.5,0.5,0.5")
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 

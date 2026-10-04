@@ -11,7 +11,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 COMMON_FILES = (
     PROJECT_DIR / "agent" / "oag" / "agent.py",
     PROJECT_DIR / "domains" / "flood" / "ontology.yaml",
-    PROJECT_DIR / "domains" / "flood" / "data" / "mock" / "boundary_flow.csv",
+    PROJECT_DIR / "domains" / "flood" / "data" / "mock" / "rainfall.csv",
     PROJECT_DIR / "domains" / "flood" / "data" / "objects" / "manifest.json",
     PROJECT_DIR / "domains" / "flood" / "model" / "cnn_v2" / "GT.txt",
     PROJECT_DIR / "server" / "static" / "index.html",

@@ -112,6 +112,30 @@ def simulate_reservoir_dispatch(
         release = max(0.0, min(release, water_limited))
         end_storage = storage + (inflows[0] - release) * step_seconds / VOLUME_FACTOR
         end_level = _inverse_curve(storage_curve, end_storage)
+        reason_code = {
+            "NORMAL": "normal_storage",
+            "PRERELEASE": "forecast_above_flood_limit",
+            "DRAWDOWN": "above_limit_receding",
+            "FULL_CAPACITY": "imminent_limit_crossing" if imminent_limit else "above_limit_rising",
+            "EMERGENCY": "inflow_peak_exceeded" if super_standard else "full_release_above_check",
+        }[state]
+        reason = {
+            "normal_storage": "预见期未触发防洪控制条件，按正常下泄任务计算。",
+            "forecast_above_flood_limit": "按正常下泄预测水位将超过汛限水位，进入预泄判定。",
+            "above_limit_receding": "当前高于汛限水位，按安全泄量下泄时不再上涨，进入退水腾库。",
+            "imminent_limit_crossing": "按安全泄量下泄，本时段末仍将超过汛限水位，按当前能力下泄。",
+            "above_limit_rising": "当前不低于汛限水位，按安全泄量仍会上涨，按当前能力下泄。",
+            "inflow_peak_exceeded": "输入过程洪峰超过校核入库洪峰阈值，进入应急全能力下泄判定。",
+            "full_release_above_check": "预见期内即使按全能力下泄，最高水位仍预计超过校核水位。",
+        }[reason_code]
+        if capacity <= 0:
+            constraint = "当前水位下泄流能力为零，计算泄流为零。"
+        elif release < min(capacity, inflows[0] + max(0.0, storage - limit_storage) * VOLUME_FACTOR / step_seconds) - LEVEL_TOLERANCE:
+            constraint = "计算泄流受当前调度目标及安全泄量约束。"
+        elif release < capacity - LEVEL_TOLERANCE:
+            constraint = "计算泄流受时段可用水量约束。"
+        else:
+            constraint = "按当前水位对应的泄流能力下泄。"
         output.append({
             "index": index,
             "valid_time": item["valid_time"],
@@ -120,6 +144,21 @@ def simulate_reservoir_dispatch(
             "start_level_m": round(level, 6),
             "end_level_m": round(end_level, 6),
             "state": state,
+            "reason_code": reason_code,
+            "reason": reason,
+            "constraint": constraint,
+            "mode": "simulation",
+            "thresholds": {
+                "flood_limit_level_m": params.flood_limit_level_m,
+                "design_flood_level_m": params.design_flood_level_m,
+                "check_flood_level_m": params.check_flood_level_m,
+                "downstream_safe_release_m3s": params.downstream_safe_release_m3s,
+            },
+            "curve_extrapolated": not (
+                storage_curve.x[0] <= level <= storage_curve.x[-1]
+                and storage_curve.x[0] <= end_level <= storage_curve.x[-1]
+                and level <= outflow_curve.x[-1]
+            ),
             "forecast_peak_inflow_m3s": round(max(inflows), 6),
             "forecast_max_level_safe_m": round(max_safe, 6),
             "forecast_max_level_full_m": round(max_full, 6),

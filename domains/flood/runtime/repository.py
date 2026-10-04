@@ -58,9 +58,9 @@ class FloodRepository:
 
     def count(self, object_type: str, filters: dict[str, Any] | None = None) -> int:
         if object_type == "FloodForecast":
-            return count_forecast_runs(self, filters)
+            return count_forecast_runs(filters)
         if object_type == "InundationForecastCell":
-            return count_forecast_cells(self, filters)
+            return count_forecast_cells(filters)
         if object_type == "HydrodynamicGridCell":
             return count_hydrodynamic_cells(filters)
         if object_type == "EmergencyDirective":

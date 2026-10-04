@@ -245,10 +245,10 @@
             </div>
           </header>
           <div class="situation-workbench-body">
-            <section class="telemetry-panel situation-pane map-draggable-panel" id="telemetryPanel" aria-label="演进数据">
+            <section class="telemetry-panel basin-workbench situation-pane map-draggable-panel" id="telemetryPanel" aria-label="演进数据">
               <header class="telemetry-header panel-drag-handle" data-panel-drag-handle title="拖动演进数据">
                 <div class="telemetry-header-context">
-                  <div class="telemetry-title">演进数据 <span>MOCK</span></div>
+                  <div class="telemetry-title">演进与计算 <span>模拟</span></div>
                   <div class="telemetry-time-context telemetry-current-time">
                     <span>当前演进时刻</span>
                     <time id="telemetryTime">--</time>
@@ -266,71 +266,29 @@
                   </button>
                 </div>
               </header>
-              <div class="telemetry-forecast-strip" aria-label="未来24小时关键预测">
-                <div class="telemetry-forecast-metrics">
-                  <div>
-                    <span>流量峰值</span>
-                    <div class="telemetry-forecast-value"><strong id="forecastFlowPeak">--</strong><small id="forecastFlowPeakTime">m³/s</small></div>
-                  </div>
-                  <div>
-                    <span>首次超 230</span>
-                    <div class="telemetry-forecast-value"><strong id="forecastFlowThresholdTime">--</strong><small>阈值 230 m³/s</small></div>
-                  </div>
-                  <div>
-                    <span>最高水位</span>
-                    <div class="telemetry-forecast-value"><strong id="forecastReservoirPeak">--</strong><small id="forecastReservoirPeakTime">m</small></div>
-                  </div>
-                  <div class="forecast-alert-summary">
-                    <span>最高预警</span>
-                    <div class="telemetry-forecast-value"><strong id="forecastReservoirAlert">--</strong><small id="forecastReservoirAlertTime"></small></div>
-                  </div>
-                </div>
+              <div class="basin-tabs" role="tablist" aria-label="演进计算数据">
+                <button id="basinRainTab" type="button" role="tab" aria-selected="true" aria-controls="basinRainPanel" data-basin-tab="rain">三分区降雨</button>
+                <button id="basinFlowTab" type="button" role="tab" aria-selected="false" tabindex="-1" aria-controls="basinFlowPanel" data-basin-tab="flow">四边界流量</button>
+                <button id="basinDispatchTab" type="button" role="tab" aria-selected="false" tabindex="-1" aria-controls="basinDispatchPanel" data-basin-tab="dispatch">水库调度</button>
               </div>
-              <div class="telemetry-overview">
-                <div class="telemetry-weather" id="telemetryWeather" data-weather="waiting" aria-live="polite">
-                  <div class="telemetry-weather-icon" id="telemetryWeatherIcon" aria-hidden="true">
-                    <i data-lucide="cloud-sun"></i>
+              <div class="basin-content">
+                <section id="basinRainPanel" role="tabpanel" aria-labelledby="basinRainTab">
+                  <div id="basinRainTable"></div>
+                  <div class="basin-note" id="basinRainNote">等待降雨数据</div>
+                  <div id="basinRainChart" class="basin-rain-chart"></div>
+                </section>
+                <section id="basinFlowPanel" role="tabpanel" aria-labelledby="basinFlowTab" hidden>
+                  <div id="basinFlowTable"></div>
+                  <div class="basin-note" id="basinFlowNote">等待产流与调度计算</div>
+                  <div class="flow-history-card">
+                    <div class="flow-history-head"><span>四边界流量 · 已回放 / 预计算</span><small id="flowHistoryRange">--</small></div>
+                    <svg id="boundaryFlowHistoryChart" class="flow-history-chart" viewBox="0 0 320 78" preserveAspectRatio="xMidYMid meet" aria-label="四边界流量过程"></svg>
                   </div>
-                  <div class="telemetry-weather-copy">
-                    <strong id="telemetryWeatherLabel">等待数据</strong>
-                    <span id="telemetryWeatherDetail">当前时段降雨 -- mm</span>
-                  </div>
-                </div>
-                <div class="telemetry-metrics">
-                  <div><span>当前雨量</span><strong data-mock-field="rainfall_mm">--</strong><small>mm/h</small></div>
-                  <div><span>当前水位</span><strong data-mock-field="reservoir_level_m">--</strong><small>m</small></div>
-                  <div><span>当前入库</span><strong data-mock-field="reservoir_inflow_m3s">--</strong><small>m³/s</small></div>
-                  <div><span>当前下泄</span><strong data-mock-field="reservoir_release_m3s">--</strong><small>m³/s</small></div>
-                </div>
-              </div>
-              <div class="telemetry-flow-list">
-                <div class="flow-history-card">
-                  <div class="flow-history-head">
-                    <span>四边界流量 · 实况 / 预测</span>
-                    <small id="flowHistoryRange">--</small>
-                  </div>
-                  <svg id="boundaryFlowHistoryChart" class="flow-history-chart" viewBox="0 0 320 78" preserveAspectRatio="xMidYMid meet" aria-hidden="true"></svg>
-                </div>
-                <div class="flow-value-row" style="--flow-color:#1f7a5c">
-                  <span>区间 1</span>
-                  <strong data-mock-boundary="interval1">--</strong>
-                  <small>m³/s</small>
-                </div>
-                <div class="flow-value-row" style="--flow-color:#2878b9">
-                  <span>区间 2</span>
-                  <strong data-mock-boundary="interval2">--</strong>
-                  <small>m³/s</small>
-                </div>
-                <div class="flow-value-row" style="--flow-color:#a15f13">
-                  <span>同古河</span>
-                  <strong data-mock-boundary="tonggu">--</strong>
-                  <small>m³/s</small>
-                </div>
-                <div class="flow-value-row" style="--flow-color:#b43e52">
-                  <span>坝址</span>
-                  <strong data-mock-boundary="upstream">--</strong>
-                  <small>m³/s</small>
-                </div>
+                </section>
+                <section id="basinDispatchPanel" role="tabpanel" aria-labelledby="basinDispatchTab" hidden>
+                  <div id="basinDispatchSummary"></div>
+                  <button id="openReservoirDispatch" class="basin-link" type="button">查看水库 marker 过程 ↗</button>
+                </section>
               </div>
               <footer class="telemetry-progress">
                 <div><span id="telemetryProgressBar"></span></div>
@@ -340,8 +298,8 @@
             <section class="impact-panel situation-pane map-draggable-panel" id="impactPanel" aria-label="影响分析">
             <header class="impact-panel-header panel-drag-handle" data-panel-drag-handle title="拖动影响分析">
               <div class="impact-panel-title">
-                <strong>影响分析</strong>
-                <span id="impactStatus" role="status">等待结果</span>
+                <strong>淹没与影响</strong>
+                <span id="impactStatus" role="status">等待预测</span>
               </div>
               <div class="impact-panel-meta">
                 <span class="panel-drag-grip" aria-hidden="true"><i data-lucide="grip-horizontal"></i></span>
@@ -355,11 +313,12 @@
             </header>
             <div class="impact-controls">
               <div class="impact-tabs" role="tablist" aria-label="影响类别">
-                <button id="impactAffectedTab" type="button" role="tab" aria-selected="true" aria-controls="impactList" data-impact-tab="affected">预测影响 <output id="impactCount" aria-label="当前分析范围内的受影响对象数">0</output></button>
-                <button id="impactNearbyTab" type="button" role="tab" aria-selected="false" aria-controls="impactList" tabindex="-1" data-impact-tab="nearby">邻近积水 <span id="impactNearbyCount">0</span></button>
+                <button id="impactAffectedTab" type="button" role="tab" aria-selected="true" aria-controls="impactList" data-impact-tab="affected">预测影响 <output id="impactCount" aria-label="当前分析范围内的受影响对象数">--</output></button>
+                <button id="impactNearbyTab" type="button" role="tab" aria-selected="false" aria-controls="impactList" tabindex="-1" data-impact-tab="nearby">邻近积水 <span id="impactNearbyCount">--</span></button>
               </div>
               <select id="impactTypeFilter" aria-label="筛选对象类型"><option value="all">全部类型</option></select>
             </div>
+            <div class="impact-readiness"><span id="impactReadiness">尚无淹没预测</span><button id="runImpactAnalysis" type="button" disabled>分析当前范围</button></div>
             <div id="impactNotice" class="impact-notice" role="status" hidden></div>
             <div class="impact-list" id="impactList" role="tabpanel" aria-labelledby="impactAffectedTab" tabindex="0"><p class="impact-empty">加载预测结果后查看影响分析</p></div>
             <footer class="impact-panel-footer" id="impactListSummary">道路按已收录路段统计</footer>

@@ -54,7 +54,7 @@ def analyze_inundation_impacts(
     cell_filters: dict[str, Any] = {"forecast_id": forecast_key}
     if analysis_time_h is not None:
         cell_filters["time_h"] = analysis_time_h
-    cells = query_forecast_cells(resolver, cell_filters)
+    cells = query_forecast_cells(cell_filters)
     if not cells:
         time_fields = analysis_time_fields(forecast_key, analysis_time_h)
         return {

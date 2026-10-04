@@ -5612,3 +5612,75 @@ body.is-cover-visible .app-shell {
   max-height: 180px;
   overflow-y: auto;
 }
+
+/* Reservoir dispatch popup, shared by the station marker and reservoir geometry. */
+.station-reservoir-panel.dispatch-panel { width: min(280px, calc(100vw - 96px)); max-height: min(460px, calc(100dvh - 240px)); overflow-y: auto; padding: 4px 3px; }
+.dispatch-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; border-top: 2px solid var(--dispatch-color); padding-top: 6px; }
+.dispatch-head span, .dispatch-time { color: #64748b; font-size: 11px; }
+.dispatch-head h3 { margin: 3px 0; color: var(--dispatch-color); font-size: 15px; }
+.dispatch-head button { border: 1px solid #cbd5e1; background: #f8fafc; color: #334155; border-radius: 5px; padding: 5px 8px; cursor: pointer; }
+.dispatch-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin: 7px 0; }
+.dispatch-metrics div { padding: 5px; background: #f1f5f9; border-radius: 6px; }
+.dispatch-metrics span { display: block; font-size: 10px; color: #64748b; }
+.dispatch-metrics strong { display: block; font-size: 17px; color: #0f172a; }
+.dispatch-metrics small { color: #64748b; font-size: 10px; }
+.dispatch-limits { font-size: 10px; color: #64748b; margin: 6px 0 10px; }
+.dispatch-track { display: flex; height: 18px; margin: 6px 0; gap: 1px; }
+.dispatch-segment { flex: 1 1 0; min-width: 0; padding: 0; border: 0; background: var(--dispatch-color); cursor: pointer; }
+.dispatch-segment.is-future { background: repeating-linear-gradient(135deg, var(--dispatch-color) 0 3px, #ffffffaa 3px 5px); }
+.dispatch-segment[aria-pressed="true"], .dispatch-segment:focus-visible { outline: 2px solid #0f172a; outline-offset: 2px; z-index: 1; }
+.dispatch-legend { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 10px; color: #475569; }
+.dispatch-legend span::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 4px; background: var(--dispatch-color); border-radius: 2px; }
+.dispatch-reason { margin-top: 8px; padding: 6px 8px; border: 1px solid #dbe3eb; border-radius: 6px; font-size: 11px; }
+.dispatch-reason p { margin: 6px 0 !important; line-height: 1.6; }
+.dispatch-reason dl { margin: 8px 0; }
+.dispatch-reason dl div { display: flex; justify-content: space-between; gap: 10px; margin: 4px 0; }
+.dispatch-reason dt { color: #64748b; }
+.dispatch-reason dd { margin: 0; font-variant-numeric: tabular-nums; }
+.dispatch-constraint { color: #9a6500; background: #fff8e7; padding: 6px; border-radius: 4px; }
+.dispatch-footnote, .dispatch-empty { font-size: 10px; color: #64748b; line-height: 1.6; margin-top: 10px; }
+.dispatch-cursor { stroke: #7c3aed; stroke-width: 1.5; stroke-dasharray: 2 2; }
+
+.dispatch-panel .station-reservoir-chart { padding-top: 5px; }
+.dispatch-panel .station-reservoir-chart-times { margin-bottom: 5px; }
+
+.dispatch-reason summary { cursor: pointer; font-weight: 650; color: #475569; }
+
+.dispatch-chart-tabs { display: flex; gap: 4px; margin-top: 6px; }
+.dispatch-chart-tabs button { flex: 1; padding: 4px 6px; border: 1px solid #dbe3eb; border-radius: 4px; background: #f8fafc; color: #64748b; cursor: pointer; font-size: 11px; }
+.dispatch-chart-tabs button[aria-pressed="true"] { background: #e8f2ff; border-color: #93b9e8; color: #17599a; }
+
+/* Keep the dock and its three panes; organize calculated telemetry by subject. */
+.situation-workbench-body { grid-template-columns: minmax(530px, 1.7fr) minmax(330px, 1fr) minmax(215px, .65fr); }
+#telemetryPanel.basin-workbench { display: flex; flex-direction: column; overflow: hidden; }
+.basin-workbench .telemetry-header { min-height: 48px; padding: 6px 10px; flex: 0 0 auto; }
+.basin-tabs { display: flex; gap: 5px; padding: 6px 10px; flex: 0 0 auto; }
+.basin-tabs button { border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 10px; color: #526171; background: #fff; font: inherit; font-size: 11px; cursor: pointer; }
+.basin-tabs button[aria-selected="true"] { background: #e8f2ff; color: #17599a; border-color: #93b9e8; }
+.basin-tabs button:focus-visible, .basin-link:focus-visible { outline: 2px solid #2878b9; outline-offset: 2px; }
+.basin-content { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 10px 6px; scrollbar-width: thin; }
+.basin-content [hidden] { display: none !important; }
+.basin-table { width: 100%; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
+.basin-table thead th { background: #f5f7f9; color: #718096; font-size: 10px; font-weight: 500; }
+.basin-table th, .basin-table td { padding: 4px 5px; border-bottom: 1px solid #e6ebef; text-align: right; font-weight: 400; }
+.basin-table th:first-child { text-align: left; }
+.basin-table strong { font-size: 13px; font-weight: 700; }
+.basin-table small { display: block; color: #81909e; font-size: 9px; }
+.basin-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; }
+.basin-note { font-size: 10px; color: #728091; line-height: 1.5; margin: 5px 0; }
+.basin-rain-chart > span { color: #728091; font-size: 9px; }
+.basin-rain-chart svg { display: block; width: 100%; height: 46px; }
+.basin-rain-chart text { fill: #81909e; font-size: 8px; }
+.basin-content .flow-history-chart { height: 60px; width: 100%; }
+.basin-content .flow-history-card { padding: 4px 0; }
+.basin-dispatch-state { display: flex; align-items: center; gap: 10px; background: #f4f7fa; padding: 7px; }
+.basin-dispatch-state strong { font-size: 13px; }
+.basin-dispatch-state span { font-size: 10px; color: #728091; }
+.basin-link { color: #2878b9; background: none; border: 0; padding: 4px 0; cursor: pointer; font-size: 11px; }
+.basin-workbench .telemetry-progress { flex: 0 0 auto; }
+.impact-readiness { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 5px 10px; border-bottom: 1px solid #e6ebef; font-size: 10px; color: #728091; }
+.impact-readiness button { border: 1px solid #cbd5e1; border-radius: 4px; background: #f8fafc; color: #17599a; padding: 4px 7px; font: inherit; cursor: pointer; }
+.impact-readiness button:disabled { opacity: .5; cursor: default; }
+@media (max-width: 800px) { .situation-workbench-body { grid-template-columns: minmax(350px, 90vw) minmax(300px, 85vw) 260px; } .basin-workbench .telemetry-header-context { grid-template-columns: auto 1fr; } .basin-workbench .telemetry-forecast-window { grid-column: 1 / -1; border: 0; padding: 0; display: flex; gap: 6px; } }
+@media (min-width: 1101px) { .map-stage { --situation-dock-height: min(42vh, 390px); } }
+#basinFlowTable small { display: inline; margin-left: 6px; }

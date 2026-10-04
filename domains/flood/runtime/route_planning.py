@@ -97,7 +97,7 @@ def plan_evacuation_route(
         filters: dict[str, Any] = {"forecast_id": forecast_key}
         if analysis_time_h is not None:
             filters["time_h"] = analysis_time_h
-        cells = query_forecast_cells(resolver, filters)
+        cells = query_forecast_cells(filters)
         flood_areas = build_flood_avoidance_areas(cells, threshold)
         flood_areas["summary"].update({
             "start_in_blocked_area": point_in_areas(start, flood_areas["feature_collection"]),

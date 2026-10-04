@@ -419,14 +419,14 @@ class EventRuntime:
         self._prepared_workspace_id = workspace_id
         WORKSPACES.update_manifest(
             playback_source=metadata,
-            playback_input="inputs/boundary_flow.csv",
+            playback_input="inputs/rainfall.csv",
         )
 
     def _restore_workspace_playback_source(self, manifest: dict[str, Any]) -> None:
         workspace_id = active_workspace_id()
         if not workspace_id:
             return
-        csv_path = WORKSPACES.path(workspace_id) / "inputs" / "boundary_flow.csv"
+        csv_path = WORKSPACES.path(workspace_id) / "inputs" / "rainfall.csv"
         metadata = manifest.get("playback_source")
         if not csv_path.is_file() or not isinstance(metadata, dict):
             self._prepare_playback_source(self._playback_sources.selected_source_id)
