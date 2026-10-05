@@ -75,7 +75,7 @@ presentation_tools:
       object_ids 一旦提供就只显示这些对象，空数组不改变地图；默认 mode=add 追加显示。
       仅用户明确要求替换同类型全部显示时使用 mode=replace，不得为普通追加展示使用替换。
       返回 selections 中的 selection_id 用于后续隐藏这批对象。只保留筛选结果时用 replace_object_set_id 替换原集合；追加显示不移除原有对象。查询返回的 object_set_id 可直接用于显示完整集合，不需要让模型抄写所有 ID。
-      水动力 filters 只支持 forecast_id、time_h 和 view；默认 current 显示当前演进时刻，view=envelope 显示最大包络，time_slice 必须指定 time_h。
+      水动力 filters 只支持 forecast_id、time_h 和 view；默认 timeline 打开预测时间轴，从首个可用预测帧开始；view=current 仅查询当前演进时刻的切片（可能不存在），view=envelope 显示最大包络，time_slice 必须指定 time_h。
       单纯显示模型网格不清除预测淹没结果。
       根据影响分析结果展示受影响对象时，从 impacts 中按 object_type 汇总 object_id，
       设置 object_ids、highlight=true。
@@ -184,6 +184,7 @@ event_policies:
     allowed_tools: [ui_set_inundation_alert, ui_show_objects]
     forbidden_functions: [assess_flood_emergency]
     instructions:
+      - "展示新预测时调用 ui_show_objects，filters 使用 forecast_id=latest、view=timeline，打开0.5至24小时的预测时间轴；不要请求缺失的当前+0h切片，也不要改成最大包络代替时间轴。"
       - "只根据事件 payload 中 CNN 预测汇总判断未来24小时是否存在淹没：forecast_cell_count>0 表示存在至少一个水深不低于0.04米的预测淹没单元，否则表示无淹没。"
       - "必须调用一次 ui_set_inundation_alert：存在淹没时传 active=true，无淹没时传 active=false，以确保旧警戒状态也能被清除。"
       - "本事件不执行对象级影响分析，不判断具体道路、设施、桥梁、转移路线、转移对象或安置点是否受影响；这些分析只在用户明确提出后执行。"
@@ -193,7 +194,7 @@ event_policies:
       tool: ui_show_objects
       objects:
         - object_type: HydrodynamicGridCell
-          filters: {forecast_id: latest}
+          filters: {forecast_id: latest, view: timeline}
           label: "预测淹没结果"
           fit: false
           refresh: true

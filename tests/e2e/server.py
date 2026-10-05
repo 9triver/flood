@@ -46,6 +46,7 @@ from server.container import ApplicationContext
 from server.flood_app import FloodApp
 from server.chat.service import FloodChatService
 from server.chat.agent_factory import load_env, configure_agent_query_tools, configure_domain_tool_schemas
+from server.presentation.map_actions import MapActionBuilder, tool_result_to_map_event
 from server.presentation.map_tools import register_map_tools
 from server.presentation.directive_tools import register_directive_tools
 from server.agent_runs import AgentRunManager
@@ -105,10 +106,10 @@ def seed_forecast(wet_now=False):
     (root / "forecasts/forecast_runs.jsonl").write_text(json.dumps(metadata)+"\n")
     latest = root / "forecasts/latest"
     latest.mkdir(exist_ok=True)
-    steps = list(range(25))
-    depths = np.zeros((25, len(mesh_rows)), dtype=np.float32)
-    depths[1 if wet_now else 6:, 0] = 1.0
-    depths[1 if wet_now else 6:, 2] = 1.0
+    steps = [index / 2 for index in range(1, 49)]
+    depths = np.zeros((48, len(mesh_rows)), dtype=np.float32)
+    depths[np.asarray(steps) >= (1 if wet_now else 6), 0] = 1.0
+    depths[np.asarray(steps) >= (1 if wet_now else 6), 2] = 1.0
     np.save(latest / "depth_series.npy", depths)
     (latest / "max_depth.csv").write_text("cell_id,max_depth\n1,1.0\n3,1.0\n")
     write_json(latest / "time_steps.json", {"time_steps_h": steps})
@@ -121,6 +122,14 @@ def seed_forecast(wet_now=False):
     policy.version = 2 if wet_now else 1
     policy.completed_forecast_version = policy.version
     runtime._append_output("runtime_status", {**runtime.status(), "label": "测试预测已就绪"})
+    # Exercise the same default presentation tool request as automatic events.
+    payload = MapActionBuilder(app.ontology, app.resolver).show_objects({"objects": [{
+        "object_type": "HydrodynamicGridCell", "filters": {"forecast_id": "latest"}, "fit": False,
+    }]}, {"HydrodynamicGridCell"})
+    event = tool_result_to_map_event(payload)
+    if not event:
+        raise AssertionError(payload)
+    runtime._append_output("map_actions", event)
     return metadata
 
 

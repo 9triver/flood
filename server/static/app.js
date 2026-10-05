@@ -5412,7 +5412,14 @@ function connectChatStream({ message = "", assistant, runId = "", since = 0 }) {
 
   listen("domain_result", (event) => {
     const data = parseEvent(event);
-    if (data.name === "analyze_inundation_impacts") registerImpactAnalysisResult(data.result);
+    if (data.name === "analyze_inundation_impacts") {
+      const generation = state.mapGeneration;
+      const applyResult = () => {
+        if (generation === state.mapGeneration) registerImpactAnalysisResult(data.result);
+      };
+      // A preceding forecast display loads asynchronously and may clear old analysis.
+      state.mapActionQueue = state.mapActionQueue.then(applyResult, applyResult);
+    }
   });
 
   listen("tool_result", (event) => {

@@ -94,6 +94,30 @@ class ForecastContextTests(unittest.TestCase):
         self.assertEqual(current["flooded_count"], 1)
         self.assertEqual(current["analysis_time_at"], "2026-07-03T09:00:00+08:00")
 
+    def test_opening_timeline_does_not_require_a_current_zero_hour_slice(self):
+        from server.presentation.map_actions import MapActionBuilder
+        from oag.ontology.schema import Ontology
+        self.start()
+        latest = self.root / "forecasts/latest"
+        self.write_json(latest / "time_steps.json", {"time_steps_h": [0.5, 1, 2]})
+        ontology = Ontology.load(Path(__file__).resolve().parents[1] / "domains/flood/ontology.yaml")
+        builder = MapActionBuilder(ontology, None)
+        def show(filters):
+            with patch("server.presentation.map_actions.MapActionBuilder.count_object", return_value=2):
+                return json.loads(builder.show_objects({"objects": [{"object_type": "HydrodynamicGridCell", "filters": filters}]}, {"HydrodynamicGridCell"}))
+        for view in (None, "timeline"):
+            filters = {"forecast_id": "latest", **({"view": view} if view else {})}
+            result = show(filters)
+            self.assertEqual(result["map_actions"][0]["filters"], {"forecast_id": "latest", "view": "timeline"})
+        self.assertIn("error", show({"forecast_id": "latest", "view": "current"}))
+        self.assertIn("error", show({"forecast_id": "latest", "time_h": 0}))
+        self.assertEqual(get_flood_status()["status"], "time_unavailable")
+        self.assertEqual(show({"forecast_id": "latest", "time_h": 0.5})["map_actions"][0]["filters"]["time_h"], 0.5)
+        (latest / "depth_series.npy").unlink()
+        self.assertIn("error", show({"forecast_id": "latest"}))
+        self.write_json(self.root / "forecasts/v001/forecast.json", {**self.metadata, "forecast_input_id": "stale"})
+        self.assertIn("error", show({"forecast_id": "latest"}))
+
     def test_old_input_other_workspace_and_expired_time_are_rejected(self):
         self.start()
         for field, value, expected in (("forecast_input_id", "old-input", "stale_input"), ("workspace_id", "old-workspace", "workspace_mismatch")):

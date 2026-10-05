@@ -107,6 +107,14 @@ for(const signal of ['SIGINT','SIGTERM'])process.once(signal,()=>{
 
   // A fixture forecast activates the actual grid/impact/deadline code, without running CNN.
   const seeded=await page.request.post(url+'/__test__/forecast',{data:{wet_now:false}});assert(seeded.ok());
+  await page.locator('#hydroTimeline').waitFor({state:'visible'});
+  await page.waitForFunction(()=>state.hydrodynamicTimeline.hours.length===48);
+  assert.equal(await page.locator('#hydroTimeSlider').isEnabled(),true);
+  const autoTimeline=await page.evaluate(()=>currentHydrodynamicTimelineContext());
+  assert.equal(autoTimeline.mode,'time_slice');assert.equal(autoTimeline.current_hydrodynamic_time_h,0.5);
+  assert.equal(await page.evaluate(()=>state.hydrodynamicTimeline.hours.at(-1)),24);
+  await page.locator('#hydroTimeSlider').focus();await page.keyboard.press('End');
+  await page.waitForFunction(()=>currentHydrodynamicTimelineContext().current_hydrodynamic_time_h===24);
   const impact=result(await ask('forecast_scope'),'analyze_inundation_impacts');
   assert.deepEqual(impact.analysis_scope.matched_object_ids.EvacuationSite.sort(),filteredIds);
   assert.equal(impact.time_h,6);

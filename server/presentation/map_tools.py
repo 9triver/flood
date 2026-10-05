@@ -66,7 +66,7 @@ def register_map_tools(tools: ToolRegistry, resolver,
                         "type": "object",
                         "properties": {
                             "object_type": {"type": "string", "enum": object_types},
-                            "filters": {"type": "object", "description": "对象过滤条件，例如学校为 {\"facility_type\":\"school\"}；水动力只支持 forecast_id、time_h、view=current/time_slice/envelope"},
+                            "filters": {"type": "object", "description": "对象过滤条件，例如学校为 {\"facility_type\":\"school\"}；水动力只支持 forecast_id、time_h、view=timeline/current/time_slice/envelope（默认 timeline 浏览预测）"},
                             "label": {"type": "string", "description": "地图图层显示名称，可选"},
                             "fit": {"type": "boolean", "description": "是否缩放到该对象范围"},
                             "refresh": {"type": "boolean", "description": "是否刷新已有图层"},

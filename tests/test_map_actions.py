@@ -95,7 +95,9 @@ class MapActionBuilderTest(unittest.TestCase):
 
     @patch("server.presentation.hydrodynamic.hydrodynamic_grid_stats")
     @patch("server.presentation.hydrodynamic.resolve_forecast_context", return_value={"available": True, "time_h": 0})
-    def test_hydrodynamic_result_is_delegated_to_adapter(self, context, stats):
+    @patch("server.presentation.hydrodynamic.forecast_series_path")
+    @patch("server.presentation.hydrodynamic.forecast_time_steps", return_value=[0.5, 24])
+    def test_hydrodynamic_result_is_delegated_to_adapter(self, steps, series, context, stats):
         stats.return_value = {
             "forecast": {"flooded_count": 12},
             "feature_count": 20,
