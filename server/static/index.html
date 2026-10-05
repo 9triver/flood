@@ -6,7 +6,7 @@
     <title>基于大模型的水路联动应急智能体集群应用</title>
     <meta name="application-name" content="基于大模型的水路联动应急智能体集群应用" />
     <link rel="stylesheet" href="/vendor/leaflet/leaflet.css?v=1.9.4" />
-    <link rel="stylesheet" href="/styles.css?v=17" />
+    <link rel="stylesheet" href="/styles.css?v=18" />
   </head>
   <body class="is-cover-visible">
     <section class="launch-cover" id="launchCover" aria-labelledby="launchCoverTitle" aria-modal="true" role="dialog" tabindex="-1">
@@ -245,24 +245,22 @@
               <div class="hydro-time-label" id="hydroTimeLabel">--</div>
             </div>
           </header>
+          <nav class="situation-section-nav" aria-label="工作台业务分区">
+            <button type="button" data-situation-panel="telemetryPanel" aria-controls="telemetryPanel">业务推演</button>
+            <span aria-hidden="true">→</span>
+            <button type="button" data-situation-panel="responseWorkbench" aria-controls="responseWorkbench">应急响应</button>
+          </nav>
           <div class="situation-workbench-body">
-            <section class="telemetry-panel basin-workbench situation-pane map-draggable-panel" id="telemetryPanel" aria-label="演进数据">
-              <header class="telemetry-header panel-drag-handle" data-panel-drag-handle title="拖动演进数据">
+            <section class="telemetry-panel basin-workbench situation-pane map-draggable-panel" id="telemetryPanel" aria-label="业务推演">
+              <header class="telemetry-header panel-drag-handle" data-panel-drag-handle title="拖动业务推演">
                 <div class="telemetry-header-context">
-                  <div class="telemetry-title">演进与计算 <span>模拟</span></div>
-                  <div class="telemetry-time-context telemetry-current-time">
-                    <span>当前演进时刻</span>
-                    <time id="telemetryTime">--</time>
-                  </div>
-                  <div class="telemetry-time-context telemetry-forecast-window">
-                    <span>未来24小时预测</span>
-                    <small id="telemetryForecastWindow">等待预测窗口</small>
-                  </div>
+                  <div class="telemetry-title">业务推演 <span>模拟</span></div>
+                  <span class="situation-section-description">演进与计算</span>
                 </div>
                 <div class="telemetry-header-actions">
                   <span class="telemetry-state" id="telemetryState">待机</span>
                   <span class="panel-drag-grip" aria-hidden="true"><i data-lucide="grip-horizontal"></i></span>
-                  <button class="icon-button" id="telemetryFloatBtn" type="button" title="浮动演进数据" aria-label="浮动演进数据">
+                  <button class="icon-button" id="telemetryFloatBtn" type="button" title="浮动业务推演" aria-label="浮动业务推演">
                     <i data-lucide="picture-in-picture-2"></i>
                   </button>
                 </div>
@@ -272,36 +270,53 @@
                 <button id="basinFlowTab" type="button" role="tab" aria-selected="false" tabindex="-1" aria-controls="basinFlowPanel" data-basin-tab="flow">四边界流量</button>
                 <button id="basinDispatchTab" type="button" role="tab" aria-selected="false" tabindex="-1" aria-controls="basinDispatchPanel" data-basin-tab="dispatch">水库调度</button>
               </div>
+              <div class="basin-time-context">
+                <div class="telemetry-time-context telemetry-current-time">
+                  <span>当前演进时刻</span>
+                  <time id="telemetryTime">--</time>
+                </div>
+                <div class="telemetry-time-context telemetry-forecast-window">
+                  <span>未来24小时预测</span>
+                  <small id="telemetryForecastWindow">等待预测窗口</small>
+                </div>
+              </div>
               <div class="basin-content">
                 <section class="basin-data-layout" id="basinRainPanel" role="tabpanel" aria-labelledby="basinRainTab">
                   <div class="basin-data-values">
                     <div id="basinRainTable"></div>
                   </div>
-                  <div class="basin-trend-column">
+                  <details class="basin-process">
+                    <summary>查看降雨过程</summary>
                     <div id="basinRainChart" class="basin-rain-chart"></div>
-                  </div>
+                  </details>
                 </section>
                 <section class="basin-data-layout" id="basinFlowPanel" role="tabpanel" aria-labelledby="basinFlowTab" hidden>
                   <div class="basin-data-values">
                     <div id="basinFlowTable"></div>
                   </div>
-                  <div class="flow-history-card">
-                    <div class="flow-history-head"><span>四边界流量 · 已回放 / 预计算</span><small id="flowHistoryRange">--</small></div>
-                    <svg id="boundaryFlowHistoryChart" class="flow-history-chart" viewBox="0 0 320 78" preserveAspectRatio="xMidYMid meet" aria-label="四边界流量过程"></svg>
-                  </div>
+                  <details class="basin-process">
+                    <summary>查看流量过程</summary>
+                    <div class="flow-history-card">
+                      <div class="flow-history-head"><span>四边界流量 · 已回放 / 预计算</span><small id="flowHistoryRange">--</small></div>
+                      <svg id="boundaryFlowHistoryChart" class="flow-history-chart" viewBox="0 0 320 78" preserveAspectRatio="xMidYMid meet" aria-label="四边界流量过程"></svg>
+                    </div>
+                  </details>
                 </section>
                 <section class="basin-data-layout" id="basinDispatchPanel" role="tabpanel" aria-labelledby="basinDispatchTab" hidden>
                   <div class="basin-data-values">
                     <div id="basinDispatchSummary"></div>
                     <button id="openReservoirDispatch" class="basin-link" type="button">查看水库 marker 过程 ↗</button>
                   </div>
-                  <div class="basin-dispatch-chart">
-                    <div class="basin-chart-controls" role="group" aria-label="水库趋势指标">
-                      <button type="button" data-basin-dispatch-chart="flow" aria-pressed="true" aria-controls="basinDispatchChart">入流 / 泄流</button>
-                      <button type="button" data-basin-dispatch-chart="level" aria-pressed="false" aria-controls="basinDispatchChart">库水位</button>
+                  <details class="basin-process">
+                    <summary>查看水库调度过程</summary>
+                    <div class="basin-dispatch-chart">
+                      <div class="basin-chart-controls" role="group" aria-label="水库趋势指标">
+                        <button type="button" data-basin-dispatch-chart="flow" aria-pressed="true" aria-controls="basinDispatchChart">入流 / 泄流</button>
+                        <button type="button" data-basin-dispatch-chart="level" aria-pressed="false" aria-controls="basinDispatchChart">库水位</button>
+                      </div>
+                      <div id="basinDispatchChart"></div>
                     </div>
-                    <div id="basinDispatchChart"></div>
-                  </div>
+                  </details>
                 </section>
               </div>
               <footer class="telemetry-progress">
@@ -309,44 +324,56 @@
                 <output id="telemetryProgressText">0 / 0</output>
               </footer>
             </section>
-            <section class="impact-panel situation-pane map-draggable-panel" id="impactPanel" aria-label="影响分析">
-            <header class="impact-panel-header panel-drag-handle" data-panel-drag-handle title="拖动影响分析">
-              <div class="impact-panel-title">
-                <strong>淹没与影响</strong>
-                <span id="impactStatus" role="status">等待预测</span>
-              </div>
-              <div class="impact-panel-meta">
-                <button id="runImpactAnalysis" class="impact-analyze-button" type="button" disabled>分析当前范围</button>
-                <span class="panel-drag-grip" aria-hidden="true"><i data-lucide="grip-horizontal"></i></span>
-                <button class="icon-button" id="impactFloatBtn" type="button" title="浮动影响分析" aria-label="浮动影响分析">
-                  <i data-lucide="picture-in-picture-2"></i>
-                </button>
-              </div>
-            </header>
-            <div class="impact-controls">
-              <div class="impact-tabs" role="tablist" aria-label="影响类别">
-                <button id="impactAffectedTab" type="button" role="tab" aria-selected="true" aria-controls="impactList" data-impact-tab="affected">预测影响 <output id="impactCount" aria-label="当前分析范围内的受影响对象数">--</output></button>
-                <button id="impactNearbyTab" type="button" role="tab" aria-selected="false" aria-controls="impactList" tabindex="-1" data-impact-tab="nearby">邻近积水 <span id="impactNearbyCount">--</span></button>
-              </div>
-              <select id="impactTypeFilter" aria-label="筛选对象类型"><option value="all">全部类型</option></select>
-            </div>
-            <div class="impact-readiness">
-              <span id="impactTimeLabel" title="当前影响分析范围">等待预测结果</span>
-              <span id="impactReadiness">尚无淹没预测</span>
-            </div>
-            <div id="impactNotice" class="impact-notice" role="status" hidden></div>
-            <div class="impact-list" id="impactList" role="tabpanel" aria-labelledby="impactAffectedTab" tabindex="0"><p class="impact-empty">加载预测结果后查看影响分析</p></div>
-            <footer class="impact-panel-footer" id="impactListSummary">道路按已收录路段统计</footer>
-          </section>
-            <section class="directive-panel situation-pane" id="directivePanel" aria-label="应急指令">
-              <header class="directive-panel-header">
-                <div>
-                  <strong>应急指令</strong>
-                  <span>当前演进已发出</span>
-                </div>
-                <output class="directive-count" id="directiveCount">0</output>
+            <section class="response-workbench" id="responseWorkbench" aria-labelledby="responseWorkbenchTitle">
+              <header class="response-workbench-header">
+                <strong id="responseWorkbenchTitle">应急响应</strong>
+                <nav class="response-workflow" aria-label="应急响应环节">
+                  <button type="button" data-situation-panel="impactPanel" aria-controls="impactPanel">影响研判</button>
+                  <span aria-hidden="true">→</span>
+                  <button type="button" data-situation-panel="directivePanel" aria-controls="directivePanel">指令处置</button>
+                </nav>
               </header>
-              <div class="directive-history-list" id="directiveHistoryList" tabindex="0" aria-label="已发出应急指令列表"></div>
+              <div class="response-workbench-body">
+                <section class="impact-panel situation-pane map-draggable-panel" id="impactPanel" aria-label="影响分析">
+                  <header class="impact-panel-header panel-drag-handle" data-panel-drag-handle title="拖动影响分析">
+                    <div class="impact-panel-title">
+                      <strong>淹没与影响</strong>
+                      <span id="impactStatus" role="status">等待预测</span>
+                    </div>
+                    <div class="impact-panel-meta">
+                      <button id="runImpactAnalysis" class="impact-analyze-button" type="button" disabled>分析当前范围</button>
+                      <span class="panel-drag-grip" aria-hidden="true"><i data-lucide="grip-horizontal"></i></span>
+                      <button class="icon-button" id="impactFloatBtn" type="button" title="浮动影响分析" aria-label="浮动影响分析">
+                        <i data-lucide="picture-in-picture-2"></i>
+                      </button>
+                    </div>
+                  </header>
+                  <div class="impact-controls">
+                    <div class="impact-tabs" role="tablist" aria-label="影响类别">
+                      <button id="impactAffectedTab" type="button" role="tab" aria-selected="true" aria-controls="impactList" data-impact-tab="affected">预测影响 <output id="impactCount" aria-label="当前分析范围内的受影响对象数">--</output></button>
+                      <button id="impactNearbyTab" type="button" role="tab" aria-selected="false" aria-controls="impactList" tabindex="-1" data-impact-tab="nearby">邻近积水 <span id="impactNearbyCount">--</span></button>
+                    </div>
+                    <select id="impactTypeFilter" aria-label="筛选对象类型"><option value="all">全部类型</option></select>
+                  </div>
+                  <div class="impact-readiness">
+                    <span id="impactTimeLabel" title="当前影响分析范围">等待预测结果</span>
+                    <span id="impactReadiness">尚无淹没预测</span>
+                  </div>
+                  <div id="impactNotice" class="impact-notice" role="status" hidden></div>
+                  <div class="impact-list" id="impactList" role="tabpanel" aria-labelledby="impactAffectedTab" tabindex="0"><p class="impact-empty">加载预测结果后查看影响分析</p></div>
+                  <footer class="impact-panel-footer" id="impactListSummary">道路按已收录路段统计</footer>
+                </section>
+                <section class="directive-panel situation-pane" id="directivePanel" aria-label="应急指令">
+                  <header class="directive-panel-header">
+                    <div>
+                      <strong>应急指令</strong>
+                      <span>当前演进已发出</span>
+                    </div>
+                    <output class="directive-count" id="directiveCount">0</output>
+                  </header>
+                  <div class="directive-history-list" id="directiveHistoryList" tabindex="0" aria-label="已发出应急指令列表"></div>
+                </section>
+              </div>
             </section>
           </div>
         </section>
@@ -426,6 +453,6 @@
     <script src="/vendor/lucide.js?v=2"></script>
     <script src="/map-symbols.js?v=3"></script>
     <script src="/vendor/marked/marked.min.js?v=12.0.2"></script>
-    <script src="/app.js?v=18"></script>
+    <script src="/app.js?v=19"></script>
   </body>
 </html>

@@ -1059,6 +1059,9 @@ function layerObjectIcon(objectType, feature = {}, className = "layer-list-icon"
 }
 
 function bindEvents() {
+  document.querySelectorAll("[data-situation-panel]").forEach((button) => {
+    button.addEventListener("click", () => revealSituationPanel(button.dataset.situationPanel));
+  });
   document.querySelectorAll("[data-basin-dispatch-chart]").forEach(button => {
     button.addEventListener("click", () => {
       state.basinDispatchChart = button.dataset.basinDispatchChart;
@@ -1380,12 +1383,20 @@ function revealSituationPanel(panelId, behavior = "smooth") {
   const body = document.querySelector(".situation-workbench-body");
   const panel = document.getElementById(panelId);
   if (!body || !panel) return;
-  const panelStart = panel.offsetLeft;
-  const panelEnd = panelStart + panel.offsetWidth;
-  const viewportStart = body.scrollLeft;
-  const viewportEnd = viewportStart + body.clientWidth;
-  if (panelStart >= viewportStart && panelEnd <= viewportEnd) return;
-  body.scrollTo({ left: panelStart, behavior });
+  const response = document.getElementById("responseWorkbench");
+  const scrollIntoPanel = (container, target) => {
+    const viewport = container.getBoundingClientRect();
+    const bounds = target.getBoundingClientRect();
+    if (bounds.left >= viewport.left - 1 && bounds.right <= viewport.right + 1) return;
+    container.scrollTo({ left: container.scrollLeft + bounds.left - viewport.left, behavior });
+  };
+  if (panel.classList.contains("is-floating")) return;
+  if (response.contains(panel)) {
+    scrollIntoPanel(body, response);
+    if (panel !== response) scrollIntoPanel(response.querySelector(".response-workbench-body"), panel);
+  } else {
+    scrollIntoPanel(body, panel);
+  }
 }
 
 function toggleSituationPanelFloating(panelId) {
@@ -1400,7 +1411,7 @@ function setSituationPanelFloating(panel, floating) {
   if (!floating) setMapPanelTranslation(panel, 0, 0);
   const button = panel.querySelector("#telemetryFloatBtn, #impactFloatBtn");
   if (button) {
-    const label = panel.id === "impactPanel" ? "影响分析" : "演进数据";
+    const label = panel.id === "impactPanel" ? "影响分析" : "业务推演";
     button.title = floating ? `停靠${label}` : `浮动${label}`;
     button.setAttribute("aria-label", button.title);
     button.innerHTML = `<i data-lucide="${floating ? "panel-bottom" : "picture-in-picture-2"}"></i>`;
