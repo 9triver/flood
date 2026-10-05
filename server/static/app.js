@@ -7404,9 +7404,6 @@ function renderBasinWorkbench(observation) {
   });
   document.getElementById("basinRainTable").innerHTML = basinTable(
     ["分区 / 控制面积", "当前雨量", `${period}累计`, "最大时段 / 时刻"], rainRows);
-  document.getElementById("basinRainNote").textContent = observation
-    ? `面雨量输入 · mm / 时段；累计不含当前时段。${hours < 24 ? "输入尾段不足 24 小时。" : ""}测站雨量在 marker 中查看。`
-    : "等待降雨输入；三个分区分别驱动产流。";
   renderBasinRainChart(observation);
   const flows = observation?.boundary_flow_forecast?.series || [];
   const currentTime = observation?.simulation_time || observation?.observed_at;
@@ -7418,10 +7415,6 @@ function renderBasinWorkbench(observation) {
     return [`<span class="basin-dot" style="background:${BOUNDARY_FLOW_COLORS[key]}"></span>${BOUNDARY_FLOW_LABELS[key]}<small>${source}</small>`, `<strong>${basinNumber(current)}</strong>`, basinNumber(peak?.value), peak ? escapeHtml(formatRainfallChartTime(peak.valid_time)) : "--"];
   });
   document.getElementById("basinFlowTable").innerHTML = basinTable(["CNN 边界 / 来源", "当前流量", "窗口峰值", "峰值时刻"], flowRows);
-  const threshold = observation?.boundary_flow_forecast?.first_threshold_exceeded_at;
-  document.getElementById("basinFlowNote").textContent = observation
-    ? `派生流量 · m³/s · ${flows.length}h窗口含当前点；四边界合计首次超 230：${threshold ? formatRainfallChartTime(threshold) : "未超过"}`
-    : "等待产流与水库调度计算。";
   const decision = observation?.reservoir_dispatch;
   const label = DISPATCH_STATES[decision?.state]?.label || "等待调度数据";
   const reservoirFuture = observation?.reservoir_forecast?.series || [];
@@ -7431,9 +7424,7 @@ function renderBasinWorkbench(observation) {
     return [name, `<strong>${basinNumber(observation?.[field])}</strong>`, basinNumber(peak?.[field])];
   });
   document.getElementById("basinDispatchSummary").innerHTML = `<div class="basin-dispatch-state"><strong>${escapeHtml(label)}</strong><span>模拟调度 · 演进当前</span></div>
-    <p class="basin-note">${escapeHtml(decision?.constraint || "开始演进后查看模拟调度状态。")}</p>
-    ${basinTable(["水库指标", "演进当前", `未来${reservoirFuture.length}h窗口最大`], dispatchRows)}
-    <div class="basin-note">判定原因和完整过程通过水库 marker 查看。</div>`;
+    ${basinTable(["水库指标", "演进当前", `未来${reservoirFuture.length}h窗口最大`], dispatchRows)}`;
   renderBasinDispatchChart();
 }
 
@@ -7445,7 +7436,7 @@ function renderBasinDispatchChart() {
   const chart = state.lastMockObservation
     ? (level ? reservoirLevelChartHtml({ showSelection: false }) : reservoirFlowChartHtml({ showSelection: false }))
     : "";
-  document.getElementById("basinDispatchChart").innerHTML = chart || '<p class="basin-note">等待水库调度数据</p>';
+  document.getElementById("basinDispatchChart").innerHTML = chart;
 }
 
 function renderBasinRainChart(observation) {

@@ -1389,8 +1389,8 @@ h2 {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   justify-content: space-between;
-  gap: 2px 10px;
-  padding: 7px 11px 7px 13px;
+  gap: 2px 6px;
+  padding: 4px 8px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -1419,25 +1419,6 @@ h2 {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-}
-
-.impact-panel-context {
-  grid-column: 1 / -1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  overflow: hidden;
-}
-
-.impact-panel-context span {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--subtle);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 #impactTimeLabel {
@@ -1472,12 +1453,12 @@ h2 {
 
 .impact-list-item {
   width: 100%;
-  min-height: 54px;
+  min-height: 42px;
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) 96px;
+  grid-template-columns: 22px minmax(0, 1fr) 88px;
   align-items: center;
-  gap: 7px;
-  padding: 9px 11px;
+  gap: 5px;
+  padding: 5px 8px;
   border: 0;
   border-bottom: 1px solid rgba(216, 223, 230, 0.78);
   background: transparent;
@@ -1502,8 +1483,8 @@ h2 {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 10px;
+  gap: 6px;
+  padding: 3px 8px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -1515,7 +1496,7 @@ h2 {
 
 .impact-tabs button {
   flex: 1;
-  padding: 6px 5px;
+  padding: 5px;
   border: 0;
   border-radius: 5px;
   background: transparent;
@@ -1565,7 +1546,7 @@ h2 {
 
 .impact-panel-footer {
   flex: 0 0 auto;
-  padding: 5px 11px;
+  padding: 3px 8px;
   border-top: 1px solid var(--line);
   color: var(--subtle);
   background: #f8fafc;
@@ -1574,7 +1555,7 @@ h2 {
 
 .impact-empty {
   margin: 0;
-  padding: 24px 16px;
+  padding: 12px 10px;
   color: var(--subtle);
   font-size: 12px;
   line-height: 1.7;
@@ -1584,7 +1565,7 @@ h2 {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 8px 11px;
+  padding: 5px 8px;
   border-bottom: 1px solid var(--line);
   background: #f5f8fb;
   cursor: pointer;
@@ -1661,7 +1642,7 @@ h2 {
 .impact-road-note,
 .impact-ungrouped-label {
   margin: 0;
-  padding: 6px 11px;
+  padding: 4px 8px;
   color: var(--subtle);
   font-size: 10px;
   line-height: 1.6;
@@ -1810,13 +1791,13 @@ h2 {
 .impact-list-copy {
   min-width: 0;
   display: grid;
-  gap: 3px;
+  gap: 1px;
 }
 
 .impact-list-copy strong,
 .impact-list-copy small {
   overflow-wrap: anywhere;
-  line-height: 1.5;
+  line-height: 1.35;
 }
 
 .impact-list-copy strong {
@@ -1831,7 +1812,7 @@ h2 {
 
 .impact-list-depth {
   display: grid;
-  gap: 3px;
+  gap: 1px;
   color: #991b1b;
   font-size: 14px;
   font-weight: 850;
@@ -4837,7 +4818,7 @@ h2 {
 
 @container (max-width: 900px) {
   .situation-workbench {
-    height: min(42vh, 340px);
+    height: min(42vh, 310px);
   }
 
   .situation-workbench.is-collapsed {
@@ -4862,7 +4843,7 @@ h2 {
 
 @container (max-width: 620px) {
   .situation-workbench {
-    height: min(48vh, 390px);
+    height: min(46vh, 360px);
     grid-template-rows: auto minmax(0, 1fr);
   }
 
@@ -4932,7 +4913,7 @@ h2 {
   }
 
   .situation-workbench:has(.hydro-timeline:not(.is-hidden)):not(.is-collapsed) {
-    height: min(52vh, 430px);
+    height: min(50vh, 400px);
   }
 
   .situation-workbench.is-collapsed .hydro-timeline {
@@ -5662,7 +5643,7 @@ body.is-cover-visible .app-shell {
 .basin-content { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 10px 6px; scrollbar-width: thin; }
 .basin-content [hidden] { display: none !important; }
 .basin-data-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; align-items: start; }
-.basin-data-values { min-width: 0; }
+.basin-data-values, .basin-trend-column { min-width: 0; }
 .basin-table { width: 100%; border-collapse: collapse; font-size: 11px; line-height: 1.25; font-variant-numeric: tabular-nums; }
 .basin-table thead th { background: #f5f7f9; color: #718096; font-size: 10px; font-weight: 500; }
 .basin-table th, .basin-table td { padding: 3px 4px; border-bottom: 1px solid #e6ebef; text-align: right; font-weight: 400; }
@@ -5670,7 +5651,6 @@ body.is-cover-visible .app-shell {
 .basin-table strong { font-size: 12px; font-weight: 700; }
 .basin-table small { line-height: 1.25; display: block; color: #81909e; font-size: 9px; }
 .basin-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; }
-.basin-note { font-size: 10px; color: #728091; line-height: 1.5; margin: 5px 0; }
 .basin-rain-chart > span { color: #728091; font-size: 9px; }
 .basin-rain-chart { min-width: 0; }
 .basin-rain-chart svg { display: block; width: 100%; height: 72px; }
@@ -5680,10 +5660,10 @@ body.is-cover-visible .app-shell {
 .basin-content .flow-history-head { flex-wrap: wrap; gap: 2px 8px; color: #728091; font-size: 9px; }
 @container basin-workbench (min-width: 520px) {
   .basin-data-layout { grid-template-columns: minmax(280px, 340px) minmax(210px, 1fr); gap: 12px; }
-  .basin-data-layout > .basin-rain-chart,
+  .basin-data-layout > .basin-trend-column,
   .basin-data-layout > .flow-history-card,
   .basin-data-layout > .basin-dispatch-chart { border-left: 1px solid #e6ebef; padding-left: 10px; margin-top: 4px; }
-  .basin-rain-chart svg, .basin-content .flow-history-chart { height: 108px; }
+  .basin-rain-chart svg, .basin-content .flow-history-chart { height: 92px; }
 }
 .basin-dispatch-chart { min-width: 0; }
 .basin-chart-controls { display: flex; gap: 4px; margin-bottom: 4px; }
@@ -5698,18 +5678,19 @@ body.is-cover-visible .app-shell {
 @container basin-workbench (min-width: 520px) {
   .basin-dispatch-chart svg { height: 98px; }
 }
-#basinDispatchPanel .basin-note { margin-block: 3px; }
 #basinDispatchPanel .basin-link { padding-block: 2px; }
 .basin-dispatch-state { display: flex; align-items: center; gap: 10px; background: #f4f7fa; padding: 5px 7px; }
 .basin-dispatch-state strong { font-size: 13px; }
 .basin-dispatch-state span { font-size: 10px; color: #728091; }
 .basin-link { color: #2878b9; background: none; border: 0; padding: 4px 0; cursor: pointer; font-size: 11px; }
 #telemetryPanel.basin-workbench .telemetry-progress { flex: 0 0 auto; padding: 4px 10px; }
-.impact-readiness { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 5px 10px; border-bottom: 1px solid #e6ebef; font-size: 10px; color: #728091; }
-.impact-readiness button { border: 1px solid #cbd5e1; border-radius: 4px; background: #f8fafc; color: #17599a; padding: 4px 7px; font: inherit; cursor: pointer; }
-.impact-readiness button:disabled { opacity: .5; cursor: default; }
+.impact-readiness { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 2px 8px; padding: 3px 8px; border-bottom: 1px solid #e6ebef; font-size: 10px; line-height: 1.4; color: #728091; }
+.impact-readiness > span { min-width: 0; overflow-wrap: anywhere; }
+.impact-panel-meta { gap: 4px; }
+.impact-analyze-button { border: 1px solid #cbd5e1; border-radius: 4px; background: #f8fafc; color: #17599a; padding: 4px 7px; min-height: 26px; font: inherit; font-size: 10px; white-space: nowrap; cursor: pointer; }
+.impact-analyze-button:disabled { opacity: .5; cursor: default; }
 @media (max-width: 800px) { .situation-workbench-body { grid-template-columns: minmax(350px, 90vw) minmax(300px, 85vw) 260px; } .basin-workbench .telemetry-header-context { grid-template-columns: auto 1fr; } .basin-workbench .telemetry-forecast-window { grid-column: 1 / -1; border: 0; padding: 0; display: flex; gap: 6px; } }
-@media (min-width: 1101px) { .map-stage { --situation-dock-height: min(44vh, 340px); } }
+@media (min-width: 1101px) { .map-stage { --situation-dock-height: min(42vh, 310px); } }
 #basinFlowTable small { margin-top: 1px; }
 
 .agent-notification-region {

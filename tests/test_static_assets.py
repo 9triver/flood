@@ -354,7 +354,7 @@ class StaticAssetTest(unittest.TestCase):
         styles = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")
 
         self.assertIn('<span>当前演进时刻</span>', index)
-        self.assertIn('class="impact-panel-context"', index)
+        self.assertIn('class="impact-readiness"', index)
         self.assertIn('title="当前影响分析范围"', index)
         self.assertIn('id="situationEvolutionSummary"', index)
         self.assertIn('id="situationForecastSummary"', index)
@@ -383,7 +383,7 @@ class StaticAssetTest(unittest.TestCase):
         self.assertIn("telemetryTime", app[observation_start:observation_end])
         self.assertIn('.telemetry-time-context {', styles)
         self.assertIn('.situation-summary {', styles)
-        self.assertIn('.impact-panel-context {', styles)
+        self.assertIn('.impact-readiness {', styles)
         self.assertIn(
             'minmax(120px, 1fr) auto minmax(400px, 640px)', styles,
         )

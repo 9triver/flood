@@ -276,14 +276,14 @@
                 <section class="basin-data-layout" id="basinRainPanel" role="tabpanel" aria-labelledby="basinRainTab">
                   <div class="basin-data-values">
                     <div id="basinRainTable"></div>
-                    <div class="basin-note" id="basinRainNote">等待降雨数据</div>
                   </div>
-                  <div id="basinRainChart" class="basin-rain-chart"></div>
+                  <div class="basin-trend-column">
+                    <div id="basinRainChart" class="basin-rain-chart"></div>
+                  </div>
                 </section>
                 <section class="basin-data-layout" id="basinFlowPanel" role="tabpanel" aria-labelledby="basinFlowTab" hidden>
                   <div class="basin-data-values">
                     <div id="basinFlowTable"></div>
-                    <div class="basin-note" id="basinFlowNote">等待产流与调度计算</div>
                   </div>
                   <div class="flow-history-card">
                     <div class="flow-history-head"><span>四边界流量 · 已回放 / 预计算</span><small id="flowHistoryRange">--</small></div>
@@ -300,7 +300,7 @@
                       <button type="button" data-basin-dispatch-chart="flow" aria-pressed="true" aria-controls="basinDispatchChart">入流 / 泄流</button>
                       <button type="button" data-basin-dispatch-chart="level" aria-pressed="false" aria-controls="basinDispatchChart">库水位</button>
                     </div>
-                    <div id="basinDispatchChart"><p class="basin-note">等待水库调度数据</p></div>
+                    <div id="basinDispatchChart"></div>
                   </div>
                 </section>
               </div>
@@ -316,13 +316,11 @@
                 <span id="impactStatus" role="status">等待预测</span>
               </div>
               <div class="impact-panel-meta">
+                <button id="runImpactAnalysis" class="impact-analyze-button" type="button" disabled>分析当前范围</button>
                 <span class="panel-drag-grip" aria-hidden="true"><i data-lucide="grip-horizontal"></i></span>
                 <button class="icon-button" id="impactFloatBtn" type="button" title="浮动影响分析" aria-label="浮动影响分析">
                   <i data-lucide="picture-in-picture-2"></i>
                 </button>
-              </div>
-              <div class="impact-panel-context">
-                <span id="impactTimeLabel" title="当前影响分析范围">等待预测结果</span>
               </div>
             </header>
             <div class="impact-controls">
@@ -332,7 +330,10 @@
               </div>
               <select id="impactTypeFilter" aria-label="筛选对象类型"><option value="all">全部类型</option></select>
             </div>
-            <div class="impact-readiness"><span id="impactReadiness">尚无淹没预测</span><button id="runImpactAnalysis" type="button" disabled>分析当前范围</button></div>
+            <div class="impact-readiness">
+              <span id="impactTimeLabel" title="当前影响分析范围">等待预测结果</span>
+              <span id="impactReadiness">尚无淹没预测</span>
+            </div>
             <div id="impactNotice" class="impact-notice" role="status" hidden></div>
             <div class="impact-list" id="impactList" role="tabpanel" aria-labelledby="impactAffectedTab" tabindex="0"><p class="impact-empty">加载预测结果后查看影响分析</p></div>
             <footer class="impact-panel-footer" id="impactListSummary">道路按已收录路段统计</footer>
