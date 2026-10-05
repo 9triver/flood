@@ -273,22 +273,35 @@
                 <button id="basinDispatchTab" type="button" role="tab" aria-selected="false" tabindex="-1" aria-controls="basinDispatchPanel" data-basin-tab="dispatch">水库调度</button>
               </div>
               <div class="basin-content">
-                <section id="basinRainPanel" role="tabpanel" aria-labelledby="basinRainTab">
-                  <div id="basinRainTable"></div>
-                  <div class="basin-note" id="basinRainNote">等待降雨数据</div>
+                <section class="basin-data-layout" id="basinRainPanel" role="tabpanel" aria-labelledby="basinRainTab">
+                  <div class="basin-data-values">
+                    <div id="basinRainTable"></div>
+                    <div class="basin-note" id="basinRainNote">等待降雨数据</div>
+                  </div>
                   <div id="basinRainChart" class="basin-rain-chart"></div>
                 </section>
-                <section id="basinFlowPanel" role="tabpanel" aria-labelledby="basinFlowTab" hidden>
-                  <div id="basinFlowTable"></div>
-                  <div class="basin-note" id="basinFlowNote">等待产流与调度计算</div>
+                <section class="basin-data-layout" id="basinFlowPanel" role="tabpanel" aria-labelledby="basinFlowTab" hidden>
+                  <div class="basin-data-values">
+                    <div id="basinFlowTable"></div>
+                    <div class="basin-note" id="basinFlowNote">等待产流与调度计算</div>
+                  </div>
                   <div class="flow-history-card">
                     <div class="flow-history-head"><span>四边界流量 · 已回放 / 预计算</span><small id="flowHistoryRange">--</small></div>
                     <svg id="boundaryFlowHistoryChart" class="flow-history-chart" viewBox="0 0 320 78" preserveAspectRatio="xMidYMid meet" aria-label="四边界流量过程"></svg>
                   </div>
                 </section>
-                <section id="basinDispatchPanel" role="tabpanel" aria-labelledby="basinDispatchTab" hidden>
-                  <div id="basinDispatchSummary"></div>
-                  <button id="openReservoirDispatch" class="basin-link" type="button">查看水库 marker 过程 ↗</button>
+                <section class="basin-data-layout" id="basinDispatchPanel" role="tabpanel" aria-labelledby="basinDispatchTab" hidden>
+                  <div class="basin-data-values">
+                    <div id="basinDispatchSummary"></div>
+                    <button id="openReservoirDispatch" class="basin-link" type="button">查看水库 marker 过程 ↗</button>
+                  </div>
+                  <div class="basin-dispatch-chart">
+                    <div class="basin-chart-controls" role="group" aria-label="水库趋势指标">
+                      <button type="button" data-basin-dispatch-chart="flow" aria-pressed="true" aria-controls="basinDispatchChart">入流 / 泄流</button>
+                      <button type="button" data-basin-dispatch-chart="level" aria-pressed="false" aria-controls="basinDispatchChart">库水位</button>
+                    </div>
+                    <div id="basinDispatchChart"><p class="basin-note">等待水库调度数据</p></div>
+                  </div>
                 </section>
               </div>
               <footer class="telemetry-progress">

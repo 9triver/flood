@@ -5652,38 +5652,65 @@ body.is-cover-visible .app-shell {
 
 /* Keep the dock and its three panes; organize calculated telemetry by subject. */
 .situation-workbench-body { grid-template-columns: minmax(530px, 1.7fr) minmax(330px, 1fr) minmax(215px, .65fr); }
-#telemetryPanel.basin-workbench { display: flex; flex-direction: column; overflow: hidden; }
-.basin-workbench .telemetry-header { min-height: 48px; padding: 6px 10px; flex: 0 0 auto; }
-.basin-tabs { display: flex; gap: 5px; padding: 6px 10px; flex: 0 0 auto; }
+#telemetryPanel.basin-workbench { display: flex; flex-direction: column; overflow: hidden; container: basin-workbench / inline-size; }
+#telemetryPanel.basin-workbench.is-floating { height: min(42vh, 320px); }
+.basin-workbench .telemetry-header { min-height: 42px; padding: 6px 10px; flex: 0 0 auto; }
+.basin-tabs { display: flex; gap: 5px; padding: 4px 10px; flex: 0 0 auto; }
 .basin-tabs button { border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 10px; color: #526171; background: #fff; font: inherit; font-size: 11px; cursor: pointer; }
 .basin-tabs button[aria-selected="true"] { background: #e8f2ff; color: #17599a; border-color: #93b9e8; }
 .basin-tabs button:focus-visible, .basin-link:focus-visible { outline: 2px solid #2878b9; outline-offset: 2px; }
 .basin-content { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 10px 6px; scrollbar-width: thin; }
 .basin-content [hidden] { display: none !important; }
-.basin-table { width: 100%; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
+.basin-data-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; align-items: start; }
+.basin-data-values { min-width: 0; }
+.basin-table { width: 100%; border-collapse: collapse; font-size: 11px; line-height: 1.25; font-variant-numeric: tabular-nums; }
 .basin-table thead th { background: #f5f7f9; color: #718096; font-size: 10px; font-weight: 500; }
-.basin-table th, .basin-table td { padding: 4px 5px; border-bottom: 1px solid #e6ebef; text-align: right; font-weight: 400; }
+.basin-table th, .basin-table td { padding: 3px 4px; border-bottom: 1px solid #e6ebef; text-align: right; font-weight: 400; }
 .basin-table th:first-child { text-align: left; }
-.basin-table strong { font-size: 13px; font-weight: 700; }
-.basin-table small { display: block; color: #81909e; font-size: 9px; }
+.basin-table strong { font-size: 12px; font-weight: 700; }
+.basin-table small { line-height: 1.25; display: block; color: #81909e; font-size: 9px; }
 .basin-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; }
 .basin-note { font-size: 10px; color: #728091; line-height: 1.5; margin: 5px 0; }
 .basin-rain-chart > span { color: #728091; font-size: 9px; }
-.basin-rain-chart svg { display: block; width: 100%; height: 46px; }
+.basin-rain-chart { min-width: 0; }
+.basin-rain-chart svg { display: block; width: 100%; height: 72px; }
 .basin-rain-chart text { fill: #81909e; font-size: 8px; }
-.basin-content .flow-history-chart { height: 60px; width: 100%; }
-.basin-content .flow-history-card { padding: 4px 0; }
-.basin-dispatch-state { display: flex; align-items: center; gap: 10px; background: #f4f7fa; padding: 7px; }
+.basin-content .flow-history-chart { height: 78px; width: 100%; }
+.basin-content .flow-history-card { grid-column: auto; grid-row: auto; height: auto; padding: 0; border: 0; }
+.basin-content .flow-history-head { flex-wrap: wrap; gap: 2px 8px; color: #728091; font-size: 9px; }
+@container basin-workbench (min-width: 520px) {
+  .basin-data-layout { grid-template-columns: minmax(280px, 340px) minmax(210px, 1fr); gap: 12px; }
+  .basin-data-layout > .basin-rain-chart,
+  .basin-data-layout > .flow-history-card,
+  .basin-data-layout > .basin-dispatch-chart { border-left: 1px solid #e6ebef; padding-left: 10px; margin-top: 4px; }
+  .basin-rain-chart svg, .basin-content .flow-history-chart { height: 108px; }
+}
+.basin-dispatch-chart { min-width: 0; }
+.basin-chart-controls { display: flex; gap: 4px; margin-bottom: 4px; }
+.basin-chart-controls button { border: 1px solid #dbe3eb; border-radius: 4px; background: #fff; color: #64748b; padding: 3px 7px; font: inherit; font-size: 10px; cursor: pointer; }
+.basin-chart-controls button[aria-pressed="true"] { background: #e8f2ff; border-color: #93b9e8; color: #17599a; }
+.basin-chart-controls button:focus-visible { outline: 2px solid #2878b9; outline-offset: 2px; }
+.basin-dispatch-chart .station-reservoir-chart { padding: 0; border: 0; }
+.basin-dispatch-chart .station-reservoir-chart-head { flex-wrap: wrap; gap: 2px; }
+.basin-dispatch-chart .station-reservoir-chart-head > strong { font-size: 10px; }
+.basin-dispatch-chart .station-reservoir-legend { gap: 5px; }
+.basin-dispatch-chart svg { height: 78px; }
+@container basin-workbench (min-width: 520px) {
+  .basin-dispatch-chart svg { height: 98px; }
+}
+#basinDispatchPanel .basin-note { margin-block: 3px; }
+#basinDispatchPanel .basin-link { padding-block: 2px; }
+.basin-dispatch-state { display: flex; align-items: center; gap: 10px; background: #f4f7fa; padding: 5px 7px; }
 .basin-dispatch-state strong { font-size: 13px; }
 .basin-dispatch-state span { font-size: 10px; color: #728091; }
 .basin-link { color: #2878b9; background: none; border: 0; padding: 4px 0; cursor: pointer; font-size: 11px; }
-.basin-workbench .telemetry-progress { flex: 0 0 auto; }
+#telemetryPanel.basin-workbench .telemetry-progress { flex: 0 0 auto; padding: 4px 10px; }
 .impact-readiness { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 5px 10px; border-bottom: 1px solid #e6ebef; font-size: 10px; color: #728091; }
 .impact-readiness button { border: 1px solid #cbd5e1; border-radius: 4px; background: #f8fafc; color: #17599a; padding: 4px 7px; font: inherit; cursor: pointer; }
 .impact-readiness button:disabled { opacity: .5; cursor: default; }
 @media (max-width: 800px) { .situation-workbench-body { grid-template-columns: minmax(350px, 90vw) minmax(300px, 85vw) 260px; } .basin-workbench .telemetry-header-context { grid-template-columns: auto 1fr; } .basin-workbench .telemetry-forecast-window { grid-column: 1 / -1; border: 0; padding: 0; display: flex; gap: 6px; } }
-@media (min-width: 1101px) { .map-stage { --situation-dock-height: min(42vh, 390px); } }
-#basinFlowTable small { display: inline; margin-left: 6px; }
+@media (min-width: 1101px) { .map-stage { --situation-dock-height: min(44vh, 340px); } }
+#basinFlowTable small { margin-top: 1px; }
 
 .agent-notification-region {
   position: absolute;

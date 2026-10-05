@@ -271,8 +271,8 @@ class StaticAssetTest(unittest.TestCase):
             'void loadObject("Station", { station_type: "reservoir"',
             app,
         )
-        self.assertIn("function reservoirLevelChartHtml()", app)
-        self.assertIn("function reservoirFlowChartHtml()", app)
+        self.assertIn("function reservoirLevelChartHtml(", app)
+        self.assertIn("function reservoirFlowChartHtml(", app)
         self.assertIn("function reservoirForecastAssessmentHtml()", app)
         self.assertIn("function reservoirAlertText(alert)", app)
         self.assertIn('"{triggered_at}",', app)

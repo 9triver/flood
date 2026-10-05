@@ -72,6 +72,7 @@ const state = {
   rainfallForecast: [],
   basinRainfallHistory: [],
   basinTab: "rain",
+  basinDispatchChart: "flow",
   boundaryFlowForecast: null,
   mapTimeContext: {
     mode: "current",
@@ -1058,6 +1059,12 @@ function layerObjectIcon(objectType, feature = {}, className = "layer-list-icon"
 }
 
 function bindEvents() {
+  document.querySelectorAll("[data-basin-dispatch-chart]").forEach(button => {
+    button.addEventListener("click", () => {
+      state.basinDispatchChart = button.dataset.basinDispatchChart;
+      renderBasinDispatchChart();
+    });
+  });
   document.querySelectorAll("[data-basin-tab]").forEach((button, index, buttons) => {
     button.addEventListener("click", () => setBasinTab(button.dataset.basinTab));
     button.addEventListener("keydown", (event) => {
@@ -4822,7 +4829,7 @@ function reservoirDispatchCursorHtml(timeline, width, bottom) {
   return `<line class="dispatch-cursor" x1="${x}" x2="${x}" y1="7" y2="${bottom}"></line>`;
 }
 
-function reservoirLevelChartHtml() {
+function reservoirLevelChartHtml({ showSelection = true } = {}) {
   const observed = state.reservoirTelemetryHistory;
   const forecast = state.reservoirForecast?.series || [];
   const timeline = reservoirChartTimeline(observed, forecast);
@@ -4889,7 +4896,7 @@ function reservoirLevelChartHtml() {
       <svg viewBox="0 0 ${width} 100" role="img" aria-label="实线为模拟观测，虚线为未来24小时预测">
         ${bands}
         ${thresholdLines}
-        ${reservoirDispatchCursorHtml(timeline, width, chartBottom)}
+        ${showSelection ? reservoirDispatchCursorHtml(timeline, width, chartBottom) : ""}
         <path class="station-reservoir-level-line is-observed" d="${observedPath}"></path>
         <path class="station-reservoir-level-line is-forecast" d="${forecastPath}"></path>
         <line class="station-reservoir-now" x1="${nowX.toFixed(2)}" y1="7" x2="${nowX.toFixed(2)}" y2="${chartBottom + 2}"></line>
@@ -4899,7 +4906,7 @@ function reservoirLevelChartHtml() {
   `;
 }
 
-function reservoirFlowChartHtml() {
+function reservoirFlowChartHtml({ showSelection = true } = {}) {
   const observed = state.reservoirTelemetryHistory;
   const forecast = state.reservoirForecast?.series || [];
   const timeline = reservoirChartTimeline(observed, forecast);
@@ -4946,7 +4953,7 @@ function reservoirFlowChartHtml() {
         <line class="station-reservoir-grid" x1="0" y1="${((chartTop + chartBottom) / 2).toFixed(2)}" x2="${width}" y2="${((chartTop + chartBottom) / 2).toFixed(2)}"></line>
         <line class="station-reservoir-axis" x1="0" y1="${chartBottom}" x2="${width}" y2="${chartBottom}"></line>
         ${paths}
-        ${reservoirDispatchCursorHtml(timeline, width, chartBottom)}
+        ${showSelection ? reservoirDispatchCursorHtml(timeline, width, chartBottom) : ""}
         <line class="station-reservoir-now" x1="${nowX.toFixed(2)}" y1="7" x2="${nowX.toFixed(2)}" y2="${chartBottom + 2}"></line>
         <text class="station-reservoir-max-label" x="2" y="10">${escapeHtml(formatReservoirFlow(maxFlow))}</text>
       </svg>
@@ -7427,6 +7434,18 @@ function renderBasinWorkbench(observation) {
     <p class="basin-note">${escapeHtml(decision?.constraint || "开始演进后查看模拟调度状态。")}</p>
     ${basinTable(["水库指标", "演进当前", `未来${reservoirFuture.length}h窗口最大`], dispatchRows)}
     <div class="basin-note">判定原因和完整过程通过水库 marker 查看。</div>`;
+  renderBasinDispatchChart();
+}
+
+function renderBasinDispatchChart() {
+  const level = state.basinDispatchChart === "level";
+  document.querySelectorAll("[data-basin-dispatch-chart]").forEach(button => {
+    button.setAttribute("aria-pressed", String(button.dataset.basinDispatchChart === state.basinDispatchChart));
+  });
+  const chart = state.lastMockObservation
+    ? (level ? reservoirLevelChartHtml({ showSelection: false }) : reservoirFlowChartHtml({ showSelection: false }))
+    : "";
+  document.getElementById("basinDispatchChart").innerHTML = chart || '<p class="basin-note">等待水库调度数据</p>';
 }
 
 function renderBasinRainChart(observation) {
@@ -7437,10 +7456,10 @@ function renderBasinRainChart(observation) {
   const points = [...past, ...future];
   const maximum = Math.max(1, ...points.flatMap(row => BASIN_RAIN_FIELDS.map(([field]) => Number(row[field]) || 0)));
   const x = i => 22 + i / Math.max(1, points.length - 1) * 294;
-  const y = v => 40 - v / maximum * 32;
+  const y = v => 94 - v / maximum * 82;
   const path = (rows, field, offset) => rows.map((row, i) => finiteTelemetryNumber(row[field]) === null ? "" : `${i ? "L" : "M"}${x(i + offset).toFixed(2)},${y(Number(row[field])).toFixed(2)}`).join(" ");
   const lines = BASIN_RAIN_FIELDS.map(([field, label, , color]) => `<path d="${path(past, field, 0)}" stroke="${color}"/><path d="${path(past.length ? [past.at(-1), ...future] : future, field, Math.max(0, past.length - 1))}" stroke="${color}" stroke-dasharray="3 3"><title>${label} · 未来输入</title></path>`).join("");
-  element.innerHTML = `<span>三分区雨量 · 实线已回放 / 虚线未来输入</span><svg viewBox="0 0 320 54" role="img" aria-label="三分区面雨量过程"><g fill="none" stroke-width="1.3">${lines}<path d="M${x(Math.max(0, past.length - 1))},3V42" stroke="#64748b" stroke-dasharray="2 3"/></g><text x="0" y="10">${maximum.toFixed(1)}</text><text x="22" y="53">${escapeHtml(formatMockClock(points[0]?.valid_time))}</text><text x="316" y="53" text-anchor="end">${escapeHtml(formatMockClock(points.at(-1)?.valid_time))}</text></svg>`;
+  element.innerHTML = `<span>三分区雨量 · 实线已回放 / 虚线未来输入</span><svg viewBox="0 0 320 112" role="img" aria-label="三分区面雨量过程"><g fill="none" stroke-width="1.3">${lines}<path d="M${x(Math.max(0, past.length - 1))},8V96" stroke="#64748b" stroke-dasharray="2 3"/></g><text x="0" y="10">${maximum.toFixed(1)}</text><text x="22" y="110">${escapeHtml(formatMockClock(points[0]?.valid_time))}</text><text x="316" y="110" text-anchor="end">${escapeHtml(formatMockClock(points.at(-1)?.valid_time))}</text></svg>`;
 }
 
 function renderImpactReadiness() {
