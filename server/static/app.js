@@ -20,6 +20,7 @@ const BOUNDARY_FLOW_LABELS = {
 const state = {
   map: null,
   watershedRenderer: null,
+  catchmentRenderer: null,
   baseLayer: null,
   basemapKey: DEFAULT_BASEMAP_KEY,
   basemapLayers: new Map(),
@@ -232,6 +233,7 @@ const BASEMAPS = {
 const OBJECT_CONFIG = {
   River: { label: "珊瑚河", color: "#0284c7" },
   Watershed: { label: "珊瑚河流域", color: "#1f2937" },
+  Catchment: { label: "水库集水区", color: "#0f766e" },
   County: { label: "县级边界", color: "#7b8794" },
   Town: { label: "乡镇边界", color: "#7a6a22" },
   Road: { label: "全部路段", color: "#facc15" },
@@ -258,28 +260,39 @@ const ROAD_STYLES = {
 
 const OBJECT_LAYER_GROUPS = [
   {
-    label: "水系与监测",
-    objectTypes: ["River", "Watershed", "Reservoir", "Sluice"],
+    label: "水系与工程",
+    objectTypes: ["River", "Watershed", "Catchment", "Reservoir", "Sluice"],
+  },
+  {
+    label: "测站",
+    objectTypes: [],
     filterControl: "station",
   },
   {
-    label: "风险与应急",
-    objectTypes: ["DangerArea", "Road", "RoadRoute", "Bridge", "EvacuationSite"],
+    label: "淹没与风险",
+    objectTypes: ["ForecastResult", "DangerArea"],
+    expanded: true,
+  },
+  {
+    label: "道路与桥梁",
+    objectTypes: ["Road", "RoadRoute", "Bridge"],
+    roadLegend: true,
+  },
+  {
+    label: "设施与安置",
+    objectTypes: ["EvacuationSite"],
     filterControl: "facility",
   },
   {
-    label: "洪水预测",
-    objectTypes: ["ForecastResult", "HydrodynamicGridCell"],
-  },
-  {
-    label: "行政边界",
-    objectTypes: ["County", "Town"],
+    label: "边界与网格",
+    objectTypes: ["County", "Town", "HydrodynamicGridCell"],
   },
 ];
 
 const ID_FIELDS = {
   River: "river_id",
   Watershed: "watershed_id",
+  Catchment: "catchment_id",
   County: "county_id",
   Town: "town_id",
   Road: "road_id",
@@ -452,6 +465,9 @@ function initMap() {
   state.map.attributionControl.setPrefix(false);
   state.watershedRenderer = L.svg({ padding: 0.25 });
 
+  state.map.createPane("catchmentPane");
+  state.map.getPane("catchmentPane").style.zIndex = "420";
+  state.catchmentRenderer = L.svg({ pane: "catchmentPane", padding: 0.25 });
   state.map.createPane("impactPane");
   state.map.getPane("impactPane").style.zIndex = "475";
   state.map.createPane("riverPane");
@@ -855,6 +871,10 @@ async function bootstrap() {
   state.workspaceId = state.bootstrap.workspace_id || null;
   updateMapContentContext();
   renderObjectList();
+  document.querySelectorAll("[data-catchment-focus]").forEach(button => {
+    button.disabled = !state.bootstrap.reservoir_catchment;
+  });
+  renderBasinWorkbench(state.lastMockObservation);
 }
 
 function deriveMapContentContext() {
@@ -958,9 +978,10 @@ function renderObjectList() {
   list.innerHTML = "";
 
   OBJECT_LAYER_GROUPS.forEach((groupConfig) => {
-    const group = document.createElement("section");
+    const group = document.createElement("details");
     group.className = "object-group";
-    group.innerHTML = `<div class="object-group-title">${groupConfig.label}</div>`;
+    group.open = Boolean(groupConfig.expanded);
+    group.innerHTML = `<summary class="object-group-title"><span>${groupConfig.label}</span><output class="object-group-count" aria-label="已显示类别数"></output></summary>`;
     const items = document.createElement("div");
     items.className = "object-group-items";
     groupConfig.objectTypes.forEach((objectType) => {
@@ -968,6 +989,15 @@ function renderObjectList() {
     });
     if (groupConfig.filterControl === "station") items.appendChild(createStationFilterControl());
     if (groupConfig.filterControl === "facility") items.appendChild(createFacilityFilterControl());
+    if (groupConfig.roadLegend) {
+      const legend = document.createElement("div");
+      legend.className = "road-style-legend";
+      legend.setAttribute("aria-label", "道路颜色图例");
+      legend.innerHTML = Object.values(ROAD_STYLES).map(style => `
+        <span><i aria-hidden="true" style="--road-color: ${style.color}; --road-outline: ${style.outline}; --road-width: ${style.weight}px"></i>${style.label}</span>
+      `).join("");
+      items.appendChild(legend);
+    }
     group.appendChild(items);
     list.appendChild(group);
   });
@@ -980,24 +1010,32 @@ function createObjectLayerButton(objectType) {
   btn.type = "button";
   btn.className = "object-row";
   btn.dataset.objectType = objectType;
-  btn.innerHTML = `${layerObjectIcon(objectType)}<span>${config.label}</span>`;
-  if (objectType === "Road" || objectType === "RoadRoute") {
-    const legend = document.createElement("span");
-    legend.className = "road-style-legend";
-    legend.innerHTML = Object.values(ROAD_STYLES).map((style) => `
-      <span><i aria-hidden="true" style="--road-color: ${style.color}; --road-outline: ${style.outline}; --road-width: ${style.weight}px"></i>${style.label}</span>
-    `).join("");
-    btn.appendChild(legend);
-  }
-  const active = hasLayerButtonType(objectType);
-  btn.classList.toggle("active", active);
-  btn.setAttribute("aria-pressed", String(active));
-  btn.title = `显示或隐藏${config.label}`;
-  btn.addEventListener("click", async () => {
-    await toggleObject(objectType);
-    if (window.matchMedia("(max-width: 900px)").matches) setLayerPanelOpen(false);
-  });
+  btn.dataset.layerLabel = config.label;
+  btn.setAttribute("role", "switch");
+  btn.innerHTML = `${layerObjectIcon(objectType)}<span>${config.label}</span><span class="layer-switch" aria-hidden="true"></span>`;
+  setLayerSwitchState(btn, hasLayerButtonType(objectType));
+  btn.addEventListener("click", () => runLayerToggle(btn, () => toggleObject(objectType)));
   return btn;
+}
+
+async function runLayerToggle(button, action) {
+  if (button.disabled) return;
+  const notice = document.getElementById("layerPanelNotice");
+  notice.hidden = true;
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  try {
+    await action();
+  } catch (error) {
+    let message = String(error.message || error);
+    try { message = JSON.parse(message).error || message; } catch { /* Plain text errors are also supported. */ }
+    notice.textContent = `${button.dataset.layerLabel}：${message}`;
+    notice.hidden = false;
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+    syncFilteredLayerButtons();
+  }
 }
 
 function createStationFilterControl() {
@@ -1030,7 +1068,6 @@ function createFacilityFilterControl() {
 function createObjectFilterControl({ label, objectType, dataKey, filterKey, options, onToggle }) {
   const control = document.createElement("div");
   control.className = "object-filter-control";
-  control.innerHTML = `<div class="object-filter-label">${layerObjectIcon(objectType)}<span>${label}</span></div>`;
   const segmented = document.createElement("div");
   segmented.className = "segmented";
   segmented.setAttribute("role", "group");
@@ -1039,9 +1076,12 @@ function createObjectFilterControl({ label, objectType, dataKey, filterKey, opti
     const button = document.createElement("button");
     button.type = "button";
     button.dataset[dataKey] = value;
-    button.setAttribute("aria-pressed", "false");
-    button.innerHTML = `${layerObjectIcon(objectType, { [filterKey]: value }, "layer-filter-icon")}<span>${optionLabel}</span>`;
-    button.addEventListener("click", () => onToggle(value));
+    button.dataset.layerLabel = `${optionLabel}${label}`;
+    button.setAttribute("role", "switch");
+    button.setAttribute("aria-label", `${optionLabel}${label}`);
+    button.innerHTML = `${layerObjectIcon(objectType, { [filterKey]: value }, "layer-filter-icon")}<span>${optionLabel}</span><span class="layer-switch" aria-hidden="true"></span>`;
+    setLayerSwitchState(button, false);
+    button.addEventListener("click", () => runLayerToggle(button, () => onToggle(value)));
     segmented.appendChild(button);
   });
   control.appendChild(segmented);
@@ -1059,6 +1099,17 @@ function layerObjectIcon(objectType, feature = {}, className = "layer-list-icon"
 }
 
 function bindEvents() {
+  document.getElementById("onlyVisibleLayers").addEventListener("change", (event) => {
+    document.querySelectorAll(".object-group").forEach(group => {
+      if (event.target.checked) {
+        group.dataset.unfilteredOpen = String(group.open);
+        group.open = true;
+      } else {
+        group.open = group.dataset.unfilteredOpen === "true";
+      }
+    });
+    syncLayerPanelSummary();
+  });
   document.querySelectorAll("[data-situation-panel]").forEach((button) => {
     button.addEventListener("click", () => revealSituationPanel(button.dataset.situationPanel));
   });
@@ -1089,6 +1140,18 @@ function bindEvents() {
       await loadObject("Station", { station_type: "reservoir" }, { fit: false });
       await focusObject({ object_type: "Station", object_id: LONGTAN_RESERVOIR_STATION_ID });
     } catch (error) { addTrace("ERR", "水库定位失败", String(error)); }
+  });
+  document.querySelectorAll("[data-catchment-focus]").forEach(button => {
+    button.addEventListener("click", async () => {
+      const catchment = state.bootstrap?.reservoir_catchment;
+      if (!catchment) return;
+      button.disabled = true;
+      try {
+        await loadObject("Reservoir", { reservoir_id: catchment.reservoir_id }, { fit: false });
+        await focusObject({ object_type: "Catchment", object_id: catchment.catchment_id });
+      } catch (error) { addTrace("ERR", "集水区定位失败", String(error)); }
+      finally { button.disabled = false; }
+    });
   });
   document.addEventListener("click", (event) => {
     const button = event.target.closest("[data-dispatch-time], [data-dispatch-chart]");
@@ -1454,19 +1517,16 @@ async function toggleObject(objectType) {
       removeLayer(key);
       return;
     }
-    clearHydrodynamicResults();
     await showHydrodynamicMesh({
       fit: true,
     });
     return;
   }
   if (objectType === "ForecastResult") {
-    const key = layerKey("HydrodynamicResult", { forecast_id: "latest" });
-    if (state.layerGroups.has(key)) {
-      removeLayer(key);
+    if (hasObjectType("HydrodynamicResult")) {
+      clearHydrodynamicResults();
       return;
     }
-    await showHydrodynamicMesh({ fit: false });
     await applyHydrodynamicResult({
       filters: { forecast_id: "latest" },
       label: OBJECT_CONFIG[objectType].label,
@@ -1475,18 +1535,17 @@ async function toggleObject(objectType) {
     return;
   }
   const filters = defaultObjectFilters(objectType);
-  const key = layerKey(objectType, filters);
-  if (state.layerGroups.has(key)) {
-    removeLayer(key);
+  if (hasObjectType(objectType)) {
+    removeObjectTypeLayers(objectType);
     return;
   }
   await loadObject(objectType, filters, { fit: false });
 }
 
 async function toggleFacility(type) {
-  const matchingKeys = filteredLayerKeys("Facility", "facility_type", type);
-  if (matchingKeys.length) {
-    matchingKeys.forEach(removeLayer);
+  const ids = visibleFilteredObjectIds("Facility", "facility_type", type);
+  if (ids.length) {
+    hideMapObjects({ object_type: "Facility", object_ids: ids });
     return;
   }
   const filters = { facility_type: type };
@@ -1495,13 +1554,11 @@ async function toggleFacility(type) {
 }
 
 async function toggleStation(type) {
-  const allKey = layerKey("Station", {});
-  const matchingKeys = filteredLayerKeys("Station", "station_type", type);
-  if (matchingKeys.length) {
-    matchingKeys.forEach(removeLayer);
+  const ids = visibleFilteredObjectIds("Station", "station_type", type);
+  if (ids.length) {
+    hideMapObjects({ object_type: "Station", object_ids: ids });
     return;
   }
-  if (state.layerGroups.has(allKey)) removeLayer(allKey);
   const labels = {
     flash_flood: "山洪测站",
     meteorological: "气象测站",
@@ -1511,10 +1568,16 @@ async function toggleStation(type) {
   await loadObject("Station", { station_type: type }, { fit: true, label: labels[type] });
 }
 
-function filteredLayerKeys(objectType, filterKey, value) {
-  return Array.from(state.layerMeta.entries())
-    .filter(([, meta]) => meta.objectType === objectType && meta.filters?.[filterKey] === value)
-    .map(([key]) => key);
+function visibleFilteredObjectIds(objectType, filterKey, value) {
+  const ids = new Set();
+  for (const [key, layer] of state.layerGroups) {
+    if (state.layerMeta.get(key)?.objectType !== objectType || !state.map.hasLayer(layer)) continue;
+    eachObjectFeature(layer, item => {
+      const props = item.feature?.properties;
+      if (props?.[filterKey] === value && props[ID_FIELDS[objectType]] != null) ids.add(String(props[ID_FIELDS[objectType]]));
+    });
+  }
+  return [...ids];
 }
 
 function defaultObjectFilters(objectType) {
@@ -1569,8 +1632,9 @@ async function loadObject(objectType, filters = {}, options = {}) {
         ? createRoadLayer(geojson, mapSelectable, objectType)
         : L.geoJSON(geojson, {
           interactive: mapSelectable,
-          renderer: objectType === "Watershed" ? state.watershedRenderer : undefined,
-          className: objectType === "Watershed" ? "watershed-boundary" : "",
+          pane: objectType === "Catchment" ? "catchmentPane" : "overlayPane",
+          renderer: objectType === "Watershed" ? state.watershedRenderer : objectType === "Catchment" ? state.catchmentRenderer : undefined,
+          className: objectType === "Watershed" ? "watershed-boundary" : objectType === "Catchment" ? "catchment-boundary" : "",
           style: (feature) => featureStyle(objectType, feature),
           pointToLayer: (feature, latlng) => pointLayer(objectType, feature, latlng),
           onEachFeature: (feature, layerItem) => {
@@ -1580,6 +1644,13 @@ async function loadObject(objectType, filters = {}, options = {}) {
               popupHtml(objectType, feature),
               objectPopupOptions(objectType),
             );
+            if (objectType === "Catchment") {
+              layerItem.bindTooltip(
+                `${escapeHtml(feature.properties.name)} · ${basinNumber(feature.properties.area_km2)} km²`,
+                { permanent: true, interactive: true, direction: "center", className: "catchment-label" },
+              );
+              layerItem.getTooltip().on("click", () => selectFeature(objectType, feature, layerItem));
+            }
             layerItem.on("click", () => selectFeature(objectType, feature, layerItem));
           },
         });
@@ -2223,6 +2294,9 @@ function removeLayer(key) {
   if (layer) state.map.removeLayer(layer);
   state.layerGroups.delete(key);
   state.layerMeta.delete(key);
+  if (state.selected && meta && state.selected.object_type === meta.objectType && !visibleObjectIds(meta.objectType).has(String(state.selected.id))) {
+    state.selected = null;
+  }
   if (meta) setObjectButtonActive(meta.buttonType || meta.objectType, hasLayerButtonType(meta.buttonType || meta.objectType));
   syncFilteredLayerButtons();
   updateMapContentContext();
@@ -3683,6 +3757,7 @@ function featureStyle(objectType, feature) {
     return hydrodynamicCellStyle(depth);
   }
   if (objectType === "Watershed") return watershedStyle(state.inundationAlertActive);
+  if (objectType === "Catchment") return { color: "#2dd4bf", weight: 2.5, dashArray: "7 4", fillColor: "#14b8a6", fillOpacity: 0.08 };
   if (objectType === "River") return riverMainStyle();
   if (objectType === "Reservoir") return reservoirWaterStyle();
   if (objectType === "County") return { color: "#7b8794", weight: 1.2, fillOpacity: 0 };
@@ -4166,6 +4241,7 @@ function objectIconInfo(objectType, feature) {
   return {
     River: { key: "river", icon: "route", label: "珊瑚河" },
     Watershed: { key: "watershed", icon: "map", label: "珊瑚河流域" },
+    Catchment: { key: "catchment", icon: "map", label: "水库集水区" },
     County: { key: "county", icon: "map", label: "县级边界" },
     Town: { key: "town", icon: "map", label: "乡镇边界" },
     Reservoir: { key: "reservoir", icon: "waves-horizontal", label: "水库" },
@@ -4204,6 +4280,11 @@ function popupHtml(objectType, feature) {
   const props = feature.properties || {};
   const name = props.name || props[ID_FIELDS[objectType]] || OBJECT_CONFIG[objectType]?.label || objectType;
   const id = props[ID_FIELDS[objectType]] || "";
+  if (objectType === "Catchment") {
+    return `<div class="popup-title">${escapeHtml(name)}</div>
+      <div class="popup-meta">集水面积 ${basinNumber(props.area_km2)} km² · 汇入${escapeHtml(props.reservoir_name)}</div>
+      <div class="popup-meta">上游降雨 → 入库流量 → 水库调度</div>`;
+  }
   if (objectType === "RoadRoute") {
     return `<div class="popup-title">${escapeHtml(props.ref)} · ${escapeHtml(name)}</div>
       <div class="popup-meta">${escapeHtml(roadClassInfo(props).label)} · 已收录 ${escapeHtml(String(props.segment_count))} 段</div>
@@ -4270,6 +4351,7 @@ function selectFeature(objectType, feature, layerItem) {
     name: props.name || props[idField],
   };
   document.getElementById("selectedObject").innerHTML = detailHtml(objectType, props);
+  syncLayerSelectionSummary();
   applyFocus(layerItem, objectType);
   layerItem.openPopup();
 }
@@ -5094,7 +5176,9 @@ function applyFocus(layerItem, objectType) {
   }
   const isPoint = Boolean(layerItem.setRadius);
   const radius = pointRadius(objectType) + 1.6;
-  const style = isPoint
+  const style = objectType === "Catchment"
+    ? { ...featureStyle(objectType, layerItem.feature), weight: 3.5, fillOpacity: 0.1 }
+    : isPoint
     ? { radius, color: "#f8fafc", weight: 1.8, fillColor: "#f59e0b", fillOpacity: 0.96 }
     : { color: "#f59e0b", weight: 4, fillColor: "#f59e0b", fillOpacity: 0.28 };
   layerItem.setStyle?.(style);
@@ -5201,6 +5285,13 @@ function fitHighlighted() {
 }
 
 function detailHtml(objectType, props) {
+  if (objectType === "Catchment") {
+    return `<div class="muted"><strong>${escapeHtml(props.name)}</strong>
+      <div>集水面积：${basinNumber(props.area_km2)} km²</div>
+      <div>汇入水库：${escapeHtml(props.reservoir_name)}</div>
+      <div>对应雨量：水库上游分区面雨量</div>
+      <div>用于推演降雨形成的入库流量</div></div>`;
+  }
   if (objectType === "Road") return roadDetailHtml(props);
   if (objectType === "RoadRoute") return roadRouteDetailHtml(props);
   if (objectType === "EvacuationRoute") return routeDetailHtml(props);
@@ -6943,6 +7034,7 @@ async function focusImpactObject(impact) {
   entry.layer.setPopupContent?.(impactPopupHtml(impact));
   entry.layer.openPopup?.(impactHasLocation(impact) ? [Number(impact.latitude), Number(impact.longitude)] : undefined);
   document.getElementById("selectedObject").innerHTML = impactDetailHtml(impact, entry.feature?.properties || {});
+  syncLayerSelectionSummary();
   if (objectType === "RoadRoute") {
     await updateImpactRoadFocus(impact, { fit: true });
   } else if (["Road", "EvacuationRoute"].includes(objectType) && impactHasLocation(impact)) {
@@ -7062,6 +7154,7 @@ function clearImpactObjectSelection(options = {}) {
     const selected = document.getElementById("selectedObject");
     if (selected) selected.innerHTML = '<span class="muted">未选中</span>';
   }
+  syncLayerSelectionSummary();
 }
 
 function impactObjectKey(impact) {
@@ -7307,36 +7400,75 @@ async function runConfirm(approved) {
   scrollChat();
 }
 
+function setLayerSwitchState(button, active) {
+  button.classList.toggle("active", active);
+  button.setAttribute("aria-checked", String(active));
+  button.title = `${active ? "隐藏已显示的" : "显示"}${button.dataset.layerLabel}`;
+}
+
 function setObjectButtonActive(objectType, active) {
-  document.querySelectorAll(`[data-object-type="${objectType}"]`).forEach((btn) => {
-    btn.classList.toggle("active", active);
-    btn.setAttribute("aria-pressed", String(active));
-  });
+  document.querySelectorAll(`[data-object-type="${objectType}"]`).forEach(btn => setLayerSwitchState(btn, active));
+  syncLayerPanelSummary();
 }
 
 function syncFilteredLayerButtons() {
+  document.querySelectorAll("#objectList [data-object-type]").forEach(btn => {
+    setLayerSwitchState(btn, hasLayerButtonType(btn.dataset.objectType));
+  });
   document.querySelectorAll("[data-facility]").forEach((btn) => {
-    const type = btn.dataset.facility;
-    const active = Array.from(state.layerMeta.values()).some((meta) => (
-      meta.objectType === "Facility" && meta.filters?.facility_type === type
-    ));
-    btn.classList.toggle("active", active);
-    btn.setAttribute("aria-pressed", String(active));
+    setLayerSwitchState(btn, visibleFilteredObjectIds("Facility", "facility_type", btn.dataset.facility).length > 0);
   });
   document.querySelectorAll("[data-station]").forEach((btn) => {
-    const type = btn.dataset.station;
-    const active = filteredLayerKeys("Station", "station_type", type).length > 0;
-    btn.classList.toggle("active", active);
-    btn.setAttribute("aria-pressed", String(active));
+    setLayerSwitchState(btn, visibleFilteredObjectIds("Station", "station_type", btn.dataset.station).length > 0);
   });
+  syncLayerPanelSummary();
+}
+
+function syncLayerPanelSummary() {
+  const onlyVisible = document.getElementById("onlyVisibleLayers").checked;
+  let total = 0;
+  document.querySelectorAll(".object-group").forEach(group => {
+    const buttons = [...group.querySelectorAll('[role="switch"]')];
+    const count = buttons.filter(button => button.getAttribute("aria-checked") === "true").length;
+    total += count;
+    const output = group.querySelector(".object-group-count");
+    output.textContent = `${count} / ${buttons.length}`;
+    output.setAttribute("aria-label", `已显示 ${count} 类，共 ${buttons.length} 类`);
+    output.classList.toggle("has-visible", count > 0);
+    if (onlyVisible && group.hidden && count) group.open = true;
+    group.hidden = onlyVisible && count === 0;
+    buttons.forEach(button => {
+      button.hidden = onlyVisible && button.getAttribute("aria-checked") !== "true";
+      if (button.hidden && document.activeElement === button) document.getElementById("onlyVisibleLayers").focus();
+    });
+    group.querySelectorAll(".object-filter-control").forEach(control => {
+      control.hidden = onlyVisible && !control.querySelector('[aria-checked="true"]');
+    });
+    const legend = group.querySelector(".road-style-legend");
+    if (legend) legend.hidden = onlyVisible && !buttons.some(button => ["Road", "RoadRoute"].includes(button.dataset.objectType) && !button.hidden);
+  });
+  document.getElementById("layerVisibleCount").textContent = `已显示 ${total} 类`;
+  document.getElementById("visibleLayersEmpty").hidden = !onlyVisible || total > 0;
+  syncLayerSelectionSummary();
+}
+
+function syncLayerSelectionSummary() {
+  const name = document.getElementById("selectedObjectName");
+  const details = document.getElementById("selectedObjectDetails");
+  name.textContent = state.selected?.name || state.selected?.id || "未选中";
+  name.title = name.textContent;
+  if (!state.selected) {
+    details.open = false;
+    document.getElementById("selectedObject").textContent = "未选中";
+  }
 }
 
 function hasObjectType(objectType) {
-  return Array.from(state.layerMeta.values()).some((meta) => meta.objectType === objectType);
+  return Array.from(state.layerMeta.entries()).some(([key, meta]) => meta.objectType === objectType && state.map.hasLayer(state.layerGroups.get(key)));
 }
 
 function hasLayerButtonType(buttonType) {
-  return Array.from(state.layerMeta.values()).some((meta) => (meta.buttonType || meta.objectType) === buttonType);
+  return Array.from(state.layerMeta.entries()).some(([key, meta]) => (meta.buttonType || meta.objectType) === buttonType && state.map.hasLayer(state.layerGroups.get(key)));
 }
 
 function layerKey(objectType, filters) {
@@ -7371,9 +7503,9 @@ function getSessionId() {
 }
 
 const BASIN_RAIN_FIELDS = [
-  ["interval1_rainfall_mm", "区间 1", "381 km²", "#1f7a5c"],
-  ["interval2_rainfall_mm", "区间 2", "85 km²", "#2878b9"],
-  ["reservoir_rainfall_mm", "水库上游", "36 km²", "#a15f13"],
+  ["interval1_rainfall_mm", "区间 1", "interval1", "#1f7a5c"],
+  ["interval2_rainfall_mm", "区间 2", "interval2", "#2878b9"],
+  ["reservoir_rainfall_mm", "水库上游", "reservoir", "#0f766e"],
 ];
 
 function setBasinTab(tab) {
@@ -7404,11 +7536,13 @@ function renderBasinWorkbench(observation) {
   const future = observation?.rainfall_forecast || [];
   const hours = future.length;
   const period = !observation || hours === 24 ? "未来 24h" : `剩余 ${hours}h`;
-  const rainRows = BASIN_RAIN_FIELDS.map(([field, label, area, color]) => {
+  const rainRows = BASIN_RAIN_FIELDS.map(([field, label, basin, color]) => {
+    const area = state.bootstrap?.basin_areas_km2?.[basin];
+    const areaLabel = `${basinNumber(area, Number.isInteger(area) ? 0 : 2)} km²`;
     const values = future.map(row => finiteTelemetryNumber(row[field]));
     const complete = values.length && values.every(value => value !== null);
     const peak = basinPeak(future, field);
-    return [`<span class="basin-dot" style="background:${color}"></span>${label} <small>${area}</small>`,
+    return [`<span class="basin-dot" style="background:${color}"></span>${label} <small>${areaLabel}</small>`,
       `<strong>${basinNumber(observation?.[field])}</strong>`,
       complete ? values.reduce((a, b) => a + b, 0).toFixed(2) : "--",
       `${basinNumber(peak?.[field])}<small>${peak ? escapeHtml(formatRainfallChartTime(peak.valid_time)) : "--"}</small>`];

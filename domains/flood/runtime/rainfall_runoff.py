@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from .rainfall_input import BASIN_AREAS_KM2
 
 SECONDS_PER_HOUR = 3600.0
 MM_KM2_TO_M3 = 1000.0
@@ -29,7 +30,7 @@ class RainfallRunoffParameters:
     ``lag_hours`` delays direct runoff by an integer number of input periods.
     """
 
-    area_km2: float = 36.0
+    area_km2: float = BASIN_AREAS_KM2["reservoir"]
     runoff_coefficient: float = 0.50
     baseflow_m3s: float = 0.2
     routing_alpha: float = 0.6
@@ -60,7 +61,7 @@ class RainfallRunoffParameters:
 def simulate_rainfall_runoff(
     rainfall_series: Iterable[dict[str, Any] | float | int],
     *,
-    area_km2: float = 36.0,
+    area_km2: float = BASIN_AREAS_KM2["reservoir"],
     runoff_coefficient: float = 0.50,
     baseflow_m3s: float = 0.2,
     routing_alpha: float = 0.6,

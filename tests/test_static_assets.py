@@ -49,7 +49,7 @@ class StaticAssetTest(unittest.TestCase):
         self.assertIn('state.map?.invalidateSize({ animate: false });', app)
         self.assertNotIn('class="launch-network"', index)
         self.assertIn("智能体集群就绪", index)
-        self.assertIn('/app.js?v=19', index)
+        self.assertIn('/app.js?v=21', index)
         self.assertIn("@media (prefers-reduced-motion: reduce)", styles)
 
     def test_hydrodynamic_timeline_avoids_redundant_work(self):
@@ -120,8 +120,8 @@ class StaticAssetTest(unittest.TestCase):
     def test_frontend_libraries_are_served_locally(self):
         index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
-        self.assertIn('/styles.css?v=18', index)
-        self.assertIn('/app.js?v=19', index)
+        self.assertIn('/styles.css?v=20', index)
+        self.assertIn('/app.js?v=21', index)
         self.assertIn('/vendor/leaflet/leaflet.css?v=1.9.4', index)
         self.assertIn('/vendor/leaflet/leaflet.js?v=1.9.4', index)
         self.assertIn('/vendor/marked/marked.min.js?v=12.0.2', index)
@@ -410,10 +410,10 @@ class StaticAssetTest(unittest.TestCase):
 
         self.assertNotIn('"HydraulicStructure"', layer_groups)
         self.assertNotIn('"EvacuationRoute"', layer_groups)
-        self.assertIn('label: "水系与监测"', layer_groups)
-        self.assertIn('label: "风险与应急"', layer_groups)
-        self.assertIn('label: "洪水预测"', layer_groups)
-        self.assertIn('label: "行政边界"', layer_groups)
+        self.assertIn('label: "水系与工程"', layer_groups)
+        self.assertIn('label: "道路与桥梁"', layer_groups)
+        self.assertIn('label: "淹没与风险"', layer_groups)
+        self.assertIn('label: "边界与网格"', layer_groups)
         self.assertLess(layer_groups.index('"ForecastResult"'), layer_groups.index('"HydrodynamicGridCell"'))
         self.assertIn('ForecastResult: { label: "预测淹没范围"', app)
 
@@ -441,24 +441,23 @@ class StaticAssetTest(unittest.TestCase):
         station_filter_end = app.index("\nfunction createFacilityFilterControl()", station_filter_start)
         self.assertNotIn('["all", "全部"]', app[station_filter_start:station_filter_end])
 
-    def test_map_management_uses_grouped_single_column_list(self):
+    def test_map_management_uses_collapsible_groups_and_switches(self):
         app = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
         styles = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")
 
         self.assertIn('className = "object-group"', app)
-        self.assertIn('class="object-group-title"', app)
+        self.assertIn('summary class="object-group-title"', app)
         self.assertNotIn('className = "object-group-toggle"', app)
         self.assertNotIn('data-lucide="eye"', app)
-        self.assertIn("grid-template-columns: 28px minmax(0, 1fr);", styles)
+        self.assertIn("grid-template-columns: 22px minmax(0, 1fr) 26px;", styles)
         self.assertIn(".object-group-items", styles)
 
     def test_map_management_uses_consistent_type_scale(self):
         styles = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")
 
         selectors = {
-            ".object-row {": "font-size: 14px;",
+            ".object-row {": "font-size: 13px;",
             ".basemap-option span {": "font-size: 14px;",
-            ".object-filter-label {": "font-size: 13px;",
             ".segmented button {": "font-size: 13px;",
             ".basemap-option small {": "font-size: 11px;",
         }

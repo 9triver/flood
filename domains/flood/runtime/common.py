@@ -12,6 +12,7 @@ OBJECTS_DIR = DOMAIN_DATA_DIR / "objects"
 OBJECT_LIBRARY_FILES = {
     "River": "river.jsonl",
     "Watershed": "watershed.jsonl",
+    "Catchment": "catchment.jsonl",
     "HydrodynamicBoundary": "hydrodynamic_boundary.jsonl",
     "County": "county.jsonl",
     "Town": "town.jsonl",
@@ -34,6 +35,7 @@ OBJECT_LIBRARY_FILES = {
 OBJECT_ID_FIELDS = {
     "River": "river_id",
     "Watershed": "watershed_id",
+    "Catchment": "catchment_id",
     "HydrodynamicBoundary": "boundary_id",
     "County": "county_id",
     "Town": "town_id",
@@ -57,6 +59,11 @@ OBJECT_ID_FIELDS = {
 }
 
 MAPPABLE_OBJECTS = {
+    "Catchment": {
+        "label": "水库集水区",
+        "role": "hydrology",
+        "style": {"type": "fill", "color": "#0f766e", "weight": 2, "fillColor": "#14b8a6", "fillOpacity": 0.1},
+    },
     "River": {
         "label": "珊瑚河",
         "role": "base",

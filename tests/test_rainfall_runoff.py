@@ -12,7 +12,7 @@ from domains.flood.runtime.rainfall_runoff import (
 class RainfallRunoffTest(unittest.TestCase):
     def test_demo_defaults_match_configured_values(self):
         parameters = RainfallRunoffParameters()
-        self.assertEqual(36.0, parameters.area_km2)
+        self.assertAlmostEqual(35.4326735909, parameters.area_km2)
         self.assertEqual(0.2, parameters.baseflow_m3s)
         self.assertEqual(0.5, parameters.runoff_coefficient)
         self.assertEqual(0.6, parameters.routing_alpha)

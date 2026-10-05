@@ -8,6 +8,7 @@ interaction_policies:
     description: "珊瑚河 GIS 用户对话策略"
     include_in_system_prompt: true
     instructions:
+      - "Catchment 表达水库上游降雨汇集和产流范围，通过 reservoir_id 关联 Reservoir。面积与地图几何可查询该对象；集水区范围不代表洪水淹没范围。龙潭集水区与珊瑚河流域原始边界存在差异，不能推断严格空间包含。"
       - "道路对象分为 RoadRoute（按编号聚合的道路）与 Road（独立路段）。用户要求所有道路地图时展示 Road，以包含未归属的路段；要求 G65 等整条编号道路时查询 RoadRoute.ref 并展示 RoadRoute，其范围仅为项目已收录路段。数量回答必须区分编号道路与路段，并说明覆盖范围；未编号路段不能从地图或统计说明中被忽略。"
       - "道路归属通过 RoadRouteSegment 表达多对多关系。不能按名称相同、距离近或 osm_ref 推断归属，osm_ref 是源要素ID。道路影响使用 road_route_impacts 或 target_type=RoadRoute，表述为已收录 N 段中 M 段受影响，不得推断整条道路不可通行；共线路段在各道路中分别汇总，不能把道路数和路段数相加。"
       - "你服务于以珊瑚河流域 GIS 为中心的前端；当前系统只展示实时预测结果，不提供设计洪水方案切换。"
@@ -243,6 +244,35 @@ objects:
       name: {type: str, description: "流域名称"}
       watershed_type: {type: str, description: "流域类型，如 flood_risk_basin/small_watershed"}
       area_km2: {type: float, description: "流域面积，若数据可得"}
+
+  Catchment:
+    kind: entity
+    countable: true
+    display_name: "水库集水区"
+    aliases:
+      - {terms: ["集水区", "汇水区", "水库上游集水区", "龙潭水库上游集水区"]}
+    data_source: external_api
+    mutability: read_only
+    source:
+      type: resolver
+      resolver: flood_repository
+      id_field: catchment_id
+    summary: "水库上游降雨汇集范围"
+    description: "Catchment 为降雨产流和水库入流计算提供空间范围与面积，通过 reservoir_id 关联水库。独立保留源边界，不代表预测淹没区。"
+    properties:
+      catchment_id: {type: str, required: true, description: "集水区编号"}
+      name: {type: str, description: "集水区名称"}
+      reservoir_id: {type: str, description: "汇入的水库编号"}
+      reservoir_name: {type: str, description: "汇入的水库名称"}
+      river_id: {type: str, description: "关联河流编号"}
+      rainfall_field: {type: str, description: "对应的分区面雨量输入字段"}
+      area_km2: {type: float, description: "源数据集水面积，平方千米；用于产流计算"}
+      area_source: {type: str, description: "面积来源与计量方法"}
+      geodesic_area_km2: {type: float, description: "按 WGS84 椭球复核的面积，平方千米"}
+      source_file: {type: str, description: "源边界文件名"}
+      source_crs: {type: str, description: "源坐标系"}
+      boundary_review_status: {type: str, description: "边界核对状态，source_boundaries_differ 表示与原始流域边界有差异"}
+      data_note: {type: str, description: "来源及空间边界使用说明"}
 
   HydrodynamicBoundary:
     kind: entity
@@ -894,6 +924,22 @@ links:
     description: "河流关联水库"
     link_type: relates
     cardinality: 1..n
+
+  reservoir_catchments:
+    source: Reservoir
+    target: Catchment
+    join: {source_key: reservoir_id, target_key: reservoir_id}
+    description: "水库入流来源的上游集水区"
+    link_type: relates
+    cardinality: 1..n
+
+  catchment_reservoir:
+    source: Catchment
+    target: Reservoir
+    join: {source_key: reservoir_id, target_key: reservoir_id}
+    description: "集水区汇入的水库"
+    link_type: relates
+    cardinality: n..1
 
   river_sluices:
     source: River

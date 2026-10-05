@@ -407,6 +407,11 @@ def _coerce_float(value: str, default: float) -> float:
         return default
 
 
+class FloodHTTPServer(ThreadingHTTPServer):
+    # Browsers open parallel connections for assets, tiles and event streams.
+    request_queue_size = 128
+
+
 def create_server(host: str = "127.0.0.1", port: int = 8765,
                   context: ApplicationContext | None = None):
     """Build an HTTP server with an explicit application context.
@@ -415,7 +420,7 @@ def create_server(host: str = "127.0.0.1", port: int = 8765,
     importing or mutating module-level service singletons.
     """
 
-    server = ThreadingHTTPServer((host, port), Handler)
+    server = FloodHTTPServer((host, port), Handler)
     server.app_context = context or build_application()
     return server
 

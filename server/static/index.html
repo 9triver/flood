@@ -6,7 +6,7 @@
     <title>基于大模型的水路联动应急智能体集群应用</title>
     <meta name="application-name" content="基于大模型的水路联动应急智能体集群应用" />
     <link rel="stylesheet" href="/vendor/leaflet/leaflet.css?v=1.9.4" />
-    <link rel="stylesheet" href="/styles.css?v=18" />
+    <link rel="stylesheet" href="/styles.css?v=20" />
   </head>
   <body class="is-cover-visible">
     <section class="launch-cover" id="launchCover" aria-labelledby="launchCoverTitle" aria-modal="true" role="dialog" tabindex="-1">
@@ -80,14 +80,19 @@
             </nav>
             <div class="layer-panel-body">
               <div class="layer-tab-pane is-active" data-layer-pane="objects">
-                <div class="panel-section">
-                  <div class="section-title">领域对象</div>
+                <div class="layer-list-toolbar">
+                  <output id="layerVisibleCount">已显示 0 类</output>
+                  <label><input id="onlyVisibleLayers" type="checkbox" />只看已显示</label>
+                  <p id="layerPanelNotice" class="layer-panel-notice" role="status" hidden></p>
+                </div>
+                <div class="layer-object-scroll">
                   <div class="object-list" id="objectList"></div>
+                  <p id="visibleLayersEmpty" class="muted" hidden>当前没有显示业务图层</p>
                 </div>
-                <div class="panel-section selected-panel">
-                  <div class="section-title">选中对象</div>
+                <details class="selected-panel" id="selectedObjectDetails">
+                  <summary><span>选中对象</span><strong id="selectedObjectName">未选中</strong></summary>
                   <div id="selectedObject" class="muted">未选中</div>
-                </div>
+                </details>
               </div>
               <div class="layer-tab-pane" data-layer-pane="basemap">
                 <div class="panel-section basemap-section">
@@ -284,6 +289,7 @@
                 <section class="basin-data-layout" id="basinRainPanel" role="tabpanel" aria-labelledby="basinRainTab">
                   <div class="basin-data-values">
                     <div id="basinRainTable"></div>
+                    <button class="basin-link catchment-link" type="button" data-catchment-focus disabled>定位水库集水区 ↗</button>
                   </div>
                   <details class="basin-process">
                     <summary>查看降雨过程</summary>
@@ -305,7 +311,10 @@
                 <section class="basin-data-layout" id="basinDispatchPanel" role="tabpanel" aria-labelledby="basinDispatchTab" hidden>
                   <div class="basin-data-values">
                     <div id="basinDispatchSummary"></div>
-                    <button id="openReservoirDispatch" class="basin-link" type="button">查看水库 marker 过程 ↗</button>
+                    <div class="basin-spatial-links">
+                      <button class="basin-link catchment-link" type="button" data-catchment-focus disabled>定位水库集水区 ↗</button>
+                      <button id="openReservoirDispatch" class="basin-link" type="button">查看水库过程 ↗</button>
+                    </div>
                   </div>
                   <details class="basin-process">
                     <summary>查看水库调度过程</summary>
@@ -453,6 +462,6 @@
     <script src="/vendor/lucide.js?v=2"></script>
     <script src="/map-symbols.js?v=3"></script>
     <script src="/vendor/marked/marked.min.js?v=12.0.2"></script>
-    <script src="/app.js?v=19"></script>
+    <script src="/app.js?v=21"></script>
   </body>
 </html>

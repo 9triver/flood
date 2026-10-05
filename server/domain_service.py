@@ -16,6 +16,8 @@ from domains.flood.runtime.impact_analysis import (
 from domains.flood.runtime.forecast_context import resolve_forecast_context
 from domains.flood.runtime.service import FloodRuntimeService
 from domains.flood.runtime.common import OBJECT_ID_FIELDS
+from domains.flood.runtime.catchments import longtan_catchment
+from domains.flood.runtime.rainfall_input import BASIN_AREAS_KM2
 from domains.flood.runtime.tools import list_mappable_objects
 from domains.flood.runtime.workspace import active_workspace_id
 
@@ -34,6 +36,8 @@ class FloodDomainService:
             "domain": self.ontology.name,
             "title": "基于大模型的水路联动应急智能体集群应用",
             "id_fields": dict(OBJECT_ID_FIELDS),
+            "basin_areas_km2": dict(BASIN_AREAS_KM2),
+            "reservoir_catchment": dict(longtan_catchment()),
             "mappable": list_mappable_objects(self.resolver),
             "counts": {
                 "school": self.resolver.count(

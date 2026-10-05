@@ -59,7 +59,8 @@ class BasinRainfallTest(unittest.TestCase):
                 self.assertAlmostEqual(row['boundaries']['tonggu']['flow_m3s'],
                                        row['boundaries']['interval2']['flow_m3s'] * 0.946, places=5)
         wet = self.load([0, 0, 100])
-        self.assertAlmostEqual(wet[1]['reservoir_inflow_m3s'], 300.2)
+        # The supplied catchment area replaces the former 36 km² approximation.
+        self.assertAlmostEqual(wet[1]['reservoir_inflow_m3s'], 295.472280, places=5)
         self.assertGreater(max(r['reservoir_release_m3s'] for r in wet), 0)
         for row, baseline in zip(wet, dry):
             self.assertEqual(row['boundaries']['interval1'], baseline['boundaries']['interval1'])
@@ -68,7 +69,7 @@ class BasinRainfallTest(unittest.TestCase):
 
     def test_display_mean_and_station_values_do_not_replace_basin_rainfall(self):
         first = self.load([10, 20, 30])[0]
-        mean = (10 * 381 + 20 * 85 + 30 * 36) / 502
+        mean = (10 * 381 + 20 * 85 + 30 * 35.4326735909) / (381 + 85 + 35.4326735909)
         self.assertAlmostEqual(first['rainfall_mm'], mean, places=3)
         self.assertAlmostEqual(sum(x['rainfall_mm'] for x in first['station_rainfall']) / 12, mean, places=3)
         self.assertEqual(first['reservoir_rainfall_mm'], 30)
