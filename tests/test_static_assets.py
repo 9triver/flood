@@ -120,7 +120,7 @@ class StaticAssetTest(unittest.TestCase):
     def test_frontend_libraries_are_served_locally(self):
         index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
-        self.assertIn('/styles.css?v=20', index)
+        self.assertIn('/styles.css?v=22', index)
         self.assertIn('/app.js?v=21', index)
         self.assertIn('/vendor/leaflet/leaflet.css?v=1.9.4', index)
         self.assertIn('/vendor/leaflet/leaflet.js?v=1.9.4', index)
