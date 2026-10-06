@@ -15,6 +15,7 @@ from oag.runtime.hooks import HookResult
 
 from server.presentation.map_tools import register_map_tools
 from server.presentation.directive_tools import register_directive_tools
+from server.chat.analysis_context import normalize_analysis_tool
 
 
 DEFAULT_AGENT_MAX_TURNS = 10
@@ -108,7 +109,12 @@ def configure_domain_tool_schemas(harness: Harness) -> None:
     for name in ("plan_route", "analyze_inundation_impacts", "get_flood_status", "compare_evacuation_sites", "review_route"):
         tool = harness.tools.get(name)
         if tool:
-            tool.parameters["properties"]["view"]["enum"] = ["current", "time_slice", "envelope"]
+            tool.parameters["properties"]["view"]["enum"] = ["current", "time_slice", "envelope", "simulation_current"]
+            tool.parameters["properties"]["view"]["description"] = (
+                "对话中 current 默认使用本轮分析时刻（提问时地图选中帧，无时间轴则演进时刻）；"
+                "time_slice 配合 time_h 指定时刻；simulation_current 明确使用演进时刻；"
+                "envelope 为整个预测期最大包络。"
+            )
     route = harness.tools.get("plan_route")
     if route:
         route.parameters["properties"]["profile"]["enum"] = ["car", "foot"]
@@ -193,6 +199,7 @@ class FloodAgentFactory:
         configure_domain_tool_schemas(harness)
         register_map_tools(harness.tools, resolver, ontology)
         register_directive_tools(harness.tools, ontology)
+        harness.hooks.register("pre_tool_call", normalize_analysis_tool)
         harness.hooks.register("post_tool_call", post_tool_call)
         return Agent(
             harness,

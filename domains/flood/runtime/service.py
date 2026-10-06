@@ -45,14 +45,14 @@ class FloodRuntimeService:
 
     def compare_evacuation_sites(self, evacuation_unit_id: str, object_set_id: str,
                                  required_capacity: int | None = None, view: str = "current",
-                                 time_h: float | None = None) -> dict:
-        return compare_evacuation_sites(self.resolver, evacuation_unit_id, object_set_id, required_capacity, view, time_h)
+                                 time_h: float | None = None, forecast_id: str = "latest") -> dict:
+        return compare_evacuation_sites(self.resolver, evacuation_unit_id, object_set_id, required_capacity, view, time_h, forecast_id)
 
-    def review_route(self, evacuation_route_id: str, view: str = "current", time_h: float | None = None) -> dict:
-        return review_route(self.resolver, evacuation_route_id, view, time_h)
+    def review_route(self, evacuation_route_id: str, view: str = "current", time_h: float | None = None, forecast_id: str = "latest") -> dict:
+        return review_route(self.resolver, evacuation_route_id, view, time_h, forecast_id)
 
-    def get_flood_status(self, view: str = "current", time_h: float | None = None) -> dict[str, Any]:
-        return get_flood_status(view, time_h)
+    def get_flood_status(self, view: str = "current", time_h: float | None = None, forecast_id: str = "latest") -> dict[str, Any]:
+        return get_flood_status(view, time_h, forecast_id)
 
     def run_flood_forecast(self, forecast_id: str = "latest",
                            force: bool = False) -> dict[str, Any]:
@@ -63,11 +63,11 @@ class FloodRuntimeService:
             return {"error": "运行预测只接受当前输入；历史预测不能作为当前运行结果。"}
         return run_flood_forecast(self.resolver, forecast_id, force)
 
-    def assess_flood_emergency(self, refresh: bool = False) -> dict[str, Any]:
-        context = resolve_forecast_context(view="envelope")
+    def assess_flood_emergency(self, refresh: bool = False, forecast_id: str = "latest") -> dict[str, Any]:
+        context = resolve_forecast_context(forecast_id, view="envelope")
         if not context["available"]:
             return unavailable_forecast(context)
-        return assess_flood_emergency(self.resolver, refresh)
+        return assess_flood_emergency(self.resolver, refresh, forecast_id)
 
     def analyze_inundation_impacts(
         self,
@@ -111,6 +111,7 @@ class FloodRuntimeService:
             result["basis"] = "对应的有效预测中没有淹没网格，不代表现场实测。"
         if object_set_id and "analysis_scope" in result:
             result["analysis_scope"]["object_set_id"] = object_set_id
+        result["forecast_context"] = context
         return result
 
 

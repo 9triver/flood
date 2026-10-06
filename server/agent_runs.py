@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+from copy import deepcopy
 from typing import Any, Protocol
 
 from domains.flood.runtime.workspace import active_workspace_id, workspace_scope
@@ -16,7 +17,7 @@ class AgentRun:
         self.run_id = run_id
         self.session_id = session_id
         self.message = message
-        self.selected = selected or {}
+        self.selected = deepcopy(selected or {})
         self.events: list[dict[str, Any]] = []
         self.done = False
         self.cancelled = False

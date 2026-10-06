@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import inspect
 import json
+import threading
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from oag.agent import Agent
@@ -10,7 +12,7 @@ from oag.runtime.events import event_to_dict
 
 from domains.flood.runtime.workspace import active_workspace_id
 from server.chat.policy import build_agent_task_hint, is_flood_status_question
-from domains.flood.runtime.forecast_context import resolve_forecast_context
+from server.chat.analysis_context import capture_analysis_context, analysis_scope
 from server.chat.side_effects import AgentSideEffects
 
 if TYPE_CHECKING:
@@ -25,6 +27,8 @@ class FloodChatService:
         self.agent = agent
         self.ontology = ontology
         self.side_effects = side_effects
+        self._pending_analysis = {}
+        self._analysis_lock = threading.Lock()
 
     def stream_chat(self, run: AgentRun) -> None:
         selected = run.selected or {}
@@ -37,21 +41,16 @@ class FloodChatService:
 
         agent_session_id = self.agent_session_id(run.session_id)
         self.side_effects.begin_domain_results(agent_session_id)
+        event_stream = None
         try:
             if self.agent.pending_tool_name(agent_session_id) == "ask_user":
-                event_stream = self.agent.confirm_tool(
+                event_stream = self.confirm_tool(
                     agent_session_id,
                     approved=True,
                     answer=run.message,
                 )
             else:
-                message = self._agent_message(run.message, selected)
-                event_stream = self._chat_stream(
-                    message,
-                    session_id=agent_session_id,
-                    run_id=run.run_id,
-                    trace_user_message=run.message,
-                )
+                event_stream = self._new_chat(run, selected, agent_session_id)
             for event in event_stream:
                 if run.cancelled:
                     break
@@ -67,7 +66,39 @@ class FloodChatService:
             })
 
         finally:
+            if event_stream is not None and hasattr(event_stream, "close"):
+                event_stream.close()
             self.side_effects.end_domain_results(agent_session_id)
+
+    def _new_chat(self, run, selected, session_id):
+        analysis = capture_analysis_context(selected)
+        with self._analysis_lock:
+            self._pending_analysis.pop(session_id, None)
+        with analysis_scope(analysis):
+            try:
+                yield from self._chat_stream(
+                    self._agent_message(run.message, selected, analysis),
+                    session_id=session_id, run_id=run.run_id,
+                    trace_user_message=run.message,
+                )
+            finally:
+                if self.agent.pending_tool_name(session_id):
+                    with self._analysis_lock:
+                        self._pending_analysis[session_id] = analysis
+
+    def confirm_tool(self, session_id, approved, answer=None):
+        with self._analysis_lock:
+            analysis = self._pending_analysis.pop(session_id, None)
+        if analysis is None:
+            analysis = replace(capture_analysis_context({}),
+                               error="原提问的分析时刻已丢失，请重新提交完整问题以锁定地图时刻。")
+        with analysis_scope(analysis):
+            try:
+                yield from self.agent.confirm_tool(session_id, approved, answer=answer)
+            finally:
+                if self.agent.pending_tool_name(session_id):
+                    with self._analysis_lock:
+                        self._pending_analysis[session_id] = analysis
 
     @staticmethod
     def agent_session_id(session_id: str) -> str:
@@ -111,12 +142,13 @@ class FloodChatService:
         except (TypeError, ValueError, AttributeError):
             return set()
 
-    def _agent_message(self, message: str, selected: dict) -> str:
+    def _agent_message(self, message: str, selected: dict, analysis=None) -> str:
+        analysis = analysis or capture_analysis_context(selected)
         task_hint = build_agent_task_hint(message, self.ontology)
         frontend_context = {
             "用户问题": message,
             "选中对象": selected,
-            "当前演进与预测有效性": resolve_forecast_context(),
+            "本轮分析时刻": analysis.prompt_context(),
         }
         return (
             f"用户问题：{message}\n\n"

@@ -128,6 +128,9 @@ class FloodApp:
     def stream_chat(self, run: AgentRun) -> None:
         self._chat_service.stream_chat(run)
 
+    def confirm_chat_tool(self, session_id, approved, answer=None):
+        return self._chat_service.confirm_tool(session_id, approved, answer)
+
     def agent_session_id(self, session_id: str) -> str:
         return self._chat_service.agent_session_id(session_id)
 

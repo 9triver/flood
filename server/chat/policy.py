@@ -23,7 +23,7 @@ def is_flood_status_question(message: str) -> bool:
 def build_agent_task_hint(message: str, ontology: Ontology) -> str:
     text = _question_text(message)
     if is_flood_status_question(text):
-        return ("本轮只查询淹没状态，调用 get_flood_status；问现在时使用 view=current，"
+        return ("本轮只查询淹没状态，调用 get_flood_status；问现在时使用本轮分析时刻（view=current），"
                 "明确问未来总体时使用 view=envelope。演进未开始时按工具返回说明当前为无洪水初始状态；演进开始后预测不可用时说明无法判断，"
                 "只有要查看未来预测时才提示先开始演进；回复不输出内部ID或状态字段。"
                 "不得运行预测、自动展示地图、开启警戒或把未来最大包络当作当前淹水。")

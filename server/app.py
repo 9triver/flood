@@ -190,7 +190,7 @@ class Handler(BaseHTTPRequestHandler):
 
         def generator():
             try:
-                for event in app.agent.confirm_tool(session_id, approved, answer=answer):
+                for event in app.confirm_chat_tool(session_id, approved, answer=answer):
                     data = event_to_dict(event)
                     yield format_sse(data["type"], data)
             except Exception as exc:

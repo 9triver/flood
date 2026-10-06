@@ -117,25 +117,31 @@ def resolve_forecast_context(forecast_id: str = "latest", time_h: float | None =
     hours = forecast_time_steps(forecast_id)
     if not math.isfinite(requested) or not hours or not forecast_series_path(forecast_id).is_file() or not min(hours) <= requested <= max(hours):
         return {**result, "status": "time_unavailable", "reason": "该时刻没有可用预测切片，不能以未来最大包络代替。"}
-    actual = min(hours, key=lambda hour: abs(hour - requested))
+    actual = next((hour for hour in hours if math.isclose(hour, requested, rel_tol=0, abs_tol=1e-6)), None)
+    if actual is None:
+        return {**result, "status": "time_unavailable", "requested_time_h": requested,
+                "reason": "该时刻没有对应预测切片，不能使用相邻切片或最大包络代替。"}
     return {**result, "status": "available", "available": True, "time_h": actual,
             "requested_time_h": requested, "analysis_time_at": offset_time_iso(result["valid_from"], actual),
             "basis": "对应时刻的模型预测切片，不是现场实测淹水。"}
 
 
-def get_flood_status(view: str = "current", time_h: float | None = None) -> dict:
+def get_flood_status(view: str = "current", time_h: float | None = None,
+                     forecast_id: str = "latest") -> dict:
     initial = initial_flood_context()
-    if initial and view == "current" and time_h in (None, ""):
+    if initial and forecast_id in ("", "latest", "forecast_latest") and view == "current" and time_h in (None, ""):
         return {**initial, "has_inundation": False, "flooded_count": 0, "max_depth_m": 0.0}
-    context = resolve_forecast_context(time_h=time_h, view=view)
+    context = resolve_forecast_context(forecast_id, time_h=time_h, view=view)
     if not context["available"]:
         next_step = (
             "请先在态势工作台点击开始演进，等待当前输入生成预测后再查询。"
             if context["status"] in {"not_started", "no_current_input"}
             else "当前没有适用预测，请等待当前轮次的有效预测结果；不要使用旧预测替代。"
         )
+        if context["status"] == "time_unavailable":
+            next_step = "所查询时刻没有预测切片，请在时间轴选择已有预测帧后重新查询。"
         return {**context, "has_inundation": None, "next_step": next_step}
-    entry = forecast_depth_entry("latest", time_h=context["time_h"])
+    entry = forecast_depth_entry(forecast_id, time_h=context["time_h"])
     return {**context, "has_inundation": bool(entry["flooded_count"]),
             "flooded_count": entry["flooded_count"], "max_depth_m": round(entry["max_depth_m"], 4)}
 

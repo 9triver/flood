@@ -14,7 +14,7 @@ from .route_safety import build_flood_avoidance_areas, path_intersects_areas
 
 def compare_evacuation_sites(resolver, evacuation_unit_id: str, object_set_id: str,
                              required_capacity: int | None = None, view: str = "current",
-                             time_h: float | None = None) -> dict:
+                             time_h: float | None = None, forecast_id: str = "latest") -> dict:
     try:
         selected = read_object_set(object_set_id, "EvacuationSite")
         unit = resolver.query_by_id("EvacuationUnit", evacuation_unit_id)
@@ -23,12 +23,12 @@ def compare_evacuation_sites(resolver, evacuation_unit_id: str, object_set_id: s
         required = unit.get("population") if required_capacity is None else required_capacity
         if isinstance(required, bool) or not isinstance(required, int) or required <= 0:
             raise ValueError("需要正整数 required_capacity 或可靠的转移单元人口")
-        context = resolve_routing_context(time_h=time_h, view=view)
+        context = resolve_routing_context(forecast_id, time_h=time_h, view=view)
         if not context["available"]:
             return unavailable_forecast(context)
         impacted = set()
         if context["constraint_source"] == "forecast":
-            result = analyze_inundation_impacts(resolver, target_type="EvacuationSite",
+            result = analyze_inundation_impacts(resolver, forecast_id=forecast_id, target_type="EvacuationSite",
                                                 object_ids=selected["object_ids"], time_h=context["time_h"])
             if result.get("error"):
                 return result
@@ -63,11 +63,11 @@ def compare_evacuation_sites(resolver, evacuation_unit_id: str, object_set_id: s
 
 
 def review_route(resolver, evacuation_route_id: str, view: str = "current",
-                 time_h: float | None = None) -> dict:
+                 time_h: float | None = None, forecast_id: str = "latest") -> dict:
     route = resolver.query_by_id("EvacuationRoute", evacuation_route_id)
     if not route:
         return {"error": "路线不存在，请确认当前工作空间和路线 ID"}
-    context = resolve_routing_context(time_h=time_h, view=view)
+    context = resolve_routing_context(forecast_id, time_h=time_h, view=view)
     if not context["available"]:
         return {**unavailable_forecast(context), "passable": None, "evacuation_route_id": evacuation_route_id}
     try:
@@ -80,7 +80,7 @@ def review_route(resolver, evacuation_route_id: str, view: str = "current",
         if threshold is None:
             threshold = 0.15 if route.get("profile") == "foot" else 0.3
         if context["constraint_source"] == "forecast":
-            filters = {"forecast_id": "latest"}
+            filters = {"forecast_id": forecast_id}
             if context["time_h"] is not None:
                 filters["time_h"] = context["time_h"]
             areas = build_flood_avoidance_areas(query_forecast_cells(filters), threshold)

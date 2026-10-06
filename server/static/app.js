@@ -5461,16 +5461,17 @@ async function onChatSubmit(event) {
   const message = input.value.trim();
   if (!message) return;
 
+  const selected = structuredClone(frontendAgentContext());
   await refreshPlaybackStatus();
   settlePendingQuestion();
   input.value = "";
   addMessage("user", message);
   const assistant = addMessage("agent", "");
   addTrace("RUN", "Agent 执行中", message);
-  connectChatStream({ message, assistant });
+  connectChatStream({ message, assistant, selected });
 }
 
-function connectChatStream({ message = "", assistant, runId = "", since = 0 }) {
+function connectChatStream({ message = "", assistant, runId = "", since = 0, selected = null }) {
   const params = new URLSearchParams({
     session_id: state.sessionId,
     since: String(since || 0),
@@ -5479,7 +5480,7 @@ function connectChatStream({ message = "", assistant, runId = "", since = 0 }) {
     params.set("run_id", runId);
   } else {
     params.set("message", message);
-    params.set("selected", JSON.stringify(frontendAgentContext()));
+    params.set("selected", JSON.stringify(selected || frontendAgentContext()));
   }
   const es = new EventSource(`/api/agent/chat/stream?${params.toString()}`);
   state.activeStream = es;

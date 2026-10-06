@@ -108,18 +108,19 @@ def run_flood_forecast(resolver, forecast_id: str = "latest",
     return {"forecast": run}
 
 
-def assess_flood_emergency(resolver, refresh: bool = False) -> dict[str, Any]:
+def assess_flood_emergency(resolver, refresh: bool = False, forecast_id: str = "latest") -> dict[str, Any]:
     """One assessment of an existing forecast; does not start playback or run CNN."""
     rows = read_forecast_runs()
-    if not rows or rows[-1].get("status") != "completed":
+    forecast = (rows[-1] if rows else None) if forecast_id in {"latest", "forecast_latest"} else next(
+        (row for row in rows if row.get("forecast_id") == forecast_id), None)
+    if not forecast or forecast.get("status") != "completed":
         return {"status": "forecast_unavailable", "error": "当前轮次没有已完成预测，无法进行单次应急研判。"}
-    forecast = rows[-1]
     if not refresh:
         cached = read_cached_emergency_cycle(forecast)
         if cached and cached.get("assessment_mode") == "single":
             return cached
 
-    cells = query_forecast_cells({"forecast_id": LATEST_FORECAST_ID})
+    cells = query_forecast_cells({"forecast_id": forecast_id})
     evacuation_unit_impacts = impacted_evacuation_units(resolver, cells)
     road_impacts = impacted_linear_objects(resolver, cells, "Road", max_items=8)
     route_impacts = impacted_linear_objects(resolver, cells, "EvacuationRoute", max_items=6)
