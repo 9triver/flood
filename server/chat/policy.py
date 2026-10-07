@@ -22,6 +22,14 @@ def is_flood_status_question(message: str) -> bool:
 
 def build_agent_task_hint(message: str, ontology: Ontology) -> str:
     text = _question_text(message)
+    if any(word in text for word in ("调度", "下泄", "泄洪", "试算")):
+        return (
+            "调度调整请求使用 get_longtan_dispatch_plan 查询本轮预测 t0 的水库状态与方案，"
+            "再用 simulate_longtan_dispatch 试算。time_h 是用户关心的 t1，默认本轮地图选中帧；"
+            "调度起点始终为原预测 t0。模式目标不明确时询问用户，不能编造目标值。"
+            "根据工具返回先说明水库24小时安全校核，再比较 t1 和整个24小时道路影响。"
+            "该流程只试算和分析，不能声称已切换正式方案或用 run_flood_forecast 覆盖原预测。"
+        )
     if is_flood_status_question(text):
         return ("本轮只查询淹没状态，调用 get_flood_status；问现在时使用本轮分析时刻（view=current），"
                 "明确问未来总体时使用 view=envelope。演进未开始时按工具返回说明当前为无洪水初始状态；演进开始后预测不可用时说明无法判断，"

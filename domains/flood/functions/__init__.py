@@ -14,7 +14,8 @@ def register(registry: FunctionRegistry, repository: ObjectRepository,
     runtime = FloodRuntimeService(resolver)
     registry.register_resolver("flood_repository", resolver)
 
-    for name in ("refine_object_set", "compare_evacuation_sites", "review_route"):
+    for name in ("refine_object_set", "compare_evacuation_sites", "review_route",
+                 "get_longtan_dispatch_plan", "simulate_longtan_dispatch"):
         registry.register(name, getattr(runtime, name), ontology.functions[name])
 
     registry.register("get_flood_status", runtime.get_flood_status, ontology.functions["get_flood_status"])

@@ -263,7 +263,8 @@ atexit.register(_CNN_WORKER.close)
 
 
 def run_cnn_v2_forecast(boundary_flow: dict[str, Any],
-                        target_depth_path: Path) -> dict[str, Any]:
+                        target_depth_path: Path, *,
+                        work_dir: Path | None = None) -> dict[str, Any]:
     total_started = time.perf_counter()
     if not MODEL_SCRIPT.exists():
         return {"error": f"missing CNN_V2.py: {rel(MODEL_SCRIPT)}"}
@@ -279,7 +280,7 @@ def run_cnn_v2_forecast(boundary_flow: dict[str, Any],
         return {"error": "missing boundary flow summary"}
 
     case_name = str(summary.get("boundary_flow_id") or "latest")
-    run_dir = workspace_dir(create=True) / "cnn_v2" / "latest"
+    run_dir = work_dir if work_dir is not None else workspace_dir(create=True) / "cnn_v2" / "latest"
     test_dir = run_dir / "TEST"
     case_dir = test_dir / case_name
     output_dir = run_dir / "OUTPUT"

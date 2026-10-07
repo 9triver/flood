@@ -100,6 +100,35 @@ class ChatAnalysisContextTests(unittest.TestCase):
                 else:
                     self.assertNotIn('time_h', args)
 
+    def test_dispatch_trial_freezes_t1_and_baseline_without_redefining_t0(self):
+        analysis = capture_analysis_context(self.selected)
+        self.selected['hydrodynamic_timeline']['current_hydrodynamic_time_h'] = 1
+        with analysis_scope(analysis):
+            args = {'settings': {'mode': 'OUTFLOW', 'target_outflow_m3s': 20}}
+            self.assertEqual(normalize_analysis_tool({'tool_name': 'simulate_longtan_dispatch', 'args': args}).action, 'allow')
+            self.assertEqual(args['forecast_id'], 'v001')
+            self.assertEqual(args['time_h'], 2)
+            self.assertNotIn('initial_level_m', args['settings'])
+            self.assertNotIn('view', args)
+            query = {}
+            self.assertEqual(normalize_analysis_tool({'tool_name': 'get_longtan_dispatch_plan', 'args': query}).action, 'allow')
+            self.assertEqual(query, {'forecast_id': 'v001'})
+            wrong = {'forecast_id': 'v002'}
+            self.assertEqual(normalize_analysis_tool({'tool_name': 'simulate_longtan_dispatch', 'args': wrong}).action, 'block')
+
+    def test_dispatch_tools_are_registered_for_user_trials_only(self):
+        tool = self.harness.tools.get('simulate_longtan_dispatch')
+        self.assertIsNotNone(tool)
+        self.assertEqual(tool.policy.timeout_seconds, 360)
+        self.assertFalse(tool.policy.worker_allowed)
+        self.assertFalse(tool.policy.idempotent)
+        self.assertFalse(tool.requires_confirmation)
+        self.assertNotIn('initial_level_m', tool.parameters['properties']['settings']['properties'])
+        self.assertEqual(tool.parameters['properties']['object_ids']['items'], {'type': 'string'})
+        self.assertIsNone(self.harness.tools.get('apply_longtan_dispatch'))
+        for policy in self.ontology.event_policies.values():
+            self.assertNotIn('simulate_longtan_dispatch', policy.allowed_tools)
+
     def test_moving_timeline_latest_pointer_and_clock_does_not_move_request(self):
         analysis = capture_analysis_context(self.selected)
         self.selected['hydrodynamic_timeline']['current_hydrodynamic_time_h'] = 1

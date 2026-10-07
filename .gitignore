@@ -38,8 +38,9 @@ domains/tools/.env
 洪水风险图水文分析专题（珊瑚河）.md
 hydrodynamic_model/
 
-# Local reference repos
+# Local reference repos and update bundles
 mypalantir/
+/flood-updates-20261006-194945/
 
 # Local build and runtime artifacts
 build/

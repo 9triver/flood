@@ -31,7 +31,7 @@ class RainfallRunoffParameters:
     """
 
     area_km2: float = BASIN_AREAS_KM2["reservoir"]
-    runoff_coefficient: float = 0.50
+    runoff_coefficient: float = 0.80
     baseflow_m3s: float = 0.2
     routing_alpha: float = 0.6
     lag_hours: int = 1
@@ -62,7 +62,7 @@ def simulate_rainfall_runoff(
     rainfall_series: Iterable[dict[str, Any] | float | int],
     *,
     area_km2: float = BASIN_AREAS_KM2["reservoir"],
-    runoff_coefficient: float = 0.50,
+    runoff_coefficient: float = 0.80,
     baseflow_m3s: float = 0.2,
     routing_alpha: float = 0.6,
     lag_hours: int = 1,

@@ -18,7 +18,12 @@ from .reservoir_monitoring import (
     reservoir_level_status,
 )
 from .rainfall_runoff import simulate_rainfall_runoff
-from .reservoir_dispatch import simulate_reservoir_dispatch
+from .reservoir_dispatch import (
+    DispatchSettings,
+    default_dispatch_settings,
+    dispatch_model_signature,
+    simulate_reservoir_dispatch,
+)
 from .station_rainfall import station_rainfall_from_csv_row, extend_boundary_flow_csv
 from .rainfall_input import BASIN_AREAS_KM2, BASIN_RAINFALL_COLUMNS, display_rainfall_mm
 from .workspace import workspace_dir
@@ -32,14 +37,15 @@ BOUNDARIES = {
 }
 
 RUNOFF_BASIN_AREAS_KM2 = BASIN_AREAS_KM2
-RUNOFF_COEFFICIENT = 0.5
+RUNOFF_COEFFICIENT = 0.8
 RUNOFF_BASEFLOW_M3S = 0.2
 RUNOFF_ROUTING_ALPHA = 0.6
 RUNOFF_LAG_HOURS = 1
+INTERVAL_FLOW_SCALE = 0.1
 BASE_FLOWS_M3S = {
-    "interval1": RUNOFF_BASEFLOW_M3S,
-    "interval2": RUNOFF_BASEFLOW_M3S,
-    "tonggu": RUNOFF_BASEFLOW_M3S * 0.946,
+    "interval1": RUNOFF_BASEFLOW_M3S * INTERVAL_FLOW_SCALE,
+    "interval2": RUNOFF_BASEFLOW_M3S * INTERVAL_FLOW_SCALE,
+    "tonggu": RUNOFF_BASEFLOW_M3S * INTERVAL_FLOW_SCALE * 0.946,
     "upstream": 0.0,
 }
 
@@ -75,7 +81,11 @@ def configured_boundary_flow_csv_path() -> Path:
     return Path(configured).expanduser() if configured else DEFAULT_BOUNDARY_FLOW_CSV_PATH
 
 
-def load_boundary_flow_rows(path: Path | None = None) -> list[dict[str, Any]]:
+def load_boundary_flow_rows(
+    path: Path | None = None,
+    *,
+    dispatch_settings: DispatchSettings | None = None,
+) -> list[dict[str, Any]]:
     source_path = path or configured_boundary_flow_csv_path()
     from .playback_sources import validate_playback_source
 
@@ -113,14 +123,25 @@ def load_boundary_flow_rows(path: Path | None = None) -> list[dict[str, Any]]:
         )["series"]
         for key, area in RUNOFF_BASIN_AREAS_KM2.items()
     }
-    dispatch = simulate_reservoir_dispatch(
-        runoff_results["reservoir"],
+    reservoir_inputs = [
+        {
+            **point,
+            "target_outflow_m3s": raw.get("target_outflow_m3s"),
+            "target_level_m": raw.get("target_level_m"),
+        }
+        for point, raw in zip(runoff_results["reservoir"], raw_rows)
+    ]
+    dispatch_result = simulate_reservoir_dispatch(
+        reservoir_inputs,
+        settings=dispatch_settings,
         dt_hours=dt_hours,
-    )["series"]
+    )
+    dispatch = dispatch_result["series"]
     rows: list[dict[str, Any]] = []
     for sequence, raw in enumerate(raw_rows):
-        interval1 = runoff_results["interval1"][sequence]["reservoir_inflow_m3s"]
-        interval2 = runoff_results["interval2"][sequence]["reservoir_inflow_m3s"]
+        # Scale the complete interval flow, including baseflow, at the boundary.
+        interval1 = runoff_results["interval1"][sequence]["reservoir_inflow_m3s"] * INTERVAL_FLOW_SCALE
+        interval2 = runoff_results["interval2"][sequence]["reservoir_inflow_m3s"] * INTERVAL_FLOW_SCALE
         reservoir_inflow = runoff_results["reservoir"][sequence]["reservoir_inflow_m3s"]
         release = dispatch[sequence]["release_m3s"]
         boundaries = {
@@ -139,8 +160,9 @@ def load_boundary_flow_rows(path: Path | None = None) -> list[dict[str, Any]]:
             **{column: float(raw[column]) for column in BASIN_RAINFALL_COLUMNS.values()},
             "station_rainfall": station_rainfall,
             "reservoir_dispatch": dispatch[sequence],
+            "reservoir_dispatch_settings": dispatch_result["settings"],
             "reservoir_inflow_m3s": round(reservoir_inflow, 6),
-            "reservoir_outlet_flow_m3s": round(reservoir_inflow, 6),
+            "reservoir_outlet_flow_m3s": round(release, 6),
             "reservoir_release_m3s": round(release, 6),
             "reservoir_level_m": round(dispatch[sequence]["end_level_m"], 3),
             "boundaries": boundaries,
@@ -161,11 +183,13 @@ class BoundaryFlowPlaybackSource:
     """Replays the tracked boundary-flow process one observation at a time."""
 
     def __init__(self, csv_path: Path | None = None,
-                 observation_path: Path | None = None):
+                 observation_path: Path | None = None, *,
+                 dispatch_settings: DispatchSettings | None = None):
         self.csv_path = csv_path or configured_boundary_flow_csv_path()
         self.observation_path = observation_path or latest_observations_path()
         self._workspace_observation_path = observation_path is None
-        self.rows = load_boundary_flow_rows(self.csv_path)
+        self.dispatch_settings = dispatch_settings or default_dispatch_settings()
+        self.rows = load_boundary_flow_rows(self.csv_path, dispatch_settings=self.dispatch_settings)
         self.index = 0
         self.run_id = ""
         self.reset()
@@ -561,6 +585,7 @@ class FloodForecastPolicy:
             "rainfall_series": rainfall_series,
             "forecast_horizon_h": FORECAST_WINDOW_HOURS,
             "reservoir_level_m": float(observation.get("reservoir_level_m") or 0),
+            "reservoir_dispatch_settings": observation.get("reservoir_dispatch_settings"),
             "boundaries": boundaries,
         }
         trigger = {
@@ -577,7 +602,30 @@ class FloodForecastPolicy:
             "threshold_m3s": self.total_trigger_m3s,
             "version": self.version,
         }
-        return {"boundary_flow_id": input_id, "summary": summary, "forecast_trigger": trigger}
+        snapshot = {"boundary_flow_id": input_id, "summary": summary, "forecast_trigger": trigger}
+        decision = observation.get("reservoir_dispatch") or {}
+        continuation = decision.get("continuation_state")
+        if continuation:
+            # T0 is an already completed period. Preserve its actual outflow;
+            # trial controls start with the next unexecuted period.
+            future = self.reference_rows[int(observation["sequence"]) + 1:]
+            snapshot["reservoir_dispatch_context"] = {
+                "t0": observation["observed_at"],
+                "state": continuation,
+                "settings": observation["reservoir_dispatch_settings"],
+                "model_signature": dispatch_model_signature(),
+                "baseline_series": [row["reservoir_dispatch"] for row in selected],
+                "future_inflows": [
+                    {
+                        "valid_time": row["observed_at"],
+                        "inflow_m3s": row["reservoir_inflow_m3s"],
+                        "target_outflow_m3s": row["reservoir_dispatch"].get("target_outflow_m3s"),
+                        "target_level_m": row["reservoir_dispatch"].get("target_level_m"),
+                    }
+                    for row in future
+                ],
+            }
+        return snapshot
 
     def _write_forecast_input(self, snapshot: dict[str, Any]) -> None:
         episode_dir = self.forecast_input_dir / self.episode_id

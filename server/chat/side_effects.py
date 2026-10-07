@@ -16,6 +16,7 @@ DOMAIN_RESULT_TOOLS = frozenset({
     "get_flood_status", "find_nearby_objects", "refine_object_set", "compare_evacuation_sites",
     "plan_route", "review_route", "analyze_inundation_impacts", "analyze_latest_evacuation_time",
     "assess_flood_emergency",
+    "get_longtan_dispatch_plan", "simulate_longtan_dispatch",
 })
 
 

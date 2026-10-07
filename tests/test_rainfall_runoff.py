@@ -14,10 +14,13 @@ class RainfallRunoffTest(unittest.TestCase):
         parameters = RainfallRunoffParameters()
         self.assertAlmostEqual(35.4326735909, parameters.area_km2)
         self.assertEqual(0.2, parameters.baseflow_m3s)
-        self.assertEqual(0.5, parameters.runoff_coefficient)
+        self.assertEqual(0.8, parameters.runoff_coefficient)
         self.assertEqual(0.6, parameters.routing_alpha)
         self.assertEqual(1, parameters.lag_hours)
         self.assertEqual(0.5, parameters.dt_hours)
+        result = simulate_rainfall_runoff([10])
+        self.assertEqual(0.8, result["parameters"]["runoff_coefficient"])
+        self.assertEqual(8.0, result["total_runoff_depth_mm"])
 
     def test_converts_rainfall_depth_to_water_balanced_inflow(self):
         result = simulate_rainfall_runoff(

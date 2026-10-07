@@ -15,7 +15,8 @@ from domains.flood.runtime.workspace import active_workspace_id
 
 SLICE_TOOLS = frozenset({"get_flood_status", "analyze_inundation_impacts", "plan_route",
                          "compare_evacuation_sites", "review_route"})
-FORECAST_TOOLS = SLICE_TOOLS | {"analyze_latest_evacuation_time", "assess_flood_emergency"}
+DISPATCH_TOOLS = frozenset({"get_longtan_dispatch_plan", "simulate_longtan_dispatch"})
+FORECAST_TOOLS = SLICE_TOOLS | DISPATCH_TOOLS | {"analyze_latest_evacuation_time", "assess_flood_emergency"}
 LATEST_IDS = {"", "latest", "forecast_latest"}
 _ANALYSIS: ContextVar["ChatAnalysisContext | None"] = ContextVar("flood_chat_analysis", default=None)
 
@@ -128,6 +129,19 @@ def normalize_analysis_tool(context: dict) -> HookResult:
     if version not in LATEST_IDS and version != analysis.forecast_id:
         return HookResult(action="block", reason="本轮已锁定预测版本，请使用本轮 forecast_id；切换版本后需重新提问。")
     args["forecast_id"] = analysis.forecast_id or "latest"
+    if name == "simulate_longtan_dispatch":
+        # The selected frame is the comparison target T1. The tool derives T0
+        # exclusively from this immutable forecast's input snapshot.
+        hour = args.get("time_h")
+        if hour in (None, ""):
+            if analysis.default_error:
+                return HookResult(action="block", reason=analysis.default_error)
+            hour = analysis.time_h
+        args["time_h"] = hour
+        validated = resolve_forecast_context(args["forecast_id"], hour, "time_slice")
+        if not validated["available"]:
+            return HookResult(action="block", reason=validated["reason"])
+        return HookResult()
     if name in SLICE_TOOLS:
         view = args.get("view", "current")
         hour = args.get("time_h")

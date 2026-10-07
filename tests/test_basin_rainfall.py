@@ -45,12 +45,18 @@ class BasinRainfallTest(unittest.TestCase):
 
     def test_basin_forcing_is_independent_and_tonggu_follows_interval2(self):
         dry = self.load([0, 0, 0])
+        for row in dry:
+            self.assertAlmostEqual(row['boundaries']['interval1']['flow_m3s'], 0.02)
+            self.assertAlmostEqual(row['boundaries']['interval2']['flow_m3s'], 0.02)
+            self.assertAlmostEqual(row['boundaries']['tonggu']['flow_m3s'], 0.01892)
+            self.assertAlmostEqual(row['baseflow_total_m3s'], 0.05892)
+            self.assertEqual(row['reservoir_inflow_m3s'], 0.2)
         for column, boundary, area in [(0, 'interval1', 381), (1, 'interval2', 85)]:
             pulse = [0, 0, 0]
             pulse[column] = 10
             rows = self.load(pulse)
             self.assertAlmostEqual(rows[1]['boundaries'][boundary]['flow_m3s'],
-                                   0.2 + 0.6 * 10 * 0.5 * area / 3.6, places=5)
+                                   (0.2 + 0.6 * 10 * 0.8 * area / 3.6) * 0.1, places=5)
             other = 'interval2' if boundary == 'interval1' else 'interval1'
             for row, baseline in zip(rows, dry):
                 self.assertEqual(row['boundaries'][other], baseline['boundaries'][other])
@@ -60,7 +66,8 @@ class BasinRainfallTest(unittest.TestCase):
                                        row['boundaries']['interval2']['flow_m3s'] * 0.946, places=5)
         wet = self.load([0, 0, 100])
         # The supplied catchment area replaces the former 36 km² approximation.
-        self.assertAlmostEqual(wet[1]['reservoir_inflow_m3s'], 295.472280, places=5)
+        self.assertAlmostEqual(wet[1]['reservoir_inflow_m3s'],
+                               0.2 + 0.6 * 100 * 0.8 * 35.4326735909 / 3.6, places=5)
         self.assertGreater(max(r['reservoir_release_m3s'] for r in wet), 0)
         for row, baseline in zip(wet, dry):
             self.assertEqual(row['boundaries']['interval1'], baseline['boundaries']['interval1'])

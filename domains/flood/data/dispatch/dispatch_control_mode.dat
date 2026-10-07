@@ -1,0 +1,7 @@
+# Reservoir dispatch control mode
+# MODE options: RULE, OUTFLOW, LEVEL
+# OUTFLOW reads target_outflow_m3s from Dispatch_Input.csv; LEVEL reads target_level_m.
+# RULE reads and executes RULE_FILE. Manual modes retain the safety overrides in RULE_FILE.
+
+CONTROL_MODE = RULE
+RULE_FILE    = dispatch_rules.dat

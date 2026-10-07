@@ -98,7 +98,7 @@ def validate_query_filters(ontology: Ontology, object_type: str, filters: Any) -
 
 
 def configure_domain_tool_schemas(harness: Harness) -> None:
-    for name, array_fields in (("find_nearby_objects", ["exclude_object_ids"]), ("analyze_inundation_impacts", ["object_ids"]), ("refine_object_set", ["exclude_object_ids"])):
+    for name, array_fields in (("find_nearby_objects", ["exclude_object_ids"]), ("analyze_inundation_impacts", ["object_ids"]), ("refine_object_set", ["exclude_object_ids"]), ("simulate_longtan_dispatch", ["object_ids"])):
         tool = harness.tools.get(name)
         if tool:
             for field in array_fields:
@@ -118,6 +118,23 @@ def configure_domain_tool_schemas(harness: Harness) -> None:
     route = harness.tools.get("plan_route")
     if route:
         route.parameters["properties"]["profile"]["enum"] = ["car", "foot"]
+    trial = harness.tools.get("simulate_longtan_dispatch")
+    if trial:
+        trial.max_result_chars = 40000
+        trial.policy.worker_allowed = False
+        trial.policy.idempotent = False
+        trial.parameters["properties"]["settings"].update({
+            "type": "object", "additionalProperties": False,
+            "properties": {
+                "mode": {"type": "string", "enum": ["RULE", "OUTFLOW", "LEVEL"]},
+                **{key: {"type": ["number", "null"], "minimum": 0} for key in (
+                    "target_outflow_m3s", "target_level_m", "max_release_m3s",
+                )},
+                **{key: {"type": "number", "minimum": 0} for key in (
+                    "normal_release_m3s", "outlet_capacity_m3s",
+                )},
+            },
+        })
 
 
 def configure_agent_query_tools(harness: Harness) -> None:

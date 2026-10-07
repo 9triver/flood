@@ -447,7 +447,7 @@ class BoundaryFlowPlaybackRunnerTest(unittest.TestCase):
 
             self.assertEqual(
                 transitions,
-                [(54, 5.0, "forecast")],
+                [(55, 5.0, "forecast")],
             )
 
     def test_runner_continues_after_forecast_request_until_csv_eof(self):

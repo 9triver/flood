@@ -17,6 +17,7 @@ from .evacuation_timing import analyze_latest_evacuation_time
 from .forecast import assess_flood_emergency, run_flood_forecast
 from .impact_analysis import BRIDGE_INFLUENCE_RADIUS_M, analyze_inundation_impacts
 from .route_planning import plan_route
+from .dispatch_trial import get_longtan_dispatch_plan, simulate_longtan_dispatch
 
 
 class FloodRuntimeService:
@@ -53,6 +54,32 @@ class FloodRuntimeService:
 
     def get_flood_status(self, view: str = "current", time_h: float | None = None, forecast_id: str = "latest") -> dict[str, Any]:
         return get_flood_status(view, time_h, forecast_id)
+
+    def get_longtan_dispatch_plan(self, forecast_id: str = "latest") -> dict[str, Any]:
+        context = resolve_forecast_context(forecast_id, view="envelope")
+        if not context["available"]:
+            return unavailable_forecast(context)
+        try:
+            return get_longtan_dispatch_plan(context["forecast_version"])
+        except (OSError, ValueError, KeyError) as error:
+            return {"status": "dispatch_unavailable", "error": str(error), "applied": False}
+
+    def simulate_longtan_dispatch(
+        self, settings: dict, forecast_id: str = "latest", time_h: float | None = None,
+        target_type: str = "Road", object_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        context = resolve_forecast_context(
+            forecast_id, time_h, "time_slice" if time_h not in (None, "") else "current",
+        )
+        if not context["available"]:
+            return unavailable_forecast(context)
+        try:
+            return simulate_longtan_dispatch(
+                self.resolver, settings, context["forecast_version"], context["time_h"],
+                target_type, object_ids,
+            )
+        except (OSError, ValueError, KeyError) as error:
+            return {"status": "dispatch_trial_unavailable", "error": str(error), "applied": False}
 
     def run_flood_forecast(self, forecast_id: str = "latest",
                            force: bool = False) -> dict[str, Any]:

@@ -274,7 +274,8 @@ def validate_playback_source(content: bytes) -> dict[str, Any]:
     actual = set(columns)
     if len(actual) != len(columns):
         raise PlaybackSourceValidationError("CSV 字段名不能重复")
-    unknown = actual - required - station_columns
+    control_columns = {"target_outflow_m3s", "target_level_m"}
+    unknown = actual - required - station_columns - control_columns
     present_station_columns = actual & station_columns
     if not required.issubset(actual):
         raise PlaybackSourceValidationError(
@@ -316,7 +317,11 @@ def validate_playback_source(content: bytes) -> dict[str, Any]:
             raise PlaybackSourceValidationError(
                 f"第 {line_number} 行时间必须比上一行晚 1 小时"
             )
-        for column in numeric_columns:
+        optional_controls = [
+            column for column in control_columns & actual
+            if str(row.get(column) or "").strip()
+        ]
+        for column in [*numeric_columns, *optional_controls]:
             raw = str(row.get(column) or "").strip()
             try:
                 value = float(raw)

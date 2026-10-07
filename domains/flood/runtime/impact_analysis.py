@@ -37,6 +37,9 @@ def analyze_inundation_impacts(
     bridge_influence_radius_m: float = BRIDGE_INFLUENCE_RADIUS_M,
     object_ids: list[str] | None = None,
     filters: dict[str, Any] | None = None,
+    *,
+    forecast_cells: list[dict[str, Any]] | None = None,
+    time_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     forecast_key = LATEST_FORECAST_ID if forecast_id in ("", "latest") else forecast_id
     analysis_time_h = coerce_time_h(time_h)
@@ -51,7 +54,7 @@ def analyze_inundation_impacts(
             "summary": {},
             "total_impacts": 0,
             "impacts": [],
-            **analysis_time_fields(forecast_key, analysis_time_h),
+            **(time_context if time_context is not None else analysis_time_fields(forecast_key, analysis_time_h)),
         }
 
     try:
@@ -62,9 +65,9 @@ def analyze_inundation_impacts(
     cell_filters: dict[str, Any] = {"forecast_id": forecast_key}
     if analysis_time_h is not None:
         cell_filters["time_h"] = analysis_time_h
-    cells = query_forecast_cells(cell_filters)
+    cells = query_forecast_cells(cell_filters) if forecast_cells is None else forecast_cells
     if not cells:
-        time_fields = analysis_time_fields(forecast_key, analysis_time_h)
+        time_fields = time_context if time_context is not None else analysis_time_fields(forecast_key, analysis_time_h)
         return {
             "status": "no_forecast_cells",
             "analysis_scope": scope.description,
@@ -155,7 +158,7 @@ def analyze_inundation_impacts(
             nearby_impacts = nearby_routes
     summary = summarize_impacts(target_types, impacts)
     actual_time_h = actual_cell_time_h(cells, analysis_time_h)
-    time_fields = analysis_time_fields(resolved_forecast_id, actual_time_h)
+    time_fields = time_context if time_context is not None else analysis_time_fields(resolved_forecast_id, actual_time_h)
     return {
         "status": "partial" if unassessed_objects or (linear_index and linear_index.skipped_cell_ids) else "completed",
         "forecast_id": resolved_forecast_id,
