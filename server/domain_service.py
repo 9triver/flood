@@ -13,32 +13,13 @@ from domains.flood.runtime.impact_analysis import (
     BRIDGE_INFLUENCE_RADIUS_M,
     analyze_inundation_impacts,
 )
+from domains.flood.runtime.forecast_context import resolve_forecast_context
+from domains.flood.runtime.service import FloodRuntimeService
+from domains.flood.runtime.common import OBJECT_ID_FIELDS
+from domains.flood.runtime.catchments import longtan_catchment
+from domains.flood.runtime.rainfall_input import BASIN_AREAS_KM2
 from domains.flood.runtime.tools import list_mappable_objects
 from domains.flood.runtime.workspace import active_workspace_id
-
-
-ID_FIELDS = {
-    "River": "river_id",
-    "Watershed": "watershed_id",
-    "HydrodynamicBoundary": "boundary_id",
-    "County": "county_id",
-    "Town": "town_id",
-    "Reservoir": "reservoir_id",
-    "Sluice": "sluice_id",
-    "HydraulicStructure": "structure_id",
-    "Road": "road_id",
-    "Bridge": "bridge_id",
-    "Facility": "facility_id",
-    "EvacuationSite": "evacuation_site_id",
-    "EvacuationUnit": "evacuation_unit_id",
-    "EvacuationRoute": "evacuation_route_id",
-    "DangerArea": "danger_area_id",
-    "Station": "station_id",
-    "FloodForecast": "forecast_id",
-    "InundationForecastCell": "forecast_cell_id",
-    "HydrodynamicGridCell": "hydrodynamic_cell_id",
-    "EmergencyDirective": "directive_id",
-}
 
 
 class FloodDomainService:
@@ -54,6 +35,9 @@ class FloodDomainService:
         return {
             "domain": self.ontology.name,
             "title": "基于大模型的水路联动应急智能体集群应用",
+            "id_fields": dict(OBJECT_ID_FIELDS),
+            "basin_areas_km2": dict(BASIN_AREAS_KM2),
+            "reservoir_catchment": dict(longtan_catchment()),
             "mappable": list_mappable_objects(self.resolver),
             "counts": {
                 "school": self.resolver.count(
@@ -71,9 +55,9 @@ class FloodDomainService:
             "workspace_id": active_workspace_id(),
         }
 
-    def autonomy_cycle(self, force_forecast: bool = False) -> dict:
+    def assess_flood_emergency(self, refresh: bool = False) -> dict:
         return self.registry.call(
-            "run_emergency_cycle", force_forecast=force_forecast,
+            "assess_flood_emergency", refresh=refresh,
         )
 
     def forecast(self, force: bool = False) -> dict:
@@ -100,6 +84,10 @@ class FloodDomainService:
         self,
         forecast_id: str = "latest",
     ) -> dict[str, Any]:
+        if forecast_id != "mesh":
+            context = resolve_forecast_context(forecast_id, view="envelope")
+            if not context["available"]:
+                raise ValueError(context["reason"])
         return hydrodynamic_grid_stats(forecast_id)
 
     def hydrodynamic_grid_tile(
@@ -112,6 +100,10 @@ class FloodDomainService:
         time_h: float | None = None,
         tile_crs: str = "wgs84",
     ) -> dict[str, Any]:
+        if forecast_id != "mesh":
+            context = resolve_forecast_context(forecast_id, time_h, "envelope" if time_h is None else "time_slice")
+            if not context["available"]:
+                raise ValueError(context["reason"])
         return hydrodynamic_grid_tile(
             z, x, y, forecast_id, wet_only, time_h, tile_crs,
         )
@@ -124,27 +116,31 @@ class FloodDomainService:
         max_distance_m: float = 10.0,
         time_h: float | None = None,
         bridge_influence_radius_m: float = BRIDGE_INFLUENCE_RADIUS_M,
+        object_ids: list[str] | None = None,
+        filters: dict | None = None,
     ) -> dict[str, Any]:
-        return analyze_inundation_impacts(
-            self.resolver,
+        return FloodRuntimeService(self.resolver).analyze_inundation_impacts(
+            view="envelope" if time_h is None else "time_slice",
             forecast_id=forecast_id,
             target_type=target_type,
             min_depth_m=min_depth_m,
             max_distance_m=max_distance_m,
             time_h=time_h,
             bridge_influence_radius_m=bridge_influence_radius_m,
+            object_ids=object_ids,
+            filters=filters,
         )
 
     def get_object(self, object_type: str, object_id: str) -> dict[str, Any]:
         row = self.resolver.query_by_id(object_type, object_id)
         if row:
             return {"object_type": object_type, "object": row}
-        id_field = ID_FIELDS.get(object_type)
+        identity_field = OBJECT_ID_FIELDS.get(object_type)
         rows = (
             self.resolver.query(
-                object_type, {id_field: object_id}, limit=1,
+                object_type, {identity_field: object_id}, limit=1,
             )
-            if id_field
+            if identity_field
             else []
         )
         return {

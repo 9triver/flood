@@ -14,7 +14,7 @@ import CNN_V2 as cnn
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Persistent Flood CNN v2 inference worker")
+    parser = argparse.ArgumentParser(description="Persistent hydrodynamic model inference worker")
     parser.add_argument("--device", choices=["cpu", "cuda", "auto"], required=True)
     parser.add_argument("--grid-file", required=True)
     parser.add_argument("--grid-cache-file", default=None)

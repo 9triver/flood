@@ -6,18 +6,13 @@ from typing import Any
 
 DOMAIN_DIR = Path(__file__).resolve().parents[1]
 PROJECT_DIR = DOMAIN_DIR.parents[1]
-DATA_DIR_CANDIDATES = [
-    PROJECT_DIR / "local/source_data/珊瑚河数据",
-    PROJECT_DIR / "珊瑚河数据",
-]
-DATA_DIR = next((path for path in DATA_DIR_CANDIDATES if path.exists()), DATA_DIR_CANDIDATES[0])
 DOMAIN_DATA_DIR = DOMAIN_DIR / "data"
 OBJECTS_DIR = DOMAIN_DATA_DIR / "objects"
-SOURCES_DIR = DOMAIN_DATA_DIR / "sources"
 
 OBJECT_LIBRARY_FILES = {
     "River": "river.jsonl",
     "Watershed": "watershed.jsonl",
+    "Catchment": "catchment.jsonl",
     "HydrodynamicBoundary": "hydrodynamic_boundary.jsonl",
     "County": "county.jsonl",
     "Town": "town.jsonl",
@@ -34,7 +29,41 @@ OBJECT_LIBRARY_FILES = {
     "Station": "station.jsonl",
 }
 
+# The canonical identifier field for every object exposed by the domain.
+# Keeping this next to the object-library map prevents repository and service
+# layers from silently acquiring different ID conventions.
+OBJECT_ID_FIELDS = {
+    "River": "river_id",
+    "Watershed": "watershed_id",
+    "Catchment": "catchment_id",
+    "HydrodynamicBoundary": "boundary_id",
+    "County": "county_id",
+    "Town": "town_id",
+    "Reservoir": "reservoir_id",
+    "Sluice": "sluice_id",
+    "HydraulicStructure": "structure_id",
+    "Road": "road_id",
+    "RoadRoute": "road_route_id",
+    "RoadRouteSegment": "road_route_segment_id",
+    "Bridge": "bridge_id",
+    "Facility": "facility_id",
+    "EvacuationSite": "evacuation_site_id",
+    "EvacuationUnit": "evacuation_unit_id",
+    "EvacuationRoute": "evacuation_route_id",
+    "DangerArea": "danger_area_id",
+    "Station": "station_id",
+    "FloodForecast": "forecast_id",
+    "InundationForecastCell": "forecast_cell_id",
+    "HydrodynamicGridCell": "hydrodynamic_cell_id",
+    "EmergencyDirective": "directive_id",
+}
+
 MAPPABLE_OBJECTS = {
+    "Catchment": {
+        "label": "水库集水区",
+        "role": "hydrology",
+        "style": {"type": "fill", "color": "#0f766e", "weight": 2, "fillColor": "#14b8a6", "fillOpacity": 0.1},
+    },
     "River": {
         "label": "珊瑚河",
         "role": "base",
@@ -56,9 +85,14 @@ MAPPABLE_OBJECTS = {
         "style": {"type": "fill", "color": "#475569", "weight": 1, "fillColor": "#facc15", "fillOpacity": 0.08},
     },
     "Road": {
-        "label": "道路",
+        "label": "全部路段",
         "role": "base",
-        "style": {"type": "line", "color": "#6b7280", "weight": 2},
+        "style": {"type": "line", "color": "#facc15", "weight": 2.8},
+    },
+    "RoadRoute": {
+        "label": "编号道路",
+        "role": "base",
+        "style": {"type": "line", "color": "#fb923c", "weight": 4.5},
     },
     "Reservoir": {
         "label": "水库",
@@ -122,6 +156,8 @@ def apply_filters(rows: list[dict], filters: dict[str, Any] | None) -> list[dict
     result = list(rows)
     for key, value in (filters or {}).items():
         field, op = key.split("__", 1) if "__" in key else (key, "eq")
+        if op not in {"eq", "like", "in", "ne", "gt", "gte", "lt", "lte"}:
+            raise ValueError(f"unsupported filter operator: {op}")
         if op == "like":
             result = [row for row in result if str(value) in str(row.get(field, ""))]
         elif op == "in":
@@ -162,34 +198,15 @@ def apply_window(rows: list[dict], limit: int | None,
                  offset: int | None) -> list[dict]:
     if offset:
         rows = rows[offset:]
-    if limit:
+    if limit is not None:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+            raise ValueError("limit must be a nonnegative integer")
         rows = rows[:limit]
     return rows
 
 
 def id_field(object_type: str) -> str:
-    return {
-        "River": "river_id",
-        "Watershed": "watershed_id",
-        "HydrodynamicBoundary": "boundary_id",
-        "County": "county_id",
-        "Town": "town_id",
-        "Reservoir": "reservoir_id",
-        "Sluice": "sluice_id",
-        "HydraulicStructure": "structure_id",
-        "Road": "road_id",
-        "Bridge": "bridge_id",
-        "Facility": "facility_id",
-        "EvacuationSite": "evacuation_site_id",
-        "EvacuationUnit": "evacuation_unit_id",
-        "EvacuationRoute": "evacuation_route_id",
-        "DangerArea": "danger_area_id",
-        "Station": "station_id",
-        "FloodForecast": "forecast_id",
-        "InundationForecastCell": "forecast_cell_id",
-        "HydrodynamicGridCell": "hydrodynamic_cell_id",
-        "EmergencyDirective": "directive_id",
-    }.get(object_type, f"{object_type.lower()}_id")
+    return OBJECT_ID_FIELDS.get(object_type, f"{object_type.lower()}_id")
 
 
 def rel(path: Path | str) -> str:

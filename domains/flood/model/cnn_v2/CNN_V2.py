@@ -175,7 +175,7 @@ def cuda_device_enabled() -> bool:
 def get_device() -> torch.device:
     requested = str(CONFIG.get("device") or "cpu").strip().lower()
     if requested not in {"cpu", "cuda", "auto"}:
-        raise ValueError(f"unsupported CNN device: {requested}")
+        raise ValueError(f"unsupported hydrodynamic model device: {requested}")
     if cuda_device_enabled():
         print(f"[device] CUDA: {torch.cuda.get_device_name(0)}")
         return torch.device("cuda")
@@ -1300,7 +1300,7 @@ def load_predictor_from_checkpoint(path: str | Path) -> FloodPredictor:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Flood CNN v2 direct-dat training")
+    parser = argparse.ArgumentParser(description="Hydrodynamic model direct-dat training")
     parser.add_argument("--mode", choices=["auto", "train", "predict"], default=None)
     parser.add_argument("--device", choices=["cpu", "cuda", "auto"], default=None)
     parser.add_argument("--train-dir", default=None)

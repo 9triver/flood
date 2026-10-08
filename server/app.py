@@ -21,50 +21,44 @@ from oag.runtime.events import event_to_dict  # noqa: E402
 from domains.flood.runtime.impact_analysis import (  # noqa: E402
     BRIDGE_INFLUENCE_RADIUS_M,
 )
-from server.agent_runs import AgentRunManager  # noqa: E402
-from server.directives import DirectiveStore  # noqa: E402
-from server.events import EventRuntime  # noqa: E402
-from server.flood_app import FloodApp  # noqa: E402
+from domains.flood.runtime.workspace import active_workspace_id, workspace_scope
+from server.container import ApplicationContext, build_application  # noqa: E402
+from server.evaluation_api import (  # noqa: E402
+    EvaluationApiError,
+    build_chat_completion_response,
+)
 from server.serialization import format_sse  # noqa: E402
-from server.dos_api import DosRecordNotFound as DomainRecordNotFound  # noqa: E402
+from server.dos_api import DosRecordNotFound  # noqa: E402
 from server.flood_app import DomainApiUnavailable  # noqa: E402
-
-
-class DomainControlConflict(RuntimeError):
-    pass
-
-
-class DomainRuntimeError(RuntimeError):
-    pass
 from domains.flood.runtime.playback_sources import (  # noqa: E402
     MAX_PLAYBACK_SOURCE_BYTES,
-    PlaybackSourceRegistry,
     PlaybackSourceValidationError,
 )
-
-
-APP = FloodApp()
-RUNS = AgentRunManager(APP)
-PLAYBACK_SOURCES = PlaybackSourceRegistry()
-EVENT_RUNTIME = EventRuntime(APP, PLAYBACK_SOURCES)
-AUTONOMY_RUNTIME = EVENT_RUNTIME
-DIRECTIVES = DirectiveStore()
 
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "FloodFrontend/0.1"
 
+    @property
+    def context(self) -> ApplicationContext:
+        """Return dependencies owned by the HTTP server instance."""
+
+        context = getattr(self.server, "app_context", None)
+        if context is None:
+            raise RuntimeError("HTTP server application context is not configured")
+        return context
+
     def do_GET(self):
         parsed = urlparse(self.path)
         try:
             if parsed.path == "/api/bootstrap":
-                return self._json(APP.bootstrap())
+                return self._json(self.context.app.bootstrap())
             if parsed.path == "/api/agent/chat/stream":
                 return self._chat_stream(parsed.query)
             if parsed.path == "/api/autonomy/stream":
                 return self._autonomy_stream(parsed.query)
             if parsed.path == "/api/autonomy/status":
-                return self._json(AUTONOMY_RUNTIME.status())
+                return self._json(self.context.autonomy_runtime.status())
             if parsed.path == "/api/domain/projections":
                 return self._domain_projections(parsed.query)
             if parsed.path == "/api/domain/products":
@@ -80,9 +74,9 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/domain/events/stream":
                 return self._domain_event_stream(parsed.query)
             if parsed.path == "/api/autonomy/sources":
-                return self._json(AUTONOMY_RUNTIME.list_playback_sources())
+                return self._json(self.context.autonomy_runtime.list_playback_sources())
             if parsed.path == "/api/directives":
-                return self._json(DIRECTIVES.list_issued())
+                return self._json(self.context.directives.list_issued())
             if parsed.path == "/api/agent/runs/active":
                 return self._active_run(parsed.query)
             if parsed.path == "/api/hydrodynamic-grid/meta":
@@ -98,7 +92,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._static(parsed.path)
         except ValueError as exc:
             return self._json({"error": str(exc)}, status=400)
-        except DomainRecordNotFound as exc:
+        except DosRecordNotFound as exc:
             return self._json({"error": str(exc)}, status=404)
         except DomainApiUnavailable as exc:
             return self._json({"error": str(exc)}, status=503)
@@ -124,60 +118,63 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/autonomy/sources":
                 return self._upload_playback_source(parsed.query)
             payload = self._read_json()
-            if parsed.path == "/api/domain/intents":
-                return self._json(APP.submit_domain_intent(payload), status=201)
+            if parsed.path == "/v1/chat/completions":
+                return self._evaluation_chat_completion(payload)
             command_action = _domain_command_action(parsed.path)
             if command_action is not None:
                 command_id, action = command_action
                 if action == "approve":
-                    return self._json(APP.approve_domain_command(
+                    return self._json(self.context.app.approve_domain_command(
                         command_id,
                         payload,
                     ))
-                return self._json(APP.reject_domain_command(
+                return self._json(self.context.app.reject_domain_command(
                     command_id,
                     payload,
                 ))
             if parsed.path == "/api/autonomy/start":
-                return self._json(AUTONOMY_RUNTIME.start_playback(
+                return self._json(self.context.autonomy_runtime.start_playback(
                     payload.get("speed_multiplier", 20),
                     payload.get("source_id"),
                 ))
             if parsed.path == "/api/autonomy/stop":
-                return self._json(AUTONOMY_RUNTIME.stop_playback())
+                return self._json(self.context.autonomy_runtime.stop_playback())
             if parsed.path == "/api/autonomy/pause":
-                return self._json(AUTONOMY_RUNTIME.pause_playback())
+                return self._json(self.context.autonomy_runtime.pause_playback())
             if parsed.path == "/api/autonomy/resume":
-                return self._json(AUTONOMY_RUNTIME.resume_playback(payload.get("speed_multiplier", 1)))
+                return self._json(self.context.autonomy_runtime.resume_playback(payload.get("speed_multiplier", 1)))
             if parsed.path == "/api/autonomy/step":
-                return self._json(AUTONOMY_RUNTIME.step_playback())
+                return self._json(self.context.autonomy_runtime.step_playback())
             if parsed.path == "/api/autonomy/speed":
-                return self._json(AUTONOMY_RUNTIME.set_playback_speed(payload.get("speed_multiplier", 1)))
+                return self._json(self.context.autonomy_runtime.set_playback_speed(payload.get("speed_multiplier", 1)))
             if parsed.path == "/api/autonomy/auto-pause":
-                return self._json(AUTONOMY_RUNTIME.set_auto_pause(
+                return self._json(self.context.autonomy_runtime.set_auto_pause(
                     payload.get("auto_pause_enabled"),
                 ))
+            if parsed.path == "/api/agent/map-receipt":
+                ok = self.context.runs.record_map_receipt(payload.get("run_id", ""), payload.get("receipt", {}))
+                return self._json({"ok": ok}, status=200 if ok else 400)
             if parsed.path == "/api/agent/confirm":
                 return self._confirm(payload)
             if parsed.path == "/api/directives":
                 return self._issue_directive(payload)
             if parsed.path == "/api/autonomy/reset":
-                return self._json(AUTONOMY_RUNTIME.restart_playback(
+                return self._json(self.context.autonomy_runtime.restart_playback(
                     payload.get("speed_multiplier", 20),
                     payload.get("source_id"),
                 ))
             if parsed.path.startswith("/api/agent/runs/") and parsed.path.endswith("/cancel"):
                 run_id = parsed.path.split("/")[-2]
-                return self._json({"ok": RUNS.cancel(run_id), "run_id": run_id})
+                return self._json({"ok": self.context.runs.cancel(run_id), "run_id": run_id})
             return self._json({"error": "not found"}, status=404)
         except ValueError as exc:
             return self._json({"error": str(exc)}, status=400)
-        except DomainRecordNotFound as exc:
+        except EvaluationApiError as exc:
+            return self._json({"error": {"message": exc.message}}, status=exc.status)
+        except DosRecordNotFound as exc:
             return self._json({"error": str(exc)}, status=404)
         except DomainApiUnavailable as exc:
             return self._json({"error": str(exc)}, status=503)
-        except TimeoutError as exc:
-            return self._json({"error": str(exc)}, status=504)
         except Exception as exc:
             return self._json({"error": str(exc)}, status=500)
 
@@ -188,7 +185,7 @@ class Handler(BaseHTTPRequestHandler):
         since = int((params.get("since") or ["0"])[0] or 0)
 
         if run_id:
-            run = RUNS.get(run_id)
+            run = self.context.runs.get(run_id)
             if not run:
                 return self._sse([
                     format_sse("text", {
@@ -197,7 +194,7 @@ class Handler(BaseHTTPRequestHandler):
                     }),
                     format_sse("done", {"type": "done"}),
                 ])
-            return self._sse(RUNS.stream(run, since))
+            return self._sse(self.context.runs.stream(run, since))
 
         message = unquote((params.get("message") or [""])[0])
         selected_raw = (params.get("selected") or ["{}"])[0]
@@ -207,26 +204,29 @@ class Handler(BaseHTTPRequestHandler):
             selected = {}
         if not message:
             return self._json({"error": "message is required"}, status=400)
-        run = RUNS.start(session_id, message, selected)
-        return self._sse(RUNS.stream(run, since=0))
+        if selected.get("workspace_id") and selected["workspace_id"] != active_workspace_id():
+            return self._json({"error": "演示已切换，请刷新当前工作空间后重试。"}, status=409)
+        run = self.context.runs.start(session_id, message, selected)
+        return self._sse(self.context.runs.stream(run, since=0))
 
     def _active_run(self, query: str):
         params = parse_qs(query)
         session_id = (params.get("session_id") or ["frontend-default"])[0]
-        return self._json(RUNS.active_info(session_id))
+        return self._json(self.context.runs.active_info(session_id))
 
     def _confirm(self, payload: dict):
-        session_id = APP.agent_session_id(
+        app = self.context.app
+        session_id = app.agent_session_id(
             str(payload.get("session_id") or "frontend-default")
         )
         approved = bool(payload.get("approved"))
         answer = payload.get("answer")
-        if not APP.agent or not APP.agent.has_pending(session_id):
+        if not app.agent or not app.agent.has_pending(session_id):
             return self._json({"error": "no pending confirmation"}, status=400)
 
         def generator():
             try:
-                for event in APP.agent.confirm_tool(session_id, approved, answer=answer):
+                for event in app.confirm_chat_tool(session_id, approved, answer=answer):
                     data = event_to_dict(event)
                     yield format_sse(data["type"], data)
             except Exception as exc:
@@ -238,12 +238,18 @@ class Handler(BaseHTTPRequestHandler):
 
         return self._sse(generator())
 
+    def _evaluation_chat_completion(self, payload: dict[str, Any]):
+        body, headers = build_chat_completion_response(self.context.app, payload)
+        return self._json(body, headers=headers)
+
     def _issue_directive(self, payload: dict[str, Any]):
         try:
-            directive = DIRECTIVES.issue(payload, AUTONOMY_RUNTIME.status())
+            directive = self.context.directives.issue(
+                payload, self.context.autonomy_runtime.status(),
+            )
         except ValueError as exc:
             return self._json({"error": str(exc)}, status=400)
-        EVENT_RUNTIME.publish_directive_issued(directive)
+        self.context.event_runtime.publish_directive_issued(directive)
         return self._json({"directive": directive}, status=201)
 
     def _upload_playback_source(self, query: str):
@@ -251,7 +257,7 @@ class Handler(BaseHTTPRequestHandler):
         filename = (params.get("filename") or [""])[0]
         try:
             content = self._read_bytes(MAX_PLAYBACK_SOURCE_BYTES)
-            result = AUTONOMY_RUNTIME.upload_playback_source(filename, content)
+            result = self.context.autonomy_runtime.upload_playback_source(filename, content)
         except PlaybackSourceValidationError as exc:
             status = 413 if "5 MB" in str(exc) else 400
             return self._json({"error": str(exc)}, status=status)
@@ -260,18 +266,18 @@ class Handler(BaseHTTPRequestHandler):
     def _autonomy_stream(self, query: str):
         params = parse_qs(query)
         interval = max(5, int((params.get("interval") or ["5"])[0] or 5))
-        return self._sse(AUTONOMY_RUNTIME.stream(interval))
+        return self._sse(self.context.autonomy_runtime.stream(interval))
 
     def _domain_projections(self, query: str):
         params = parse_qs(query)
-        return self._json(APP.domain_api.projections(
+        return self._json(self.context.app.domain_api.projections(
             resource_id=(params.get("resource_id") or [None])[0],
             resource_type=(params.get("resource_type") or [None])[0],
         ))
 
     def _domain_products(self, query: str):
         params = parse_qs(query)
-        return self._json(APP.domain_api.products(
+        return self._json(self.context.app.domain_api.products(
             product_type=(params.get("product_type") or [None])[0],
             subject_id=(params.get("subject_id") or [None])[0],
             offset=int((params.get("offset") or ["0"])[0]),
@@ -280,13 +286,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _domain_product(self, query: str):
         params = parse_qs(query)
-        return self._json(APP.domain_api.product(
+        return self._json(self.context.app.domain_api.product(
             (params.get("product_id") or [""])[0],
         ))
 
     def _domain_commands(self, query: str):
         params = parse_qs(query)
-        return self._json(APP.domain_api.commands(
+        return self._json(self.context.app.domain_api.commands(
             state=(params.get("state") or [None])[0],
             resource_id=(params.get("resource_id") or [None])[0],
             actor_id=(params.get("actor_id") or [None])[0],
@@ -297,13 +303,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _domain_command(self, query: str):
         params = parse_qs(query)
-        return self._json(APP.domain_api.command(
+        return self._json(self.context.app.domain_api.command(
             (params.get("command_id") or [""])[0],
         ))
 
     def _domain_events(self, query: str):
         params = parse_qs(query)
-        return self._json(APP.domain_api.events(
+        return self._json(self.context.app.domain_api.events(
             after=int((params.get("after") or ["0"])[0]),
             event_type=(params.get("event_type") or [None])[0],
             subject_id=(params.get("subject_id") or [None])[0],
@@ -317,7 +323,7 @@ class Handler(BaseHTTPRequestHandler):
             1.0,
             min(60.0, float((params.get("heartbeat") or ["15"])[0])),
         )
-        return self._sse(APP.domain_api.stream_events(
+        return self._sse(self.context.app.domain_api.stream_events(
             after=int(after or 0),
             event_type=(params.get("event_type") or [None])[0],
             subject_id=(params.get("subject_id") or [None])[0],
@@ -342,7 +348,7 @@ class Handler(BaseHTTPRequestHandler):
             for key, values in params.items()
             if key not in {"object_type", "simplify_tolerance", "filters"} and values
         })
-        _, body = APP.export_geojson(object_type, filters, simplify)
+        _, body = self.context.app.export_geojson(object_type, filters, simplify)
         self.send_response(200)
         self.send_header("Content-Type", "application/geo+json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -358,20 +364,14 @@ class Handler(BaseHTTPRequestHandler):
         except (TypeError, ValueError):
             return self._json({"error": "z, x and y are required integers"}, status=400)
         forecast_id = self._hydrodynamic_result_id(params)
-        product_id = self._domain_forecast_product_id(params)
         wet_only = str((params.get("wet_only") or [""])[0]).lower() in {"1", "true", "yes", "on"}
         time_h = _coerce_optional_float((params.get("time_h") or [""])[0])
         tile_crs = (params.get("tile_crs") or ["wgs84"])[0]
-        data = APP.hydrodynamic_grid_tile(
-            z,
-            x,
-            y,
-            forecast_id,
-            wet_only,
-            time_h,
-            tile_crs,
-            domain_product_id=product_id,
-        )
+        with workspace_scope(active_workspace_id()):
+            data = self.context.app.hydrodynamic_grid_tile(
+                z, x, y, forecast_id, wet_only, time_h, tile_crs,
+                domain_product_id=self._domain_forecast_product_id(params),
+            )
         body = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         use_gzip = len(body) >= 1024 and "gzip" in self.headers.get("Accept-Encoding", "").lower()
         if use_gzip:
@@ -389,35 +389,32 @@ class Handler(BaseHTTPRequestHandler):
     def _hydrodynamic_grid_meta(self, query: str):
         params = parse_qs(query)
         forecast_id = self._hydrodynamic_result_id(params)
-        return self._json(APP.hydrodynamic_grid_stats(
-            forecast_id,
-            domain_product_id=self._domain_forecast_product_id(params),
-        ))
+        with workspace_scope(active_workspace_id()):
+            data = self.context.app.hydrodynamic_grid_stats(
+                forecast_id, domain_product_id=self._domain_forecast_product_id(params),
+            )
+        return self._json(data)
 
     def _impact_analysis(self, query: str):
         params = parse_qs(query)
-        forecast_id = (params.get("forecast_id") or ["latest"])[0]
-        assessment_product_id = (
-            params.get("assessment_product_id") or [None]
-        )[0]
-        forecast_product_id = (
-            forecast_id if _is_domain_forecast_product_id(forecast_id) else None
-        )
-        result = APP.analyze_inundation_impacts(
-            forecast_id=forecast_id,
-            target_type=(params.get("target_type") or ["all"])[0],
-            min_depth_m=_coerce_float((params.get("min_depth_m") or ["0.15"])[0], 0.15),
-            max_distance_m=_coerce_float((params.get("max_distance_m") or ["10"])[0], 10.0),
-            time_h=_coerce_optional_float((params.get("time_h") or [""])[0]),
-            bridge_influence_radius_m=_coerce_float(
-                (params.get("bridge_influence_radius_m") or [
-                    str(BRIDGE_INFLUENCE_RADIUS_M)
-                ])[0],
-                BRIDGE_INFLUENCE_RADIUS_M,
-            ),
-            assessment_product_id=assessment_product_id,
-            forecast_product_id=forecast_product_id,
-        )
+        with workspace_scope(active_workspace_id()):
+            result = self.context.app.analyze_inundation_impacts(
+                forecast_id=(params.get("forecast_id") or ["latest"])[0],
+                assessment_product_id=(params.get("assessment_product_id") or [None])[0],
+                forecast_product_id=self._domain_forecast_product_id(params),
+                object_ids=json.loads((params.get("object_ids") or ["null"])[0]),
+                filters=json.loads((params.get("filters") or ["{}"]) [0]),
+                target_type=(params.get("target_type") or ["all"])[0],
+                min_depth_m=_coerce_float((params.get("min_depth_m") or ["0.15"])[0], 0.15),
+                max_distance_m=_coerce_float((params.get("max_distance_m") or ["10"])[0], 10.0),
+                time_h=_coerce_optional_float((params.get("time_h") or [""])[0]),
+                bridge_influence_radius_m=_coerce_float(
+                    (params.get("bridge_influence_radius_m") or [
+                        str(BRIDGE_INFLUENCE_RADIUS_M)
+                    ])[0],
+                    BRIDGE_INFLUENCE_RADIUS_M,
+                ),
+            )
         return self._json(result)
 
     def _hydrodynamic_result_id(self, params: dict[str, list[str]]) -> str:
@@ -442,7 +439,7 @@ class Handler(BaseHTTPRequestHandler):
         object_id = (params.get("id") or [""])[0]
         if not object_type or not object_id:
             return self._json({"error": "object_type and id are required"}, status=400)
-        return self._json(APP.get_object(object_type, object_id))
+        return self._json(self.context.app.get_object(object_type, object_id))
 
     def _static(self, path: str):
         rel = "index.html" if path in {"", "/"} else path.lstrip("/")
@@ -470,10 +467,13 @@ class Handler(BaseHTTPRequestHandler):
             raise PlaybackSourceValidationError("CSV 文件不能超过 5 MB")
         return self.rfile.read(length)
 
-    def _json(self, data: dict | list, status: int = 200):
+    def _json(self, data: dict | list, status: int = 200,
+              headers: dict[str, str] | None = None):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        for key, value in (headers or {}).items():
+            self.send_header(key, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -538,36 +538,41 @@ def _domain_command_action(path: str) -> tuple[str, str] | None:
     return None
 
 
-def main():
-    global AUTONOMY_RUNTIME
+class FloodHTTPServer(ThreadingHTTPServer):
+    # Browsers open parallel connections for assets, tiles and event streams.
+    request_queue_size = 128
 
+
+def create_server(host: str = "127.0.0.1", port: int = 8765,
+                  context: ApplicationContext | None = None):
+    """Build an HTTP server with an explicit application context.
+
+    Tests and embedding applications can provide their own context without
+    importing or mutating module-level service singletons.
+    """
+
+    server = FloodHTTPServer((host, port), Handler)
+    server.app_context = context or build_application()
+    return server
+
+
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--runtime", choices=("flood", "dos"), default="flood")
     args = parser.parse_args()
-    dos_host = None
+
+    context = build_application(runtime=args.runtime)
     server = None
     try:
-        import os
-
-        from server.dos_api import DosApi
-        from server.dos_host import DosFloodHost, DosPlaybackController
-
-        dos_host = DosFloodHost(fake_model=os.environ.get("DOS_FAKE_MODEL") == "1")
-        dos_host.start()
-        APP.attach_dos_api(DosApi(dos_host))
-        domain_playback = DosPlaybackController(dos_host, PLAYBACK_SOURCES)
-        AUTONOMY_RUNTIME = domain_playback
-
-        server = ThreadingHTTPServer((args.host, args.port), Handler)
-        print(f"Flood server running at http://{args.host}:{args.port}")
+        server = create_server(args.host, args.port, context)
+        print(f"Flood server ({args.runtime}) running at http://{args.host}:{args.port}")
         server.serve_forever()
     finally:
         if server is not None:
             server.server_close()
-        APP.close_domain_api()
-        if dos_host is not None:
-            dos_host.stop()
+        context.close()
 
 
 if __name__ == "__main__":

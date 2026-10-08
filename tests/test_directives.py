@@ -97,6 +97,30 @@ class DirectiveStoreTest(unittest.TestCase):
 
         self.assertEqual([record], rows)
 
+    def test_legacy_basis_is_preserved_in_history_but_not_reused_when_issuing(self):
+        workspace_id = self.workspaces.create()["workspace_id"]
+        legacy = {
+            "directive_id": "DIR-20261004-001", "workspace_id": workspace_id,
+            "title": "旧指令", "content": "旧正文", "recipients": "接收对象",
+            "priority": "urgent", "status": "issued",
+            "simulation_time": "2026-07-03T08:00:00+08:00", "forecast_version": "v001",
+            "basis": {
+                "snapshot": {"simulation_time": "2026-07-03T08:00:00+08:00", "forecast_version": "v001"},
+                "evacuation_route_id": "missing-route", "object_set_id": "expired-set",
+                "route_review": {"passable": False},
+            },
+        }
+        path = self.workspaces.path() / "directives" / "issued.jsonl"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(legacy) + "\n", encoding="utf-8")
+        new = self.store.issue({**legacy, "content": "修改后的指令正文"}, {
+            "observed_at": "2026-07-03T10:00:00+08:00", "forecast_version": 3,
+        })
+        self.assertEqual(new["simulation_time"], "2026-07-03T10:00:00+08:00")
+        self.assertEqual(new["forecast_version"], "v003")
+        self.assertNotIn("basis", new)
+        self.assertEqual(self.store.list_issued()["directives"], [new, legacy])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -15,6 +15,9 @@ from oag.runtime.hooks import HookResult
 
 from server.presentation.map_tools import register_map_tools
 from server.presentation.directive_tools import register_directive_tools
+from server.chat.analysis_context import normalize_analysis_tool
+from domains.flood.runtime.object_sets import read_object_set
+from domains.flood.runtime.common import id_field, filter_values
 
 
 DEFAULT_AGENT_MAX_TURNS = 10
@@ -78,15 +81,54 @@ def compact_agent_query_result(raw_result: str) -> str:
     return json.dumps(compact(payload), ensure_ascii=False, default=str)
 
 
+def validate_query_filters(ontology: Ontology, object_type: str, filters: Any) -> str | None:
+    if filters is None:
+        return None
+    if not isinstance(filters, dict):
+        return "filters must be an object"
+    definition = ontology.objects.get(object_type)
+    if definition is None:
+        return f"unknown object_type: {object_type}"
+    fields = set(definition.properties)
+    if object_type in {"InundationForecastCell", "HydrodynamicGridCell"}:
+        fields.update({"forecast_id", "time_h", "result"})
+    for key in filters:
+        field, _, operator = key.partition("__")
+        if field not in fields or operator not in {"", "eq", "ne", "in", "like", "gt", "gte", "lt", "lte"}:
+            return f"unsupported filter for {object_type}: {key}; query the object's declared fields first"
+    return None
+
+
 def configure_agent_query_tools(harness: Harness) -> None:
-    for tool_name in ("query", "query_links", "search"):
+    for tool_name in ("query", "count", "query_links", "search", "describe"):
         tool = harness.tools.get(tool_name)
         if not tool:
             continue
         original_handler = tool.handler
-        tool.handler = lambda args, handler=original_handler: (
-            compact_agent_query_result(handler(args))
-        )
+        if tool_name == "describe":
+            tool.parameters["properties"]["object_set_id"] = {
+                "type": "string", "description": "仅统计这个候选集合，可叠加 filters 取交集",
+            }
+        def handler(args, original=original_handler, name=tool_name):
+            if name in {"query", "count", "describe"}:
+                error = validate_query_filters(harness.ontology, args.get("object_type", ""), args.get("filters"))
+                if error:
+                    return json.dumps({"error": error}, ensure_ascii=False)
+            if name == "describe" and args.get("object_set_id"):
+                try:
+                    selected = read_object_set(args["object_set_id"], args["object_type"])
+                except ValueError as exc:
+                    return json.dumps({"error": str(exc)}, ensure_ascii=False)
+                filters = dict(args.get("filters") or {})
+                key = f"{id_field(args['object_type'])}__in"
+                ids = selected["object_ids"]
+                if key in filters:
+                    requested = set(map(str, filter_values(filters[key])))
+                    ids = [ident for ident in ids if ident in requested]
+                filters[key] = ids
+                args = {**args, "filters": filters}
+            return compact_agent_query_result(original(args))
+        tool.handler = handler
         tool.usage_prompt = (
             f"{tool.usage_prompt} 返回结果省略大型 geometry 坐标并用 "
             "geometry_available 标记；对象仍可通过 ui_* 地图工具按完整"
@@ -137,6 +179,9 @@ class FloodAgentFactory:
                 max_turns=configured_agent_max_turns(self.config),
                 enable_write_confirmation=True,
                 llm_extra_body=self._llm_extra_body(),
+                genai_trace_json_path=str(self._genai_trace_json_path()),
+                genai_trace_service_name="flood-emergency-agent",
+                genai_trace_provider_name=self._genai_provider_name(),
                 runtime_context={
                     "frontend": "GIS-centered flood emergency workspace",
                     "map_rendering": (
@@ -149,12 +194,13 @@ class FloodAgentFactory:
         configure_agent_query_tools(harness)
         register_map_tools(harness.tools, resolver, ontology)
         register_directive_tools(harness.tools, ontology)
+        harness.hooks.register("pre_tool_call", normalize_analysis_tool)
         harness.hooks.register("post_tool_call", post_tool_call)
         return Agent(
             harness,
             llm_client,
             self.config["LLM_MODEL"],
-            db_dir=str(self.project_dir / ".oag_data"),
+            db_dir=str(self.config.get("OAG_DATA_DIR") or self.project_dir / ".oag_data"),
         )
 
     def _llm_extra_body(self) -> dict[str, Any]:
@@ -162,3 +208,21 @@ class FloodAgentFactory:
             self.config.get("LLM_DISABLE_REASONING", "")
         ).lower() in {"1", "true", "yes", "on"}
         return {"enable_thinking": False} if disabled else {}
+
+    def _genai_provider_name(self) -> str:
+        configured = self.config.get("GENAI_TRACE_PROVIDER")
+        if configured:
+            return configured
+        api_url = self.config.get("LLM_API_URL", "").lower()
+        if "deepseek" in api_url:
+            return "deepseek"
+        if "openai" in api_url:
+            return "openai"
+        return "openai"
+
+    def _genai_trace_json_path(self) -> Path:
+        configured = self.config.get("GENAI_TRACE_JSON_PATH")
+        if configured:
+            path = Path(configured).expanduser()
+            return path if path.is_absolute() else self.project_dir / path
+        return self.project_dir / ".oag_data" / "genai_traces_flood.json"

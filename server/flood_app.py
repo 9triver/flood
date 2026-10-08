@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
+DOMAIN_DIR = PROJECT_DIR / "domains" / "flood"
 
 
 class DomainApiUnavailable(RuntimeError):
     pass
-DOMAIN_DIR = PROJECT_DIR / "domains" / "flood"
 
 sys.path.insert(0, str(PROJECT_DIR))
 sys.path.insert(0, str(PROJECT_DIR / "agent"))
@@ -38,8 +38,8 @@ if TYPE_CHECKING:
 class FloodApp:
     """Stable application facade for HTTP and autonomous event runtimes."""
 
-    def __init__(self):
-        self.llm_config = load_env(PROJECT_DIR / ".env")
+    def __init__(self, config: dict[str, str] | None = None):
+        self.llm_config = config if config is not None else load_env(PROJECT_DIR / ".env")
         self.ontology, self.repository, self.registry = load_domain(DOMAIN_DIR)
         self.resolver = self.registry.get_resolver("flood_repository")
 
@@ -77,8 +77,8 @@ class FloodApp:
             "domain_os_control_enabled": self._domain_api is not None,
         }
 
-    def autonomy_cycle(self, force_forecast: bool = False) -> dict:
-        return self._domain_service.autonomy_cycle(force_forecast)
+    def assess_flood_emergency(self, refresh: bool = False) -> dict:
+        return self._domain_service.assess_flood_emergency(refresh)
 
     def forecast(self, force: bool = False) -> dict:
         return self._domain_service.forecast(force)
@@ -95,7 +95,7 @@ class FloodApp:
         *,
         domain_product_id: str | None = None,
     ) -> dict[str, Any]:
-        if domain_product_id or self._dos_views_active():
+        if domain_product_id or (forecast_id != "mesh" and self._dos_views_active()):
             return self.domain_api.views.forecast_grid_meta(domain_product_id or forecast_id)
         return self._domain_service.hydrodynamic_grid_stats(forecast_id)
 
@@ -111,7 +111,7 @@ class FloodApp:
         *,
         domain_product_id: str | None = None,
     ) -> dict[str, Any]:
-        if domain_product_id or self._dos_views_active():
+        if domain_product_id or (forecast_id != "mesh" and self._dos_views_active()):
             return self.domain_api.views.forecast_grid_tile(
                 z,
                 x,
@@ -136,6 +136,8 @@ class FloodApp:
         max_distance_m: float = 10.0,
         time_h: float | None = None,
         bridge_influence_radius_m: float = BRIDGE_INFLUENCE_RADIUS_M,
+        object_ids: list[str] | None = None,
+        filters: dict | None = None,
         *,
         assessment_product_id: str | None = None,
         forecast_product_id: str | None = None,
@@ -166,6 +168,8 @@ class FloodApp:
             max_distance_m,
             time_h,
             bridge_influence_radius_m,
+            object_ids,
+            filters,
         )
 
     def get_object(self, object_type: str, object_id: str) -> dict[str, Any]:
@@ -173,6 +177,9 @@ class FloodApp:
 
     def stream_chat(self, run: AgentRun) -> None:
         self._chat_service.stream_chat(run)
+
+    def confirm_chat_tool(self, session_id, approved, answer=None):
+        return self._chat_service.confirm_tool(session_id, approved, answer)
 
     def agent_session_id(self, session_id: str) -> str:
         return self._chat_service.agent_session_id(session_id)
@@ -208,22 +215,11 @@ class FloodApp:
         return self.approve_domain_command(command_id, {**dict(payload), "approved": False})
 
 
-    def _run_domain_command(
-        self,
-        operation: Callable[[], Awaitable[dict[str, Any]]],
-    ) -> dict[str, Any]:
-        runner = self._domain_command_runner
-        if runner is None:
-            raise DomainApiUnavailable("Domain OS control API is not configured")
-        return runner(operation)
-
     def close_domain_api(self) -> None:
         if self._domain_api is None:
             return
         self._domain_api.close()
         self._domain_api = None
-        self._domain_control = None
-        self._domain_command_runner = None
 
 
 __all__ = [

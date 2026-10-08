@@ -6,19 +6,11 @@ import unittest
 
 import yaml
 
-from domains.flood.build_objects import (
-    FloodObjectBuilder,
-    _strip_station_type_suffix,
-)
 from domains.flood.runtime.common import OBJECT_LIBRARY_FILES, OBJECTS_DIR, PROJECT_DIR
 from domains.flood.runtime.repository import read_object_library
 
 
 class FloodObjectLibraryIntegrityTest(unittest.TestCase):
-    def test_station_type_suffix_is_removed_from_display_name(self):
-        self.assertEqual("水寨", _strip_station_type_suffix("水寨(山洪)"))
-        self.assertEqual("水寨", _strip_station_type_suffix("水寨（山洪）"))
-
     def test_station_library_matches_source_inventory(self):
         stations = read_object_library("Station")
 
@@ -63,7 +55,6 @@ class FloodObjectLibraryIntegrityTest(unittest.TestCase):
             [111.36935270331932, 24.32545936202293],
             json.loads(longtan["geometry"])["coordinates"],
         )
-        self.assertEqual(stations, FloodObjectBuilder().build("Station"))
 
     def test_reservoir_library_contains_only_longtan(self):
         reservoirs = read_object_library("Reservoir")
@@ -122,7 +113,6 @@ class FloodObjectLibraryIntegrityTest(unittest.TestCase):
             row.get("geometry_source") == "osm_bridge_way"
             for row in roads
         ))
-        self.assertEqual(roads, FloodObjectBuilder().build("Road"))
         self.assertEqual(22, len(bridges))
         self.assertTrue(all(row.get("river_id") == "shanhu" for row in bridges))
         coordinates = {

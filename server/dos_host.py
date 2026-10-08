@@ -7,8 +7,8 @@ standing processes), and drives boundary-flow playback by republishing the
 scenario CSV as telemetry frames — pause/step/speed are feeder controls,
 exactly like a flight-simulator time knob, not kernel concepts.
 
-Run the server with --dos to mount this host (legacy stays the default
-until the flip).
+Run the server with --runtime dos to mount this experimental host.
+The complete flood business runtime remains the default.
 """
 
 from __future__ import annotations
@@ -225,10 +225,10 @@ class DosPlaybackController:
         return status
 
     def list_playback_sources(self) -> dict[str, Any]:
-        return self.sources.list()
+        return self.sources.list_sources()
 
     def upload_playback_source(self, filename: str, content: bytes) -> dict[str, Any]:
-        return self.sources.register(filename, content)
+        return self.sources.upload(filename, content)
 
     def stream(self, interval: float = 2.0):
         import json as _json

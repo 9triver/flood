@@ -1,0 +1,61 @@
+{
+  "forecast_id": "v004",
+  "valid_from": "2026-07-03T11:00:00+08:00",
+  "time_h": 23.5,
+  "analysis_time_at": "2026-07-04T10:30:00+08:00",
+  "road_id": "843990543",
+  "cells": [
+    {
+      "forecast_id": "v004",
+      "forecast_cell_id": "v004_383262",
+      "mesh_cell_id": "383262",
+      "centroid_lon": 111.3627827,
+      "centroid_lat": 24.3623465,
+      "lead_time_h": 23.5,
+      "depth_m": 0.182,
+      "velocity_mps": 0.262,
+      "risk_level": "low",
+      "geometry": "{\"type\": \"Polygon\", \"coordinates\": [[[111.36282094328219, 24.362281320514853], [111.36283207287988, 24.362403123623157], [111.36269504294181, 24.3623549222414], [111.36282094328219, 24.362281320514853]]]}",
+      "geometry_crs": "EPSG:4326"
+    },
+    {
+      "forecast_id": "v004",
+      "forecast_cell_id": "v004_383265",
+      "mesh_cell_id": "383265",
+      "centroid_lon": 111.3628042,
+      "centroid_lat": 24.3624614,
+      "lead_time_h": 23.5,
+      "depth_m": 0.213,
+      "velocity_mps": 0.275,
+      "risk_level": "low",
+      "geometry": "{\"type\": \"Polygon\", \"coordinates\": [[[111.36283207287988, 24.362403123623157], [111.36286346505621, 24.362504063297504], [111.36271705076126, 24.362476881415315], [111.36283207287988, 24.362403123623157]]]}",
+      "geometry_crs": "EPSG:4326"
+    },
+    {
+      "forecast_id": "v004",
+      "forecast_cell_id": "v004_383269",
+      "mesh_cell_id": "383269",
+      "centroid_lon": 111.3627481,
+      "centroid_lat": 24.3624116,
+      "lead_time_h": 23.5,
+      "depth_m": 0.21,
+      "velocity_mps": 0.274,
+      "risk_level": "low",
+      "geometry": "{\"type\": \"Polygon\", \"coordinates\": [[[111.36269504294181, 24.3623549222414], [111.36283207287988, 24.362403123623157], [111.36271705076126, 24.362476881415315], [111.36269504294181, 24.3623549222414]]]}",
+      "geometry_crs": "EPSG:4326"
+    },
+    {
+      "forecast_id": "v004",
+      "forecast_cell_id": "v004_384863",
+      "mesh_cell_id": "384863",
+      "centroid_lon": 111.3624515,
+      "centroid_lat": 24.3627027,
+      "lead_time_h": 23.5,
+      "depth_m": 0.402,
+      "velocity_mps": 0.341,
+      "risk_level": "medium",
+      "geometry": "{\"type\": \"Polygon\", \"coordinates\": [[[111.36244641907696, 24.362778766798336], [111.36238369844666, 24.362660445955473], [111.3625243816589, 24.362668751653693], [111.36244641907696, 24.362778766798336]]]}",
+      "geometry_crs": "EPSG:4326"
+    }
+  ]
+}

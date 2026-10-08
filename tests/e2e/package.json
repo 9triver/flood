@@ -1,0 +1,11 @@
+{
+  "name": "flood-workflow-e2e",
+  "private": true,
+  "scripts": {
+    "test": "node run.cjs",
+    "test:live": "node run.cjs --live"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

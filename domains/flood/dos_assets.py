@@ -1,7 +1,7 @@
 """Flood object library as dos assets.
 
-Maps domains/flood/data/objects (16 types, ~1666 objects, GeoJSON geometry
-strings with per-object CRS annotations) into the AssetDevice contract.
+Maps the current domains/flood/data/objects manifest and GeoJSON geometry
+strings with per-object CRS annotations into the AssetDevice contract.
 Geometry parsing and CRS strings are carried verbatim — including
 uncertain annotations like "source_crs_unspecified_assumed_wgs84".
 """

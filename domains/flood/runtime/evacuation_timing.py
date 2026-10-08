@@ -3,13 +3,18 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+from shapely import union_all
+from shapely.geometry import shape
 
-from .forecast import LATEST_FORECAST_ID, distance_m, iter_coords, row_point
+from .forecast_constants import LATEST_FORECAST_ID
+from .forecast_geometry import distance_m, iter_coords, row_point
+from .linear_inundation import WetCellIndex, metric_geometry
 from .hydrodynamic_grid import (
     MESH_DB_PATH,
     forecast_series_path,
@@ -20,7 +25,6 @@ from .hydrodynamic_grid import (
 
 DEFAULT_BLOCKED_DEPTH_M = 0.30
 DEFAULT_HORIZON_H = 24.0
-DEFAULT_ROUTE_MATCH_DISTANCE_M = 10.0
 DEFAULT_WALK_SPEED_MPS = 1.0
 
 
@@ -30,7 +34,7 @@ def analyze_latest_evacuation_time(
     evacuation_unit_name: str = "",
     evacuation_route_id: str = "",
     forecast_id: str = "latest",
-    blocked_depth_m: float = DEFAULT_BLOCKED_DEPTH_M,
+    blocked_depth_m: float | None = None,
     clearance_duration_min: float | str | None = None,
     safety_buffer_min: float = 0.0,
 ) -> dict[str, Any]:
@@ -57,7 +61,7 @@ def analyze_latest_evacuation_time(
         return route_error
 
     route_points = geometry_points(route)
-    if len(route_points) < 2:
+    if len(route_points) < 2 or metric_geometry(route, ("LineString",)) is None:
         return error_result(
             "invalid_route_geometry",
             "关联转移路线缺少可分析的线几何。",
@@ -65,6 +69,10 @@ def analyze_latest_evacuation_time(
             evacuation_route=evacuation_route_summary(route),
         )
 
+    forecast_context = resolve_forecast_context(resolver, forecast_id)
+    if not forecast_context.get("forecast_id") or not forecast_context.get("valid_from"):
+        return error_result("forecast_unavailable", "指定预测缺少可用的版本或时间基准。", forecast_id=forecast_id)
+    forecast_id = forecast_context["forecast_id"]
     series_path = forecast_series_path(forecast_id)
     time_steps = forecast_time_steps(forecast_id)
     if not series_path.exists() or not time_steps:
@@ -120,21 +128,12 @@ def analyze_latest_evacuation_time(
         )
 
     destination = resolve_destination(resolver, route)
-    components = analysis_component_points(
-        evacuation_unit, route_points, destination,
+    coverage = match_component_mesh_cells(
+        analysis_component_geometries(evacuation_unit, route, destination),
+        mesh_path=MESH_DB_PATH, forecast_cell_count=int(series.shape[1]),
     )
-    component_cells = match_component_mesh_cells(
-        components,
-        mesh_path=MESH_DB_PATH,
-        max_distance_m=DEFAULT_ROUTE_MATCH_DISTANCE_M,
-    )
-    component_cells = {
-        name: [
-            cell_id for cell_id in cell_ids
-            if 1 <= cell_id <= int(series.shape[1])
-        ]
-        for name, cell_ids in component_cells.items()
-    }
+    component_cells = {name: item["cell_ids"] for name, item in coverage.items()}
+    incomplete = [name for name, item in coverage.items() if not item["fully_covered"]]
     all_cell_ids = sorted({
         cell_id
         for cell_ids in component_cells.values()
@@ -147,9 +146,17 @@ def analyze_latest_evacuation_time(
             evacuation_unit=evacuation_unit_summary(evacuation_unit),
             evacuation_route=evacuation_route_summary(route),
             forecast_id=normalize_result_forecast_id(forecast_id),
+            coverage=coverage,
         )
 
-    threshold = max(0.0, float(blocked_depth_m or 0))
+    values = np.asarray(series[np.ix_([index for index, _ in selected_steps], np.asarray(all_cell_ids) - 1)])
+    if not np.isfinite(values).all() or (values < 0).any():
+        return error_result("invalid_forecast_series", "匹配网格包含无效水深，无法计算转移窗口。", forecast_id=forecast_id)
+
+    route_threshold = route.get("blocked_depth_m")
+    if route_threshold is None:
+        route_threshold = 0.15 if route.get("profile") == "foot" else DEFAULT_BLOCKED_DEPTH_M
+    threshold = max(0.0, float(route_threshold if blocked_depth_m in (None, "") else blocked_depth_m))
     duration = resolve_clearance_duration(
         route, route_points, clearance_duration_min,
     )
@@ -171,11 +178,20 @@ def analyze_latest_evacuation_time(
         safety_buffer_min=buffer_min,
     )
 
-    forecast_context = resolve_forecast_context(resolver)
+    if incomplete:
+        # Keep observed unsafe evidence, but never infer a safe deadline for
+        # components (or portions of the route) outside the model coverage.
+        deadline.update(
+            deadline_status="incomplete_coverage", last_confirmed_safe_time_h=None,
+            latest_safe_completion_time_h=None, latest_departure_time_h=None,
+            message="模型未完整覆盖起点、路线或终点，只能报告已覆盖部分的风险，不能确定完整转移窗口。",
+        )
     attach_absolute_times(deadline, forecast_context.get("valid_from"))
     attach_remaining_time(deadline, forecast_context)
 
     limitations = []
+    if incomplete:
+        limitations.append("模型覆盖不完整：" + "、".join(incomplete) + "；未覆盖不代表无洪水。")
     if duration["source"] != "user_provided_clearance_duration":
         limitations.append(
             "最晚出发时刻使用路线单程通行时间，不包含全体人员集结、分批运输和清点耗时；"
@@ -187,7 +203,7 @@ def analyze_latest_evacuation_time(
         )
 
     return {
-        "status": "completed",
+        "status": "partial" if incomplete else "completed",
         "deadline_status": deadline["deadline_status"],
         "forecast_id": forecast_context.get("forecast_id")
         or normalize_result_forecast_id(forecast_id),
@@ -215,8 +231,9 @@ def analyze_latest_evacuation_time(
             "clearance_duration_min": round(duration["minutes"], 2),
             "clearance_duration_source": duration["source"],
             "safety_buffer_min": buffer_min,
-            "route_match_distance_m": DEFAULT_ROUTE_MATCH_DISTANCE_M,
+            "spatial_method": "full_geometry_polygon_intersection",
         },
+        "coverage": coverage,
         "deadline": deadline,
         "evidence": {
             "first_unsafe_components": deadline.get("first_unsafe_components", []),
@@ -231,12 +248,13 @@ def analyze_latest_evacuation_time(
                     forecast_context.get("valid_from"), row["time_h"],
                 ),
                 "max_depth_m": row["max_depth_m"],
+                "component_depths_m": row["component_depths_m"],
                 "unsafe_components": row["unsafe_components"],
             } for row in timeline],
         },
         "basis": (
-            "逐时读取当前工作空间内0至24小时水深序列，匹配转移起点、预定路线和安置点附近"
-            "水动力网格；任一部分达到禁行水深即判为不可通行。截止时间采用首次不可通行前的"
+            "逐时读取指定预测版本0至24小时水深序列，将转移起点、完整路线和终点与网格多边形求交；"
+            "任一已覆盖部分达到禁行水深即记录不可通行。覆盖完整时，截止时间采用首次不可通行前的"
             "最后一个确认安全时间切片，不对两个时间切片之间的阈值到达时刻作插值。"
         ),
         "limitations": limitations,
@@ -305,6 +323,20 @@ def resolve_route(
     if selected_id:
         row = resolver.query_by_id("EvacuationRoute", selected_id)
         if row:
+            unit_id = str(evacuation_unit.get("evacuation_unit_id") or "")
+            origins = [str(row[key]) for key in ("origin_unit_id",) if row.get(key)]
+            if row.get("start_object_type") == "EvacuationUnit" and row.get("start_object_id"):
+                origins.append(str(row["start_object_id"]))
+            points = geometry_points(row)
+            start = safe_row_point({"longitude": row.get("start_lon"), "latitude": row.get("start_lat")})
+            start = start or (points[0] if points else None)
+            origin = safe_row_point(evacuation_unit)
+            matches = all(ident == unit_id for ident in origins) if origins else bool(
+                origin and start and distance_m(origin, start) <= 10,
+            )
+            if not matches:
+                return None, error_result("route_origin_mismatch", "指定路线的起点与转移单元不一致，请选择对应路线。",
+                                          evacuation_route_id=selected_id, evacuation_unit_id=unit_id)
             return row, None
         return None, error_result(
             "route_not_found",
@@ -339,92 +371,73 @@ def resolve_destination(resolver, route: dict[str, Any]) -> dict[str, Any] | Non
 
 def geometry_points(row: dict[str, Any]) -> list[tuple[float, float]]:
     try:
-        geometry = json.loads(str(row.get("geometry") or "{}"))
+        geometry = row.get("geometry") or {}
+        geometry = json.loads(geometry) if isinstance(geometry, str) else geometry
     except (TypeError, json.JSONDecodeError):
         return []
+    if not isinstance(geometry, dict) or geometry.get("type") != "LineString":
+        return []
     return iter_coords(geometry.get("coordinates") or [])
-
-
-def analysis_component_points(
-    transfer: dict[str, Any],
-    route_points: list[tuple[float, float]],
-    destination: dict[str, Any] | None,
-) -> dict[str, list[tuple[float, float]]]:
-    components = {
-        "route": densify_line(route_points),
-    }
-    origin = safe_row_point(transfer)
-    if origin:
-        components["origin"] = [origin]
-    destination_point = safe_row_point(destination)
-    if destination_point:
-        components["destination"] = [destination_point]
-    return components
 
 
 def safe_row_point(row: dict[str, Any] | None) -> tuple[float, float] | None:
     if not row:
         return None
     try:
-        return row_point(row)
+        point = row_point(row)
+        return point if point and all(math.isfinite(value) for value in point) else None
     except (TypeError, ValueError, json.JSONDecodeError):
         return None
 
 
-def densify_line(points: list[tuple[float, float]],
-                 spacing_m: float = 5.0) -> list[tuple[float, float]]:
-    if not points:
-        return []
-    result = [points[0]]
-    for start, end in zip(points, points[1:]):
-        segment_length = distance_m(start, end)
-        count = max(1, math.ceil(segment_length / max(1.0, spacing_m)))
-        result.extend((
-            start[0] + (end[0] - start[0]) * index / count,
-            start[1] + (end[1] - start[1]) * index / count,
-        ) for index in range(1, count + 1))
-    return result
+def analysis_component_geometries(transfer: dict, route: dict, destination: dict | None) -> dict:
+    def point_row(row):
+        point = safe_row_point(row)
+        return {"geometry": {"type": "Point", "coordinates": point}} if point else {}
+    # Routes planned to explicit coordinates need no shelter library record.
+    endpoint = destination or {"longitude": route.get("destination_lon"), "latitude": route.get("destination_lat")}
+    return {"origin": point_row(transfer), "route": route, "destination": point_row(endpoint)}
 
 
-def match_component_mesh_cells(
-    components: dict[str, list[tuple[float, float]]],
-    *,
-    mesh_path: Path,
-    max_distance_m: float,
-) -> dict[str, list[int]]:
-    result = {name: [] for name in components}
-    all_points = [point for points in components.values() for point in points]
-    if not all_points or not mesh_path.exists():
-        return result
-
-    ref_lat = sum(point[1] for point in all_points) / len(all_points)
-    lat_margin = max_distance_m / 110_540.0
-    lon_scale = max(1.0, 111_320.0 * math.cos(math.radians(ref_lat)))
-    lon_margin = max_distance_m / lon_scale
-    min_lon = min(point[0] for point in all_points) - lon_margin
-    max_lon = max(point[0] for point in all_points) + lon_margin
-    min_lat = min(point[1] for point in all_points) - lat_margin
-    max_lat = max(point[1] for point in all_points) + lat_margin
-
-    with sqlite3.connect(mesh_path) as conn:
-        rows = conn.execute(
-            "select cell_id, lon1, lat1, lon2, lat2, lon3, lat3 "
-            "from cells where max_lon >= ? and min_lon <= ? "
-            "and max_lat >= ? and min_lat <= ?",
-            (min_lon, max_lon, min_lat, max_lat),
-        )
-        for row in rows:
-            cell_id = int(row[0])
-            centroid = (
-                (float(row[1]) + float(row[3]) + float(row[5])) / 3,
-                (float(row[2]) + float(row[4]) + float(row[6])) / 3,
+def match_component_mesh_cells(components: dict, *, mesh_path: Path,
+                               forecast_cell_count: int) -> dict:
+    geometries = {name: metric_geometry(row, ("Point", "LineString", "MultiLineString"))
+                  for name, row in components.items()}
+    bounds = []
+    for name, row in components.items():
+        if geometries[name] is not None:
+            raw = row["geometry"]
+            bounds.append(shape(json.loads(raw) if isinstance(raw, str) else raw).bounds)
+    cells = []
+    if bounds and mesh_path.is_file():
+        # Only read mesh triangles in the bounding box; no vertex sampling or
+        # centroid-distance cutoff. Project with the shared impact geometry.
+        with closing(sqlite3.connect(mesh_path)) as conn:
+            rows = conn.execute(
+                "select cell_id, lon1, lat1, lon2, lat2, lon3, lat3 from cells "
+                "where max_lon >= ? and min_lon <= ? and max_lat >= ? and min_lat <= ?",
+                (min(b[0] for b in bounds), max(b[2] for b in bounds),
+                 min(b[1] for b in bounds), max(b[3] for b in bounds)),
             )
-            for name, points in components.items():
-                if any(
-                    distance_m(centroid, point) <= max_distance_m
-                    for point in points
-                ):
-                    result[name].append(cell_id)
+            for row in rows:
+                if not 1 <= int(row[0]) <= forecast_cell_count:
+                    continue
+                ring = [[row[1], row[2]], [row[3], row[4]], [row[5], row[6]], [row[1], row[2]]]
+                cells.append({"mesh_cell_id": int(row[0]), "depth_m": 1,
+                              "geometry": {"type": "Polygon", "coordinates": [ring]}})
+    index = WetCellIndex(cells, 0)
+    result = {}
+    for name, geometry in geometries.items():
+        hits = [] if geometry is None else index.tree.query(geometry, predicate="intersects")
+        ids = sorted(index.rows[int(i)]["mesh_cell_id"] for i in hits)
+        covered = union_all([index.geometries[int(i)] for i in hits])
+        missing_length = geometry.difference(covered).length if geometry is not None and name == "route" else None
+        # Numerical seams between projected triangle edges can be sub-mm.
+        fully_covered = bool(ids) and (missing_length <= 0.001 if name == "route" else covered.covers(geometry))
+        result[name] = {"cell_ids": ids, "matched_cell_count": len(ids),
+                        "fully_covered": bool(fully_covered),
+                        "status": "covered" if fully_covered else "missing_geometry" if geometry is None else "outside_or_partial_mesh",
+                        "uncovered_length_m": round(missing_length, 3) if missing_length is not None else None}
     return result
 
 
@@ -447,15 +460,15 @@ def build_depth_timeline(
             depth = (
                 float(np.asarray(series[time_index, indices]).max())
                 if indices.size
-                else 0.0
+                else None
             )
-            component_depths[name] = round(depth, 4)
-            if depth >= blocked_depth_m:
+            component_depths[name] = round(depth, 4) if depth is not None else None
+            if depth is not None and depth >= blocked_depth_m:
                 unsafe_components.append(name)
-        max_depth = max(component_depths.values(), default=0.0)
+        max_depth = max((value for value in component_depths.values() if value is not None), default=None)
         timeline.append({
             "time_h": round(time_h, 3),
-            "max_depth_m": round(max_depth, 4),
+            "max_depth_m": round(max_depth, 4) if max_depth is not None else None,
             "component_depths_m": component_depths,
             "unsafe": bool(unsafe_components),
             "unsafe_components": unsafe_components,
@@ -540,14 +553,18 @@ def build_deadline(
     }
 
 
-def resolve_forecast_context(resolver) -> dict[str, Any]:
+def resolve_forecast_context(resolver, forecast_id: str = "latest") -> dict[str, Any]:
     try:
-        rows = resolver.query("FloodForecast", order_by="-forecast_sequence", limit=1)
+        filters = {} if forecast_id in ("", "latest", LATEST_FORECAST_ID) else {"forecast_id": forecast_id}
+        rows = resolver.query("FloodForecast", filters=filters, order_by="-forecast_sequence", limit=1)
     except (FileNotFoundError, TypeError, ValueError):
         rows = []
     run = rows[-1] if rows else {}
+    if filters and run.get("forecast_id") != forecast_id:
+        return {}
     try:
-        boundary_flow = json.loads(str(run.get("boundary_flow") or "{}"))
+        boundary_flow = run.get("boundary_flow") or {}
+        boundary_flow = json.loads(boundary_flow) if isinstance(boundary_flow, str) else boundary_flow
     except (TypeError, json.JSONDecodeError):
         boundary_flow = {}
     return {

@@ -23,21 +23,14 @@ from .station_rainfall import (
     station_rainfall_columns,
 )
 from .workspace import RUNTIME_ROOT
+from .rainfall_input import REQUIRED_RAINFALL_COLUMNS
 
 
 BUILTIN_PLAYBACK_SOURCE_ID = "builtin-boundary-flow"
 PLAYBACK_SOURCES_DIR = RUNTIME_ROOT / "playback_sources"
 MAX_PLAYBACK_SOURCE_BYTES = 5 * 1024 * 1024
 MIN_PLAYBACK_SOURCE_ROWS = 25
-REQUIRED_BOUNDARY_FLOW_COLUMNS = (
-    "time_period_end",
-    "rainfall_mm",
-    "interval1_outlet_flow_m3s",
-    "interval2_outlet_flow_m3s",
-    "reservoir_outlet_flow_m3s",
-    "release_m3s",
-    "end_level_m",
-)
+REQUIRED_BOUNDARY_FLOW_COLUMNS = REQUIRED_RAINFALL_COLUMNS
 _UPLOADED_SOURCE_ID = re.compile(r"source_[0-9a-f]{12}")
 
 
@@ -196,10 +189,10 @@ class PlaybackSourceRegistry:
             source = self.get(source_id)
             inputs_dir = workspace_path / "inputs"
             inputs_dir.mkdir(parents=True, exist_ok=True)
-            csv_path = inputs_dir / "boundary_flow.csv"
+            csv_path = inputs_dir / "rainfall.csv"
             shutil.copy2(source.csv_path, csv_path)
             metadata = source.public(selected=True)
-            metadata["workspace_path"] = "inputs/boundary_flow.csv"
+            metadata["workspace_path"] = "inputs/rainfall.csv"
             _write_json(inputs_dir / "playback_source.json", metadata)
             self.select(source.source_id)
             return csv_path, metadata
@@ -235,6 +228,9 @@ class PlaybackSourceRegistry:
         csv_path = source_dir / "source.csv"
         if not csv_path.is_file():
             raise ValueError("演进数据文件不存在")
+        # Older uploads lack basin rainfall. Exclude them from selection
+        # rather than silently interpreting their former total as each basin.
+        validate_playback_source(csv_path.read_bytes())
         return self._source_from_metadata(metadata, csv_path)
 
     @staticmethod
@@ -278,7 +274,8 @@ def validate_playback_source(content: bytes) -> dict[str, Any]:
     actual = set(columns)
     if len(actual) != len(columns):
         raise PlaybackSourceValidationError("CSV 字段名不能重复")
-    unknown = actual - required - station_columns
+    control_columns = {"target_outflow_m3s", "target_level_m"}
+    unknown = actual - required - station_columns - control_columns
     present_station_columns = actual & station_columns
     if not required.issubset(actual):
         raise PlaybackSourceValidationError(
@@ -320,7 +317,11 @@ def validate_playback_source(content: bytes) -> dict[str, Any]:
             raise PlaybackSourceValidationError(
                 f"第 {line_number} 行时间必须比上一行晚 1 小时"
             )
-        for column in numeric_columns:
+        optional_controls = [
+            column for column in control_columns & actual
+            if str(row.get(column) or "").strip()
+        ]
+        for column in [*numeric_columns, *optional_controls]:
             raw = str(row.get(column) or "").strip()
             try:
                 value = float(raw)
@@ -332,18 +333,9 @@ def validate_playback_source(content: bytes) -> dict[str, Any]:
                 raise PlaybackSourceValidationError(
                     f"第 {line_number} 行 {column} 必须是有限数值"
                 )
-            if column in station_columns and value < 0:
+            if value < 0:
                 raise PlaybackSourceValidationError(
                     f"第 {line_number} 行 {column} 不能小于 0"
-                )
-        if present_station_columns:
-            rainfall = float(row["rainfall_mm"])
-            station_mean = sum(
-                float(row[column]) for column in station_rainfall_columns()
-            ) / len(station_columns)
-            if not math.isclose(station_mean, rainfall, abs_tol=0.001):
-                raise PlaybackSourceValidationError(
-                    f"第 {line_number} 行气象站雨量平均值必须等于 rainfall_mm"
                 )
         if not start_time:
             start_time = observed_at.strftime("%Y-%m-%d %H:%M")

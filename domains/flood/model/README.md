@@ -2,6 +2,9 @@
 
 `cnn_v2/` is the deployable hydrodynamic inference package.
 
+应用界面、智能体回复和业务文档统一称“水动力模型”。当前实现采用卷积神经网络预测水深；
+`cnn_v2`、`FLOOD_CNN_*` 等文件名、配置项和结果标识保留为实现标识，以兼容已有部署与数据。
+
 - `CNN_V2.py`: model architecture and inference entry point.
 - `CNN_V2_worker.py`: JSON-lines inference worker that keeps the model and grid loaded.
 - `GT.txt`: hydrodynamic mesh definition.

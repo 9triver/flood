@@ -8,12 +8,14 @@ import threading
 from collections import OrderedDict
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 
-from .common import DOMAIN_DIR, PROJECT_DIR, apply_filters, apply_order, apply_window
+from .common import DOMAIN_DIR, PROJECT_DIR, apply_filters, apply_order, apply_window, rel
 from .coordinates import gcj02_to_wgs84
+from .hydrodynamic_cache import cached_depth_entry
+from .hydrodynamic_mesh import MeshDatabase
 from .workspace import SHARED_CACHE_DIR, workspace_dir
 
 
@@ -24,39 +26,29 @@ MIN_TILE_ZOOM = 13
 SUPPORTED_TILE_ZOOMS = (13, 14, 15)
 LATEST_FORECAST_ID = "latest"
 MESH_ONLY_ID = "mesh"
-_DEPTH_CACHE_LOCK = threading.Lock()
-_DEPTH_CACHE_MAX = 8
-_DEPTH_CACHE: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
-_DEPTH_LOADS: dict[tuple[Any, ...], "_DepthLoad"] = {}
 _TILE_CACHE_LOCK = threading.Lock()
 _TILE_CACHE_MAX = 1024
 _TILE_CACHE: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
 _SQLITE_ID_BATCH_SIZE = 800
 
 
-class _DepthLoad:
-    def __init__(self):
-        self.event = threading.Event()
-        self.entry: dict[str, Any] | None = None
-        self.error: BaseException | None = None
-
-
 class HydrodynamicMeshStore:
     def __init__(self, db_path: Path = MESH_DB_PATH):
         self.db_path = db_path
-        self._lock = threading.Lock()
+        self._database = MeshDatabase(
+            db_path=db_path,
+            grid_path=GT_PATH,
+            project_dir=PROJECT_DIR,
+            parse_cells=lambda: parse_gt_cells(),
+            tile_index_rows=lambda cells: tile_index_rows(cells),
+        )
 
     def ensure_ready(self) -> None:
-        if self._is_ready():
-            return
-        with self._lock:
-            if self._is_ready():
-                return
-            self._build()
+        self._database.ensure_ready()
 
     def meta(self, forecast_id: str = LATEST_FORECAST_ID) -> dict[str, Any]:
         self.ensure_ready()
-        with self._connect() as conn:
+        with self._database.connect() as conn:
             mesh = {row["key"]: row["value"] for row in conn.execute("select key, value from mesh_meta")}
             forecast = forecast_stats(forecast_id)
             if normalize_forecast_id(forecast_id) != MESH_ONLY_ID:
@@ -80,7 +72,7 @@ class HydrodynamicMeshStore:
                     "max_lon": float(mesh.get("max_lon", 0)),
                     "max_lat": float(mesh.get("max_lat", 0)),
                 },
-                "mesh_path": str(self.db_path.relative_to(PROJECT_DIR)),
+                "mesh_path": rel(self.db_path),
                 "source_paths": {
                     "grid": str(GT_PATH.relative_to(PROJECT_DIR)) if GT_PATH.exists() else "",
                 },
@@ -161,7 +153,7 @@ class HydrodynamicMeshStore:
     ) -> dict[str, Any]:
         """Build the legacy GIS metadata DTO from an explicit depth source."""
         self.ensure_ready()
-        with self._connect() as conn:
+        with self._database.connect() as conn:
             mesh = {
                 row["key"]: row["value"]
                 for row in conn.execute("select key, value from mesh_meta")
@@ -183,7 +175,7 @@ class HydrodynamicMeshStore:
                     "max_lon": float(mesh.get("max_lon", 0)),
                     "max_lat": float(mesh.get("max_lat", 0)),
                 },
-                "mesh_path": str(self.db_path.relative_to(PROJECT_DIR)),
+                "mesh_path": rel(self.db_path),
                 "source_paths": {
                     "grid": str(GT_PATH.relative_to(PROJECT_DIR)) if GT_PATH.exists() else "",
                 },
@@ -279,7 +271,7 @@ class HydrodynamicMeshStore:
             if tile_crs == "gcj02"
             else tile_bounds(z, x, y)
         )
-        with self._connect() as conn:
+        with self._database.connect() as conn:
             return self._cell_rows_in_bounds(conn, cell_ids, bounds)
 
     def _cell_rows_in_bounds(
@@ -342,7 +334,7 @@ class HydrodynamicMeshStore:
 
     def _tile_rows(self, z: int, x: int, y: int,
                    tile_crs: str = "wgs84") -> list[sqlite3.Row]:
-        with self._connect() as conn:
+        with self._database.connect() as conn:
             if tile_crs == "gcj02":
                 return self._bbox_rows(conn, z, gcj02_tile_bounds_wgs84(z, x, y))
             if z in SUPPORTED_TILE_ZOOMS:
@@ -405,7 +397,7 @@ class HydrodynamicMeshStore:
         forecast_id = str((filters or {}).get("forecast_id") or LATEST_FORECAST_ID)
         time_h = coerce_optional_float((filters or {}).get("time_h"))
         depths = read_forecast_depths(forecast_id, time_h=time_h)
-        with self._connect() as conn:
+        with self._database.connect() as conn:
             rows = [
                 {
                     "hydrodynamic_cell_id": f"hydro_cell_{row['cell_id']}",
@@ -431,96 +423,8 @@ class HydrodynamicMeshStore:
         if filters:
             return len(self.query(filters))
         self.ensure_ready()
-        with self._connect() as conn:
+        with self._database.connect() as conn:
             return int(conn.execute("select count(*) from cells").fetchone()[0])
-
-    def _is_ready(self) -> bool:
-        if not self.db_path.exists():
-            return False
-        try:
-            with self._connect() as conn:
-                version = conn.execute(
-                    "select value from mesh_meta where key = 'schema_version'",
-                ).fetchone()
-                return bool(version and version["value"] == "1")
-        except sqlite3.Error:
-            return False
-
-    def _build(self) -> None:
-        if not GT_PATH.exists():
-            raise FileNotFoundError(f"hydrodynamic grid not found: {GT_PATH}")
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self.db_path.with_suffix(".sqlite.tmp")
-        if temp_path.exists():
-            temp_path.unlink()
-
-        with sqlite3.connect(temp_path) as conn:
-            conn.execute("pragma journal_mode = off")
-            conn.execute("pragma synchronous = off")
-            conn.execute(
-                """
-                create table cells(
-                    cell_id integer primary key,
-                    min_lon real not null,
-                    min_lat real not null,
-                    max_lon real not null,
-                    max_lat real not null,
-                    lon1 real not null,
-                    lat1 real not null,
-                    lon2 real not null,
-                    lat2 real not null,
-                    lon3 real not null,
-                    lat3 real not null
-                )
-                """
-            )
-            conn.execute(
-                """
-                create table tile_cells(
-                    z integer not null,
-                    x integer not null,
-                    y integer not null,
-                    cell_id integer not null,
-                    primary key(z, x, y, cell_id)
-                )
-                """
-            )
-            conn.execute("create table mesh_meta(key text primary key, value text not null)")
-
-            cells, meta = parse_gt_cells()
-            conn.executemany(
-                """
-                insert into cells(
-                    cell_id, min_lon, min_lat, max_lon, max_lat,
-                    lon1, lat1, lon2, lat2, lon3, lat3
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                cells,
-            )
-            conn.executemany(
-                "insert into tile_cells(z, x, y, cell_id) values (?, ?, ?, ?)",
-                tile_index_rows(cells),
-            )
-            meta.update({
-                "schema_version": "1",
-                "source_crs": "EPSG:4546",
-                "map_crs": "EPSG:4326",
-                "source_grid": str(GT_PATH.relative_to(PROJECT_DIR)),
-            })
-            conn.executemany(
-                "insert into mesh_meta(key, value) values (?, ?)",
-                [(key, str(value)) for key, value in sorted(meta.items())],
-            )
-            conn.execute("create index idx_tile_cells on tile_cells(z, x, y)")
-            conn.execute("create index idx_cells_bbox on cells(min_lon, min_lat, max_lon, max_lat)")
-
-        temp_path.replace(self.db_path)
-
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
-
 
 STORE = HydrodynamicMeshStore()
 
@@ -693,8 +597,8 @@ def forecast_stats(forecast_id: str = LATEST_FORECAST_ID) -> dict[str, Any]:
         "lead_time_h": metadata.get("lead_time_h"),
         "rainfall_series": forecast_rainfall_series(metadata),
         "result_version": forecast_result_version(path, series_path, time_steps_path),
-        "depth_path": str(path.relative_to(PROJECT_DIR)) if path.exists() else "",
-        "series_path": str(series_path.relative_to(PROJECT_DIR)) if series_path.exists() else "",
+        "depth_path": rel(path) if path.exists() else "",
+        "series_path": rel(series_path) if series_path.exists() else "",
         "depth_count": entry["depth_count"],
         "flooded_count": entry["flooded_count"],
         "max_depth_m": round(entry["max_depth_m"], 4),
@@ -783,61 +687,6 @@ def forecast_time_depth_entry(forecast_id: str, time_h: float) -> dict[str, Any]
             series_path, steps, time_h, stat_key,
         ),
     )
-
-
-def cached_depth_entry(
-    cache_key: tuple[Any, ...],
-    stat_key: Any,
-    loader: Callable[[], dict[str, Any]],
-) -> dict[str, Any]:
-    with _DEPTH_CACHE_LOCK:
-        cached = _DEPTH_CACHE.get(cache_key)
-        if cached is not None and cached.get("stat_key") == stat_key:
-            _DEPTH_CACHE.move_to_end(cache_key)
-            return cached
-        load = _DEPTH_LOADS.get(cache_key)
-        is_loader = load is None
-        if load is None:
-            load = _DepthLoad()
-            _DEPTH_LOADS[cache_key] = load
-
-    if not is_loader:
-        load.event.wait()
-        if load.error is not None:
-            raise load.error
-        if load.entry is None:
-            raise RuntimeError("depth cache load completed without a result")
-        return load.entry
-
-    try:
-        entry = loader()
-        with _DEPTH_CACHE_LOCK:
-            cached = _DEPTH_CACHE.get(cache_key)
-            if cached is not None and cached.get("stat_key") == stat_key:
-                _DEPTH_CACHE.move_to_end(cache_key)
-                result = cached
-            else:
-                result = cache_depth_entry(cache_key, entry)
-            load.entry = result
-            load.event.set()
-            if _DEPTH_LOADS.get(cache_key) is load:
-                del _DEPTH_LOADS[cache_key]
-            return result
-    except BaseException as error:
-        with _DEPTH_CACHE_LOCK:
-            load.error = error
-            load.event.set()
-            if _DEPTH_LOADS.get(cache_key) is load:
-                del _DEPTH_LOADS[cache_key]
-        raise
-
-
-def cache_depth_entry(cache_key: tuple[Any, ...], entry: dict[str, Any]) -> dict[str, Any]:
-    _DEPTH_CACHE[cache_key] = entry
-    _DEPTH_CACHE.move_to_end(cache_key)
-    while len(_DEPTH_CACHE) > _DEPTH_CACHE_MAX:
-        _DEPTH_CACHE.popitem(last=False)
-    return entry
 
 
 def file_stat_key(path: Path) -> tuple[int, int] | None:

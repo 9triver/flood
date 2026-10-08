@@ -5,6 +5,13 @@
 __pycache__/
 *.py[cod]
 *.pyo
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
 *.so
 *.dylib
 *.dll
@@ -14,9 +21,12 @@ dist/
 .venv/
 agent/.venv/
 .oag_data/
+node_modules/
 
 # Local workbench: source data, reference docs, model experiments
 local/
+temp/
+/集水区/
 
 # Local domain tool secrets
 domains/tools/.env
@@ -31,5 +41,17 @@ domains/tools/.env
 洪水风险图水文分析专题（珊瑚河）.md
 hydrodynamic_model/
 
-# Local reference repos
+# Local reference repos and update bundles
 mypalantir/
+/flood-updates-20261006-194945/
+
+# Local build and runtime artifacts
+build/
+dist/
+*.log
+*.tmp
+*.sqlite
+*.sqlite-*
+
+# Local competition/evaluation attachments provided outside the project source.
+智能体运行日志格式校验工具/

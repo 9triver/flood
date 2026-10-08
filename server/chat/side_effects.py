@@ -12,11 +12,21 @@ from server.presentation.map_actions import tool_result_to_map_event
 from server.serialization import parse_json_object
 
 
+DOMAIN_RESULT_TOOLS = frozenset({
+    "get_flood_status", "find_nearby_objects", "refine_object_set", "compare_evacuation_sites",
+    "plan_route", "review_route", "analyze_inundation_impacts", "analyze_latest_evacuation_time",
+    "assess_flood_emergency",
+    "get_longtan_dispatch_plan", "simulate_longtan_dispatch",
+})
+
+
 class AgentSideEffects:
     """Collect tool results that must be consumed outside the Agent loop."""
 
     def __init__(self, presentation_tools: Collection[str]):
         self.presentation_tools = frozenset(presentation_tools)
+        self._domain_results: dict[str, list[dict]] = {}
+        self._domain_results_lock = threading.Lock()
         self._map_events: dict[str, list[dict[str, Any]]] = {}
         self._map_events_lock = threading.Lock()
         self._directive_events: dict[str, list[dict[str, Any]]] = {}
@@ -31,6 +41,12 @@ class AgentSideEffects:
     def capture_tool_event(self, context: dict[str, Any]) -> HookResult:
         tool_name = str(context.get("tool_name") or "")
         session_id = str(context.get("session_id") or "")
+        if session_id and not session_id.startswith("event-") and tool_name in DOMAIN_RESULT_TOOLS:
+            result = parse_json_object(context.get("result") or "")
+            if result is not None:
+                with self._domain_results_lock:
+                    if session_id in self._domain_results:
+                        self._domain_results[session_id].append({"name": tool_name, "result": result})
         if session_id.startswith("event-") and tool_name:
             with self._event_tool_results_lock:
                 self._event_tool_results.setdefault(session_id, []).append({
@@ -69,6 +85,21 @@ class AgentSideEffects:
                     directive_event
                 )
         return HookResult(action="allow")
+
+    def begin_domain_results(self, session_id: str) -> None:
+        with self._domain_results_lock:
+            self._domain_results[session_id] = []
+
+    def pop_domain_results(self, session_id: str) -> list[dict]:
+        with self._domain_results_lock:
+            result = self._domain_results.get(session_id, [])
+            if session_id in self._domain_results:
+                self._domain_results[session_id] = []
+            return result
+
+    def end_domain_results(self, session_id: str) -> None:
+        with self._domain_results_lock:
+            self._domain_results.pop(session_id, None)
 
     def pop_map_events(self, session_id: str) -> list[dict[str, Any]]:
         with self._map_events_lock:

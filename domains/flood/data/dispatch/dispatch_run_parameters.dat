@@ -1,0 +1,8 @@
+# Reservoir dispatch calculation window and initial condition
+# Time format: YYYY-MM-DD HH:MM:SS (without T); level unit: m; time-step unit: h
+
+CALCULATION_START_TIME = 2026-07-21 00:00:00
+CALCULATION_END_TIME   = 2026-07-23 01:00:00
+TOTAL_PERIODS          = 49
+TIME_STEP_HOURS        = 1
+INITIAL_LEVEL_M        = 245.10

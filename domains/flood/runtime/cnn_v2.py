@@ -62,7 +62,7 @@ class _CnnWorker:
         started = time.perf_counter()
         configuration = self._worker_configuration(requested_device)
         if not self._lock.acquire(timeout=max(0.1, float(timeout))):
-            raise CnnWorkerTimeoutError("timed out waiting for the CNN worker")
+            raise CnnWorkerTimeoutError("等待水动力模型计算进程超时")
         queue_ms = (time.perf_counter() - started) * 1000
         try:
             reused = self._is_running(configuration)
@@ -72,13 +72,13 @@ class _CnnWorker:
                 self._stop_locked()
                 remaining = timeout - (time.perf_counter() - started)
                 if remaining <= 0:
-                    raise CnnWorkerTimeoutError("timed out waiting for the CNN worker")
+                    raise CnnWorkerTimeoutError("等待水动力模型计算进程超时")
                 self._start_locked(configuration, requested_device, env, remaining)
                 startup_ms = (time.perf_counter() - startup_started) * 1000
 
             process = self._process
             if process is None or process.stdin is None:
-                raise CnnWorkerError("CNN worker is unavailable")
+                raise CnnWorkerError("水动力模型计算进程不可用")
             request_id = uuid.uuid4().hex
             payload = {
                 "request_id": request_id,
@@ -91,24 +91,24 @@ class _CnnWorker:
                 process.stdin.flush()
             except (BrokenPipeError, OSError) as exc:
                 self._stop_locked()
-                raise CnnWorkerError(f"CNN worker pipe failed: {exc}") from exc
+                raise CnnWorkerError(f"水动力模型计算进程通信失败: {exc}") from exc
 
             remaining = timeout - (time.perf_counter() - started)
             if remaining <= 0:
-                raise CnnWorkerTimeoutError("CNN worker prediction timed out")
+                raise CnnWorkerTimeoutError("水动力模型计算进程预测超时")
             response = self._wait_for_message(remaining)
             request_ms = (time.perf_counter() - request_started) * 1000
             if response.get("type") == "eof":
                 self._stop_locked()
-                raise CnnWorkerError("CNN worker exited unexpectedly")
+                raise CnnWorkerError("水动力模型计算进程意外退出")
             if response.get("request_id") != request_id:
                 self._stop_locked()
-                raise CnnWorkerError("CNN worker returned a mismatched response")
+                raise CnnWorkerError("水动力模型计算进程返回的响应不匹配")
             if response.get("type") == "error":
-                raise CnnWorkerError(str(response.get("error") or "CNN worker prediction failed"))
+                raise CnnWorkerError(str(response.get("error") or "水动力模型计算进程预测失败"))
             if response.get("type") != "result":
                 self._stop_locked()
-                raise CnnWorkerError("CNN worker returned an invalid response")
+                raise CnnWorkerError("水动力模型计算进程返回了无效响应")
             return {
                 "result": response.get("result") or {},
                 "device": str(response.get("device") or self._device or requested_device),
@@ -179,7 +179,7 @@ class _CnnWorker:
                 bufsize=1,
             )
         except OSError as exc:
-            raise CnnWorkerError(f"could not start CNN worker: {exc}") from exc
+            raise CnnWorkerError(f"无法启动水动力模型计算进程: {exc}") from exc
         self._process = process
         self._configuration = configuration
         response_thread = threading.Thread(
@@ -197,7 +197,7 @@ class _CnnWorker:
         if ready.get("type") != "ready":
             detail = ready.get("error") or self.stderr_tail() or "no ready response"
             self._stop_locked()
-            raise CnnWorkerError(f"CNN worker failed to start: {detail}")
+            raise CnnWorkerError(f"水动力模型计算进程启动失败: {detail}")
         self._device = str(ready.get("device") or requested_device)
 
     def _wait_for_message(self, timeout: float) -> dict[str, Any]:
@@ -205,7 +205,7 @@ class _CnnWorker:
             return self._responses.get(timeout=timeout)
         except queue.Empty as exc:
             self._stop_locked()
-            raise CnnWorkerTimeoutError("CNN worker prediction timed out") from exc
+            raise CnnWorkerTimeoutError("水动力模型计算进程预测超时") from exc
 
     def _read_responses(self, process: subprocess.Popen[str],
                         responses: queue.Queue[dict[str, Any]]) -> None:
@@ -264,28 +264,25 @@ _CNN_WORKER = _CnnWorker()
 atexit.register(_CNN_WORKER.close)
 
 
-def run_cnn_v2_forecast(
-    boundary_flow: dict[str, Any],
-    target_depth_path: Path,
-    *,
-    working_dir: Path | None = None,
-) -> dict[str, Any]:
+def run_cnn_v2_forecast(boundary_flow: dict[str, Any],
+                        target_depth_path: Path, *,
+                        work_dir: Path | None = None) -> dict[str, Any]:
     total_started = time.perf_counter()
     if not MODEL_SCRIPT.exists():
-        return {"error": f"missing CNN_V2.py: {rel(MODEL_SCRIPT)}"}
+        return {"error": f"缺少水动力模型程序: {rel(MODEL_SCRIPT)}"}
     if cnn_worker_enabled() and not WORKER_SCRIPT.exists():
-        return {"error": f"missing CNN_V2_worker.py: {rel(WORKER_SCRIPT)}"}
+        return {"error": f"缺少水动力模型计算进程程序: {rel(WORKER_SCRIPT)}"}
     if not GRID_PATH.exists():
-        return {"error": f"missing CNN grid file: {rel(GRID_PATH)}"}
+        return {"error": f"缺少水动力模型网格文件: {rel(GRID_PATH)}"}
     if not WEIGHT_PATH.exists():
-        return {"error": f"missing CNN weight file: {rel(WEIGHT_PATH)}"}
+        return {"error": f"缺少水动力模型权重文件: {rel(WEIGHT_PATH)}"}
 
     summary = (boundary_flow or {}).get("summary") or {}
     if not summary:
         return {"error": "missing boundary flow summary"}
 
     case_name = _model_case_name(summary.get("boundary_flow_id"))
-    run_dir = working_dir or workspace_dir(create=True) / "cnn_v2" / "latest"
+    run_dir = work_dir if work_dir is not None else workspace_dir(create=True) / "cnn_v2" / "latest"
     test_dir = run_dir / "TEST"
     case_dir = test_dir / case_name
     output_dir = run_dir / "OUTPUT"
@@ -310,31 +307,31 @@ def run_cnn_v2_forecast(
         )
     except FileNotFoundError as exc:
         return {
-            "error": f"CNN python not found: {cnn_python()}",
+            "error": f"未找到水动力模型 Python 解释器: {cnn_python()}",
             "detail": str(exc),
         }
     except subprocess.TimeoutExpired as exc:
         return {
-            "error": "CNN_V2 prediction timed out",
+            "error": "水动力模型预测超时",
             "detail": str(exc),
         }
     except CnnWorkerTimeoutError as exc:
         return {
-            "error": "CNN_V2 prediction timed out",
+            "error": "水动力模型预测超时",
             "detail": str(exc),
             "stderr": _CNN_WORKER.stderr_tail(),
             "python": cnn_python(),
         }
     except CnnWorkerError as exc:
         return {
-            "error": "CNN_V2 prediction failed",
+            "error": "水动力模型预测失败",
             "detail": str(exc),
             "stderr": _CNN_WORKER.stderr_tail(),
             "python": cnn_python(),
         }
     if int(execution.get("returncode") or 0) != 0:
         return {
-            "error": "CNN_V2 prediction failed",
+            "error": "水动力模型预测失败",
             "returncode": execution.get("returncode"),
             "stdout": str(execution.get("stdout") or "")[-4000:],
             "stderr": str(execution.get("stderr") or "")[-4000:],
@@ -346,7 +343,7 @@ def run_cnn_v2_forecast(
     output_time_series_csv_path = output_dir / "TEST_RESULTS" / case_name / f"{case_name}_time_series.csv"
     if not output_depth_path.exists():
         return {
-            "error": "CNN_V2 prediction did not produce max_depth.csv",
+            "error": "水动力模型预测未生成最大水深文件 max_depth.csv",
             "expected_path": rel(output_depth_path),
             "stdout": str(execution.get("stdout") or "")[-4000:],
             "stderr": str(execution.get("stderr") or "")[-4000:],
@@ -368,7 +365,7 @@ def run_cnn_v2_forecast(
         target_time_steps_path.write_text(
             json.dumps({
                 "time_steps_h": time_steps,
-                "source": "FLOOD_CNN_V2 depth series",
+                "source": "水动力模型水深序列",
             }, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
@@ -381,7 +378,7 @@ def run_cnn_v2_forecast(
     result = {
         "status": "completed",
         "model_name": "FLOOD_CNN_V2",
-        "model_description": "CNN_V2 水动力模型：四边界流量历史序列驱动，输出水动力网格多时刻水深与 max_depth。",
+        "model_description": "水动力模型：四边界流量历史序列驱动，输出水动力网格多时刻水深与 max_depth。",
         "case_name": case_name,
         "hydrodynamic_depth_path": rel(target_depth_path),
         "hydrodynamic_series_path": rel(target_series_path) if target_series_path.exists() else "",

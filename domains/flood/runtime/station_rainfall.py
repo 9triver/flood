@@ -9,6 +9,7 @@ from functools import lru_cache
 from typing import Any
 
 from .common import OBJECTS_DIR
+from .rainfall_input import display_rainfall_mm
 
 
 STATION_RAINFALL_METHOD = "synthetic_spatiotemporal_v1"
@@ -55,7 +56,7 @@ def extend_boundary_flow_csv(content: bytes, source_seed: str) -> bytes:
     rows = list(reader)
     stations = meteorological_stations()
     for index, row in enumerate(rows):
-        rainfall = _number(row.get("rainfall_mm"))
+        rainfall = display_rainfall_mm(row)
         station_values = disaggregate_station_rainfall(
             rainfall,
             stations,

@@ -49,7 +49,7 @@ class StaticAssetTest(unittest.TestCase):
         self.assertIn('state.map?.invalidateSize({ animate: false });', app)
         self.assertNotIn('class="launch-network"', index)
         self.assertIn("智能体集群就绪", index)
-        self.assertIn('/app.js?v=12', index)
+        self.assertIn('/app.js?v=24', index)
         self.assertIn("@media (prefers-reduced-motion: reduce)", styles)
 
     def test_hydrodynamic_timeline_avoids_redundant_work(self):
@@ -120,9 +120,8 @@ class StaticAssetTest(unittest.TestCase):
     def test_frontend_libraries_are_served_locally(self):
         index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
-        self.assertIn('/styles.css?v=11', index)
-        self.assertIn('/app.js?v=12', index)
-
+        self.assertIn('/styles.css?v=22', index)
+        self.assertIn('/app.js?v=24', index)
         self.assertIn('/vendor/leaflet/leaflet.css?v=1.9.4', index)
         self.assertIn('/vendor/leaflet/leaflet.js?v=1.9.4', index)
         self.assertIn('/vendor/marked/marked.min.js?v=12.0.2', index)
@@ -281,8 +280,8 @@ class StaticAssetTest(unittest.TestCase):
             'void loadObject("Station", { station_type: "reservoir"',
             app,
         )
-        self.assertIn("function reservoirLevelChartHtml()", app)
-        self.assertIn("function reservoirFlowChartHtml()", app)
+        self.assertIn("function reservoirLevelChartHtml(", app)
+        self.assertIn("function reservoirFlowChartHtml(", app)
         self.assertIn("function reservoirForecastAssessmentHtml()", app)
         self.assertIn("function reservoirAlertText(alert)", app)
         self.assertIn('"{triggered_at}",', app)
@@ -346,12 +345,12 @@ class StaticAssetTest(unittest.TestCase):
         self.assertIn('flow-history-now', app)
         self.assertIn('flow-history-threshold', app)
         self.assertIn('未来24小时预测', index)
-        self.assertIn('四边界流量 · 实况 / 预测', index)
-        self.assertEqual(4, index.count('class="telemetry-forecast-value"'))
+        self.assertIn('四边界流量 · 已回放 / 预计算', index)
+        self.assertEqual(3, index.count('data-basin-tab='))
         self.assertIn('class="telemetry-header-context"', index)
         self.assertIn('class="telemetry-time-context telemetry-forecast-window"', index)
         self.assertNotIn('class="telemetry-forecast-head"', index)
-        self.assertIn('function forecastAlertSummaryLabel(alert, hasAssessment)', app)
+        self.assertIn('function renderBasinWorkbench(observation)', app)
         self.assertIn('.telemetry-forecast-strip {', styles)
         self.assertNotIn('.telemetry-forecast-head {', styles)
         self.assertIn('grid-template-columns: repeat(4, minmax(0, 1fr));', styles)
@@ -364,15 +363,15 @@ class StaticAssetTest(unittest.TestCase):
         styles = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")
 
         self.assertIn('<span>当前演进时刻</span>', index)
-        self.assertIn('class="impact-panel-context"', index)
+        self.assertIn('class="impact-readiness"', index)
         self.assertIn('title="当前影响分析范围"', index)
         self.assertIn('id="situationEvolutionSummary"', index)
         self.assertIn('id="situationForecastSummary"', index)
         self.assertIn('当前分析范围内的受影响对象数', index)
         self.assertIn('id="impactCount"', index)
-        self.assertIn('>0 个</output>', index)
+        self.assertIn('>--</output></button>', index)
         self.assertIn('return actual ? `预测 ${offset} · ${actual}`', app)
-        self.assertIn('count.textContent = `${impacts.length} 个`;', app)
+        self.assertIn('document.getElementById("impactCount").textContent = noData ? "--" : data.impacts.length;', app)
         self.assertIn('count.textContent = "--";', app)
         self.assertIn('function setImpactScopeLabel(', app)
         self.assertIn('function renderSituationSummary()', app)
@@ -393,7 +392,7 @@ class StaticAssetTest(unittest.TestCase):
         self.assertIn("telemetryTime", app[observation_start:observation_end])
         self.assertIn('.telemetry-time-context {', styles)
         self.assertIn('.situation-summary {', styles)
-        self.assertIn('.impact-panel-context {', styles)
+        self.assertIn('.impact-readiness {', styles)
         self.assertIn(
             'minmax(120px, 1fr) auto minmax(400px, 640px)', styles,
         )
@@ -420,10 +419,10 @@ class StaticAssetTest(unittest.TestCase):
 
         self.assertNotIn('"HydraulicStructure"', layer_groups)
         self.assertNotIn('"EvacuationRoute"', layer_groups)
-        self.assertIn('label: "水系与监测"', layer_groups)
-        self.assertIn('label: "风险与应急"', layer_groups)
-        self.assertIn('label: "洪水预测"', layer_groups)
-        self.assertIn('label: "行政边界"', layer_groups)
+        self.assertIn('label: "水系与工程"', layer_groups)
+        self.assertIn('label: "道路与桥梁"', layer_groups)
+        self.assertIn('label: "淹没与风险"', layer_groups)
+        self.assertIn('label: "边界与网格"', layer_groups)
         self.assertLess(layer_groups.index('"ForecastResult"'), layer_groups.index('"HydrodynamicGridCell"'))
         self.assertIn('ForecastResult: { label: "预测淹没范围"', app)
 
@@ -451,24 +450,23 @@ class StaticAssetTest(unittest.TestCase):
         station_filter_end = app.index("\nfunction createFacilityFilterControl()", station_filter_start)
         self.assertNotIn('["all", "全部"]', app[station_filter_start:station_filter_end])
 
-    def test_map_management_uses_grouped_single_column_list(self):
+    def test_map_management_uses_collapsible_groups_and_switches(self):
         app = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
         styles = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")
 
         self.assertIn('className = "object-group"', app)
-        self.assertIn('class="object-group-title"', app)
+        self.assertIn('summary class="object-group-title"', app)
         self.assertNotIn('className = "object-group-toggle"', app)
         self.assertNotIn('data-lucide="eye"', app)
-        self.assertIn("grid-template-columns: 28px minmax(0, 1fr);", styles)
+        self.assertIn("grid-template-columns: 22px minmax(0, 1fr) 26px;", styles)
         self.assertIn(".object-group-items", styles)
 
     def test_map_management_uses_consistent_type_scale(self):
         styles = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")
 
         selectors = {
-            ".object-row {": "font-size: 14px;",
+            ".object-row {": "font-size: 13px;",
             ".basemap-option span {": "font-size: 14px;",
-            ".object-filter-label {": "font-size: 13px;",
             ".segmented button {": "font-size: 13px;",
             ".basemap-option small {": "font-size: 11px;",
         }

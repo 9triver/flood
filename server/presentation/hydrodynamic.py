@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import math
+
 from dataclasses import dataclass
 from typing import Any
 
-from domains.flood.runtime.hydrodynamic_grid import hydrodynamic_grid_stats
+from domains.flood.runtime.forecast_context import resolve_forecast_context
+from domains.flood.runtime.hydrodynamic_grid import (
+    hydrodynamic_grid_stats, forecast_series_path, forecast_time_steps,
+)
 from server.presentation.types import MapAction
 
 
@@ -22,25 +27,55 @@ def build_hydrodynamic_action_plan(
     fit: bool,
     refresh: bool,
 ) -> HydrodynamicActionPlan | None:
+    if object_type not in {"HydrodynamicGridCell", "InundationForecastCell"}:
+        return None
+    if not isinstance(filters, dict) or set(filters) - {"forecast_id", "time_h", "view"}:
+        raise ValueError("hydrodynamic filters only support forecast_id, time_h, view")
+    view = filters.get("view", "time_slice" if "time_h" in filters else "timeline")
+    if view not in {"timeline", "current", "time_slice", "envelope"}:
+        raise ValueError("view must be timeline, current, time_slice or envelope")
+    if "time_h" in filters:
+        hour = filters["time_h"]
+        if isinstance(hour, bool) or not isinstance(hour, (int, float)) or not math.isfinite(hour) or hour < 0 or view in {"envelope", "timeline"}:
+            raise ValueError("time_h must be a finite nonnegative hour for time_slice view")
     if is_hydrodynamic_result_request(object_type, filters):
         result_filters = hydrodynamic_result_filters(object_type, filters)
+        result_id = hydrodynamic_result_id(result_filters)
+        # Opening the forecast browser validates the forecast as a whole. It is
+        # not a claim that a t=0 model slice exists (CNN starts at +0.5h).
+        context = resolve_forecast_context(
+            result_id, result_filters.get("time_h"), "envelope" if view == "timeline" else view,
+        )
+        if not context["available"]:
+            raise ValueError(context["reason"])
+        if view == "timeline":
+            if not forecast_series_path(result_id).is_file() or not forecast_time_steps(result_id):
+                raise ValueError("预测没有可浏览的时间序列。")
+            result_filters["view"] = "timeline"
+        else:
+            result_filters["view"] = "envelope" if view == "envelope" else "time_slice"
+            if context["time_h"] is not None:
+                result_filters["time_h"] = context["time_h"]
         return HydrodynamicActionPlan(
             actions=[{
                 "type": "apply_hydrodynamic_result",
                 "filters": result_filters,
                 "label": label,
-                "fit": False,
+                "fit": fit,
                 "refresh": refresh,
             }],
             object_type="HydrodynamicGridCell",
             filters=result_filters,
         )
     if object_type == "HydrodynamicGridCell":
+        if filters:
+            raise ValueError("forecast_id is required for forecast time/view filters")
         return HydrodynamicActionPlan(
             actions=[{
                 "type": "show_hydrodynamic_mesh",
                 "fit": fit,
-                "mesh_only": True,
+                "mesh_only": False,
+                "refresh": refresh,
             }],
             object_type="HydrodynamicGridCell",
             filters={"result": "mesh"},
@@ -53,9 +88,7 @@ def count_hydrodynamic(object_type: str,
     if is_hydrodynamic_result_request(object_type, filters):
         stats = hydrodynamic_grid_stats(hydrodynamic_result_id(filters))
         return int(
-            (stats.get("forecast") or {}).get("flooded_count")
-            or stats.get("feature_count")
-            or 0
+            (stats.get("forecast") or {}).get("flooded_count", 0) or 0
         )
     if object_type == "HydrodynamicGridCell":
         stats = hydrodynamic_grid_stats("mesh")

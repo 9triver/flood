@@ -94,7 +94,7 @@ class ImpactAnalysisTest(unittest.TestCase):
         self.assertEqual(impacts[0]["facility_type"], "school")
         self.assertEqual(impacts[0]["subtype"], "小学")
 
-    def test_linear_impact_uses_matching_sample_location(self):
+    def test_linear_impact_uses_an_actual_intersection_location(self):
         resolver = StaticResolver({
             "Road": [{
                 "road_id": "road-1",
@@ -106,11 +106,12 @@ class ImpactAnalysisTest(unittest.TestCase):
             }],
         })
 
-        impacts = analyze_linear_objects(resolver, "Road", [self.cell], 0.15, 10)
+        impacts = analyze_linear_objects(resolver, "Road", [flood_cell("1", 111.3, 24.4, 0.8)], 0.15, 10)
 
         self.assertEqual(len(impacts), 1)
-        self.assertEqual(impacts[0]["longitude"], 111.3)
-        self.assertEqual(impacts[0]["latitude"], 24.4)
+        self.assertLess(abs(impacts[0]["longitude"] - 111.3), 0.0002)
+        self.assertLess(abs(impacts[0]["latitude"] - 24.4), 0.0002)
+        self.assertEqual("line_polygon_intersection", impacts[0]["basis"])
 
     def test_time_slice_result_uses_absolute_forecast_time(self):
         resolver = StaticResolver({

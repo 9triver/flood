@@ -67,9 +67,7 @@ class DirectiveStore:
                 "priority": priority,
                 "status": "issued",
                 "simulation_time": runtime_status.get("observed_at"),
-                "forecast_version": _forecast_version(
-                    runtime_status.get("forecast_version")
-                ),
+                "forecast_version": _forecast_version(runtime_status.get("forecast_version")),
                 "issued_at": now.isoformat(timespec="seconds"),
             }
             issued_path.parent.mkdir(parents=True, exist_ok=True)

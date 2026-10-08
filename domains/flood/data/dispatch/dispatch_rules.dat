@@ -1,0 +1,97 @@
+# 龙潭水库防洪调度规程数值化（库容单位：10^4 m3，流量单位：m3/s）
+# 水位、安全泄量与曲线均从外部文件读入；DERIVED 值由曲线线性插值得到。
+
+[EXTERNAL_PARAMETERS]
+CONTROL_MODE_FILE                  = dispatch_control_mode.dat
+RUN_PARAMETER_FILE                = dispatch_run_parameters.dat
+LEVEL_PARAMETER_FILE              = reservoir_level_parameters.dat
+SAFE_RELEASE_FILE                 = downstream_safe_release.dat
+CHECK_FLOOD_PEAK_FILE             = check_flood_peak_inflow.dat
+
+[DERIVED_VALUES]
+FLOOD_LIMIT_STORAGE_1E4M3       = FROM_STORAGE_CURVE_AT(FLOOD_LIMIT_LEVEL_M)
+DESIGN_FLOOD_STORAGE_1E4M3      = FROM_STORAGE_CURVE_AT(DESIGN_FLOOD_LEVEL_M)
+CHECK_FLOOD_STORAGE_1E4M3       = FROM_STORAGE_CURVE_AT(CHECK_FLOOD_LEVEL_M)
+CHECK_LEVEL_CAPACITY_M3S         = FROM_OUTFLOW_CURVE_AT(CHECK_FLOOD_LEVEL_M)
+
+[CURVES]
+STORAGE_CURVE_FILE               = storage_capacity_curve.dat
+OUTFLOW_CURVE_FILE               = outflow_curve.dat
+INTERPOLATION                    = LINEAR
+OUT_OF_RANGE                     = LINEAR_EXTRAPOLATION_WITH_WARNING
+
+[RUNTIME_INPUTS]
+# 计算开始/结束时间、总时段数、时段长和初始水位从 RUN_PARAMETER_FILE 读取。
+CALCULATION_START_TIME            = FROM_FILE
+CALCULATION_END_TIME              = FROM_FILE
+TOTAL_PERIODS                     = FROM_FILE
+TIME_STEP_HOURS                   = FROM_FILE
+INITIAL_LEVEL_M                   = FROM_FILE
+# 下游安全泄量从 SAFE_RELEASE_FILE 读取；命令行参数仅用于临时覆盖。
+DOWNSTREAM_SAFE_RELEASE_M3S      = FROM_FILE
+# 时段入库流量过程同时作为预报过程，超标准洪水由全段输入洪峰自动判别。
+FORECAST_INFLOW_SERIES_M3S       = REQUIRED
+SUPER_STANDARD_FLOOD_FLAG        = AUTOMATIC_FROM_INPUT_PEAK
+
+[CONTROL_MODES]
+# CONTROL_MODE 在 dispatch_control_mode.dat 中选择。
+RULE                             = EXECUTE_RULES_BELOW
+OUTFLOW                          = TRACK_TARGET_OUTFLOW_M3S
+LEVEL                            = TRACK_END_OF_PERIOD_TARGET_LEVEL_M
+
+[MANUAL_CONTROL]
+OUTFLOW_TARGET_COLUMN            = target_outflow_m3s
+LEVEL_TARGET_COLUMN              = target_level_m
+LEVEL_TARGET_POSITION            = END_OF_PERIOD
+# 手动控制仍先执行大坝安全校核；发生超标准洪水或全能力下泄仍超校核水位时，转为 EMERGENCY。
+
+[CALIBRATION_INPUTS]
+# 下列参数在原规程中没有数值，默认值只表示“未提供额外能力/任务”。
+NORMAL_RELEASE_M3S               = OPTIONAL_DEFAULT_0
+SEPARATE_OUTLET_CAPACITY_M3S     = OPTIONAL_DEFAULT_0
+FORECAST_STEPS                   = OPTIONAL_DEFAULT_ALL_REMAINING
+
+[RULES]
+# CODE  PRIORITY  CONDITION                                      RELEASE_TARGET
+4       400       Q_INPUT_PEAK>CHECK_FLOOD_PEAK_OR_ZMAX_FULL>CHECK_LEVEL Q_AVAILABLE
+2       300       (Z>=FLOOD_LIMIT_AND_ZNEXT_SAFE>Z)_OR_ZNEXT_SAFE>FLOOD_LIMIT Q_AVAILABLE
+3       200       Z>FLOOD_LIMIT_AND_ZNEXT_SAFE<=Z                 MIN(Q_AVAILABLE,Q_SAFE)
+1       100       Z<FLOOD_LIMIT_AND_ZMAX_BASE>FLOOD_LIMIT         MIN(Q_REQUIRED,Q_FORECAST_PEAK,Q_SAFE,Q_AVAILABLE)
+0       0         OTHERWISE                                      MIN(Q_NORMAL,Q_SAFE,Q_AVAILABLE)
+
+[EXECUTABLE_RULES]
+EMERGENCY_CONDITION              = SUPER_STANDARD_OR_FULL_FORECAST_ABOVE_CHECK
+EMERGENCY_RELEASE                = AVAILABLE_CAPACITY
+FULL_CAPACITY_CONDITION          = IMMINENT_LIMIT_CROSSING_OR_RISING_ABOVE_LIMIT
+FULL_CAPACITY_RELEASE            = AVAILABLE_CAPACITY
+DRAWDOWN_CONDITION               = ABOVE_LIMIT_NOT_RISING
+DRAWDOWN_RELEASE                 = MIN_CAPACITY_SAFE
+PRERELEASE_CONDITION             = BELOW_LIMIT_BASE_FORECAST_ABOVE_LIMIT
+PRERELEASE_RELEASE               = MIN_REQUIRED_PEAK_SAFE_CAPACITY
+NORMAL_RELEASE                   = MIN_NORMAL_SAFE_CAPACITY
+MANUAL_APPLY_SAFE_RELEASE_LIMIT  = 1
+EMERGENCY_OVERRIDE_MANUAL        = 1
+
+[DEFINITIONS]
+# Q_AVAILABLE = Q_OUTFLOW_CURVE(Z) + Q_SEPARATE_OUTLET；不得超过时段可用水量。
+# Q_INPUT_PEAK = 整段正式输入文件的 max(inflow_m3s)。
+# 当 Z<=FLOOD_LIMIT_LEVEL_M 时，Q_OUTFLOW_CURVE(Z)=0，不向低水位外推。
+# ZMAX_FULL   = 预见期内按 Q_AVAILABLE 全能力下泄时的最高水位。
+# ZMAX_SAFE   = 预见期内按 min(Q_AVAILABLE,Q_SAFE) 下泄时的最高水位，作为输出诊断值。
+# ZNEXT_SAFE  = 按 min(Q_AVAILABLE,Q_SAFE) 下泄时的下一时段水位，越过 FLOOD_LIMIT_LEVEL_M 即视为“已接近且将持续上涨”。
+# ZMAX_BASE   = 预见期内仅按 Q_NORMAL 下泄时的最高水位。
+# Q_REQUIRED = max_j{0,[V0 + sum(i=1..j)(I_i*dt_i/10000) - V_LIMIT]*10000/sum(i=1..j)dt_i}。
+# 每时段水量平衡：V(t+1)=V(t)+(I(t)-Q(t))*dt/10000。
+
+[STATE_CODES]
+0 = NORMAL
+1 = PRERELEASE
+2 = FULL_CAPACITY
+3 = DRAWDOWN
+4 = EMERGENCY
+5 = OUTFLOW_CONTROL
+6 = LEVEL_CONTROL
+
+[LIMITATIONS]
+# 超标准洪水时，本数值过程只计算“全能力下泄”，人员转移和抢险须执行已批复的应急预案。
+# 现有库容曲线上限为 250.60 m，泄流曲线上限为 253.30 m；超出时的外推结果仅用于预警，不得作为工程设计或正式调度依据。

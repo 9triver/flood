@@ -6,7 +6,7 @@
 
 ```text
 /flood/shanhu
-  /assets                         16 类 1666 个版本化 GIS 对象
+  /assets                         17 类 1667 个版本化 GIS 对象（含水库集水区）
   /sensors/stations               MQTT 边界水文站及当前指标
   /models/hydrodynamic/cnn-v2     水动力模型资源
   /services/routing/amap          高德路线服务资源

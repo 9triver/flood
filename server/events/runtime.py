@@ -1,19 +1,21 @@
 from __future__ import annotations
 
-import collections
-import json
 import threading
 import time
+import uuid
 from typing import Any, TYPE_CHECKING
 
 from domains.flood.runtime.boundary_flow import (
     BoundaryFlowPlayback,
     BoundaryFlowPlaybackSource,
 )
+from domains.flood.runtime.forecast_context import resolve_forecast_context
 from domains.flood.runtime.playback_sources import PlaybackSourceRegistry
 from domains.flood.runtime.workspace import WORKSPACES, active_workspace_id
 from server.events.agent_processor import EventAgentProcessor
 from server.events.factory import make_directive_issued_event
+from server.events.queue import EventQueue
+from server.events.timeline import EventTimelineStore
 from server.events.messages import (
     boundary_flow_forecast_detail,
     domain_event_detail,
@@ -49,10 +51,12 @@ class EventRuntime:
         self._processing_event_id = ""
         self._processing_correlation_id = ""
         self._processing_followup_pending = False
-        self._event_queue: collections.deque[
-            tuple[dict[str, Any], int]
-        ] = collections.deque()
-        self._event_queue_condition = threading.Condition()
+        self._event_queue_store = EventQueue()
+        # Keep the historical inspection seams available to diagnostics and
+        # tests while the queue implementation lives in its own module.
+        self._event_queue = self._event_queue_store.items
+        self._event_queue_condition = self._event_queue_store.condition
+        self._timeline_store = EventTimelineStore()
         self._generation = 0
         self._published_inundation_sources: set[str] = set()
         self._published_impact_sources: set[str] = set()
@@ -180,7 +184,7 @@ class EventRuntime:
             self._published_inundation_sources.clear()
             self._published_impact_sources.clear()
             self._clear_event_queue()
-            WORKSPACES.update_manifest(status="ready")
+            WORKSPACES.update_manifest(status="ready", simulation_time=None)
             self._append_output_locked("runtime_status", {
                 "type": "runtime_status",
                 "status": "reset",
@@ -318,7 +322,7 @@ class EventRuntime:
                 raise ValueError("演进当前不在暂停状态")
             policy = self._boundary_flow_runner.playback.policy
             if policy.state == policy.PENDING:
-                raise ValueError("CNN 洪水预测尚未完成")
+                raise ValueError("水动力模型预测尚未完成")
             generation = self._generation
             observation_event, policy_events = self._boundary_flow_runner.step()
             if observation_event is None:
@@ -385,6 +389,7 @@ class EventRuntime:
                 "output_count": len(self.outputs),
                 "workspace_id": active_workspace_id(),
                 "playback_source": dict(self._current_playback_source),
+                "forecast_context": resolve_forecast_context(view="envelope"),
                 **playback_status,
                 "step_available": (
                     self._playback_paused
@@ -417,14 +422,14 @@ class EventRuntime:
         self._prepared_workspace_id = workspace_id
         WORKSPACES.update_manifest(
             playback_source=metadata,
-            playback_input="inputs/boundary_flow.csv",
+            playback_input="inputs/rainfall.csv",
         )
 
     def _restore_workspace_playback_source(self, manifest: dict[str, Any]) -> None:
         workspace_id = active_workspace_id()
         if not workspace_id:
             return
-        csv_path = WORKSPACES.path(workspace_id) / "inputs" / "boundary_flow.csv"
+        csv_path = WORKSPACES.path(workspace_id) / "inputs" / "rainfall.csv"
         metadata = manifest.get("playback_source")
         if not csv_path.is_file() or not isinstance(metadata, dict):
             self._prepare_playback_source(self._playback_sources.selected_source_id)
@@ -446,6 +451,7 @@ class EventRuntime:
         self.ensure_started()
         with self.condition:
             next_seq = max(0, len(self.outputs) - 80)
+            replay_ids = {item["data"].get("output_id") for item in self.outputs}
         while True:
             pending: list[dict[str, Any]] = []
             heartbeat: dict[str, Any] | None = None
@@ -462,6 +468,7 @@ class EventRuntime:
                             and not self._playback_processing
                         ):
                             heartbeat = {
+                                **self.status(),
                                 "type": "runtime_status",
                                 "label": "等待启动边界流量回放",
                                 "detail": (
@@ -478,7 +485,10 @@ class EventRuntime:
             if heartbeat:
                 yield format_sse("runtime_status", heartbeat)
             for item in pending:
-                yield format_sse(item["event"], item["data"])
+                yield format_sse(item["event"], {
+                    **item["data"],
+                    "replayed": item["data"].get("output_id") in replay_ids,
+                })
 
     def _wait_until_playback_running(self) -> int:
         with self.condition:
@@ -510,9 +520,7 @@ class EventRuntime:
                 self.condition.wait(timeout=min(remaining, 0.5))
 
     def _clear_event_queue(self) -> None:
-        with self._event_queue_condition:
-            self._event_queue.clear()
-            self._event_queue_condition.notify_all()
+        self._event_queue_store.clear()
 
     def _publish_boundary_flow_observation(
         self,
@@ -521,9 +529,13 @@ class EventRuntime:
         data = {**data, "workspace_id": active_workspace_id()}
         observation = (data.get("payload") or {}).get("observation") or {}
         with self.condition:
+            if active_workspace_id() != WORKSPACES.current_id:
+                return
+            WORKSPACES.update_manifest(status="active", simulation_time=observation.get("simulation_time") or observation.get("observed_at"))
             self._append_output_locked("boundary_flow_data", {
                 "type": "boundary_flow_data",
                 "label": "四边界预测流量",
+                "forecast_context": resolve_forecast_context(view="envelope"),
                 "event": data,
                 "detail": boundary_flow_forecast_detail(observation),
                 "workspace_id": active_workspace_id(),
@@ -612,19 +624,13 @@ class EventRuntime:
         *,
         priority: bool = False,
     ) -> None:
-        with self._event_queue_condition:
-            if priority:
-                self._event_queue.appendleft((event, generation))
-            else:
-                self._event_queue.append((event, generation))
-            self._event_queue_condition.notify()
+        self._event_queue_store.enqueue(
+            event, generation, priority=priority,
+        )
 
     def _event_worker_loop(self) -> None:
         while True:
-            with self._event_queue_condition:
-                while not self._event_queue:
-                    self._event_queue_condition.wait()
-                event, generation = self._event_queue.popleft()
+            event, generation = self._event_queue_store.wait_pop()
             try:
                 if generation == self._generation:
                     self._agent_processor.handle_event(event, generation)
@@ -860,21 +866,11 @@ class EventRuntime:
             }
         item = {
             "event": event_name,
-            "data": {**data, "workspace_id": workspace_id},
+            "data": {
+                **data, "workspace_id": workspace_id,
+                "output_id": uuid.uuid4().hex,
+                "notification_key": self._processing_event_id or data.get("event_id"),
+            },
         }
         self.outputs.append(item)
-        if not workspace_id:
-            return
-        path = (
-            WORKSPACES.path(str(workspace_id), create=True)
-            / "events"
-            / "timeline.jsonl"
-        )
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("a", encoding="utf-8") as stream:
-                stream.write(json.dumps(item, ensure_ascii=False, default=str))
-                stream.write("\n")
-        except OSError:
-            # Persistence must not interrupt the live SSE stream.
-            return
+        self._timeline_store.append(item, str(workspace_id or ""), WORKSPACES)

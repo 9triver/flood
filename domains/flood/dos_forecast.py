@@ -206,7 +206,7 @@ def real_cnn_runner(args: dict, target: Path) -> dict:
         "boundaries": boundaries,
     }
     target.mkdir(parents=True, exist_ok=True)
-    result = run_cnn_v2_forecast({"summary": summary}, target / "max_depth.csv", working_dir=target / "_work")
+    result = run_cnn_v2_forecast({"summary": summary}, target / "max_depth.csv", work_dir=target / "_work")
     if result.get("error"):
         raise RuntimeError(f"{result['error']}: {result.get('detail') or result.get('stderr_tail') or ''}")
     wet = result.get("wet_cells") or result.get("positive_cells") or len(result.get("_positive_depths") or [])

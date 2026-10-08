@@ -2,6 +2,10 @@
   "generated_at": "2026-07-28T03:36:27.839000+00:00",
   "notes": [],
   "object_types": {
+    "Catchment": {
+      "count": 1,
+      "path": "domains/flood/data/objects/catchment.jsonl"
+    },
     "Bridge": {
       "count": 22,
       "path": "domains/flood/data/objects/bridge.jsonl"

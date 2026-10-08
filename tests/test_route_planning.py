@@ -11,6 +11,8 @@ from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
 from domains.flood.runtime import route_planning
+from domains.flood.runtime import route_store
+from domains.flood.runtime import route_safety
 
 
 class EmptyResolver:
@@ -111,6 +113,14 @@ def amap_v5_path(polyline, *, distance, duration, road_name):
 
 
 class RoutePlanningTests(unittest.TestCase):
+    def setUp(self):
+        # Existing route-engine tests supply their own cells; never depend on the live workspace.
+        availability = patch.object(route_planning, "resolve_routing_context", side_effect=lambda forecast_id, time_h, view: {
+            "available": True, "constraint_source": "forecast", "time_h": 0 if time_h in (None, "") else time_h,
+        })
+        availability.start()
+        self.addCleanup(availability.stop)
+
     def test_default_destination_is_resolved_through_evacuation_route(self):
         site_id = route_planning.default_destination_site_id(
             EvacuationResolver(), "EvacuationUnit", "40",
@@ -119,7 +129,7 @@ class RoutePlanningTests(unittest.TestCase):
         self.assertEqual("shelter-232", site_id)
 
     def test_legacy_workspace_route_is_normalized_on_read(self):
-        route = route_planning.normalize_planned_route({
+        route = route_store.normalize_planned_route({
             "route_id": "route-40",
             "transfer_id": "40",
             "place_id": "shelter-232",
@@ -140,14 +150,14 @@ class RoutePlanningTests(unittest.TestCase):
             for row in range(20)
             for index in range(20)
         ]
-        result = route_planning.build_flood_avoidance_areas(cells, 0.3, max_areas=12)
+        result = route_safety.build_flood_avoidance_areas(cells, 0.3, max_areas=12)
         features = result["feature_collection"]["features"]
 
         self.assertTrue(features)
         self.assertLessEqual(len(features), 12)
         self.assertEqual("Polygon", features[0]["geometry"]["type"])
         self.assertEqual(400, result["summary"]["source_cell_count"])
-        self.assertTrue(route_planning.point_in_areas(
+        self.assertTrue(route_safety.point_in_areas(
             (111.3002, 24.4002), result["feature_collection"],
         ))
 
@@ -161,9 +171,9 @@ class RoutePlanningTests(unittest.TestCase):
                 cached_geojson = Path(directory) / "route.geojson"
                 cached_geojson.write_text("{}", encoding="utf-8")
                 with patch.object(
-                    route_planning, "planned_routes_path", return_value=route_path,
+                    route_store, "planned_routes_path", return_value=route_path,
                 ), patch.object(
-                    route_planning, "clear_route_geojson_cache",
+                    route_store, "clear_route_geojson_cache",
                     side_effect=lambda: cached_geojson.unlink(missing_ok=True),
                 ), patch.object(
                     route_planning,
@@ -174,22 +184,20 @@ class RoutePlanningTests(unittest.TestCase):
                         "valid_to": "2026-07-04T20:00:00+08:00",
                         "valid_at": "2026-07-03T21:30:00+08:00",
                     },
-                ), patch.dict(
+                ), patch.object(route_planning, "resolve_routing_context", return_value={"available": True, "constraint_source": "initial_state", "time_h": None}), patch.dict(
                     os.environ,
                     {
                         "AMAP_WEB_SERVICE_KEY": "test-web-service-key",
                         "AMAP_WEB_SERVICE_URL": f"http://127.0.0.1:{server.server_port}",
                     },
                 ):
-                    result = route_planning.plan_evacuation_route(
+                    result = route_planning.plan_route(
                         EmptyResolver(),
                         start_lon=111.30,
                         start_lat=24.40,
                         destination_lon=111.32,
                         destination_lat=24.41,
                         profile="foot",
-                        avoid_flood=False,
-                        time_h=1.5,
                     )
 
                 self.assertEqual("completed", result["status"])
@@ -207,8 +215,10 @@ class RoutePlanningTests(unittest.TestCase):
                 self.assertEqual(["cost,polyline"], query["show_fields"])
                 self.assertEqual(1, result["routing_diagnostics"]["candidate_count"])
                 self.assertEqual(1, result["routing_diagnostics"]["selected_candidate_index"])
-                self.assertEqual("2026-07-03T21:30:00+08:00", result["analysis_time_at"])
-                self.assertEqual("2026-07-03T21:30:00+08:00", result["route"]["analysis_time_at"])
+                self.assertNotIn("analysis_time_at", result)
+                self.assertNotIn("analysis_time_at", result["route"])
+                self.assertEqual("initial_state", result["route"]["flood_constraint_source"])
+                self.assertEqual("initial_dry", result["route"]["flood_validation"])
                 self.assertFalse(cached_geojson.exists())
         finally:
             server.shutdown()
@@ -222,9 +232,9 @@ class RoutePlanningTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as directory:
                 route_path = Path(directory) / "planned_routes.jsonl"
                 with patch.object(
-                    route_planning, "planned_routes_path", return_value=route_path,
+                    route_store, "planned_routes_path", return_value=route_path,
                 ), patch.object(
-                    route_planning, "clear_route_geojson_cache",
+                    route_store, "clear_route_geojson_cache",
                 ), patch.object(
                     route_planning,
                     "query_forecast_cells",
@@ -237,14 +247,13 @@ class RoutePlanningTests(unittest.TestCase):
                     "AMAP_WEB_SERVICE_KEY": "test-web-service-key",
                     "AMAP_WEB_SERVICE_URL": f"http://127.0.0.1:{server.server_port}",
                 }):
-                    result = route_planning.plan_evacuation_route(
+                    result = route_planning.plan_route(
                         EmptyResolver(),
                         start_lon=111.30,
                         start_lat=24.40,
                         destination_lon=111.32,
                         destination_lat=24.41,
                         profile="foot",
-                        avoid_flood=True,
                         blocked_depth_m=0.3,
                     )
 
@@ -255,7 +264,7 @@ class RoutePlanningTests(unittest.TestCase):
                 self.assertNotIn("agent_instruction", result)
                 diagnostics = result["routing_diagnostics"]
                 self.assertEqual(1, diagnostics["candidate_count"])
-                self.assertEqual(0, diagnostics["safe_candidate_count"])
+                self.assertEqual(0, diagnostics["accepted_candidate_count"])
                 self.assertEqual(
                     "intersects_flood",
                     diagnostics["rejected_candidates"][0]["reason"],
@@ -273,9 +282,9 @@ class RoutePlanningTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as directory:
                 route_path = Path(directory) / "planned_routes.jsonl"
                 with patch.object(
-                    route_planning, "planned_routes_path", return_value=route_path,
+                    route_store, "planned_routes_path", return_value=route_path,
                 ), patch.object(
-                    route_planning, "clear_route_geojson_cache",
+                    route_store, "clear_route_geojson_cache",
                 ), patch.object(
                     route_planning,
                     "query_forecast_cells",
@@ -288,21 +297,20 @@ class RoutePlanningTests(unittest.TestCase):
                     "AMAP_WEB_SERVICE_KEY": "test-web-service-key",
                     "AMAP_WEB_SERVICE_URL": f"http://127.0.0.1:{server.server_port}",
                 }):
-                    result = route_planning.plan_evacuation_route(
+                    result = route_planning.plan_route(
                         EmptyResolver(),
                         start_lon=111.30,
                         start_lat=24.40,
                         destination_lon=111.32,
                         destination_lat=24.41,
                         profile="foot",
-                        avoid_flood=True,
                         blocked_depth_m=0.3,
                     )
 
                 self.assertEqual("completed", result["status"])
                 diagnostics = result["routing_diagnostics"]
                 self.assertEqual(2, diagnostics["candidate_count"])
-                self.assertEqual(1, diagnostics["safe_candidate_count"])
+                self.assertEqual(1, diagnostics["accepted_candidate_count"])
                 self.assertEqual(2, diagnostics["selected_candidate_index"])
                 self.assertEqual(
                     "intersects_flood",

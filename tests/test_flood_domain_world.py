@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import time
 
+from domains.flood.dos_assets import load_flood_library
+
 from domain_os_mvp.domains.flood.paths import (
     ASSETS_BASE,
     MODEL_PATH,
@@ -42,7 +44,8 @@ def test_world_mounts_real_gis_assets_and_capability_resources(tmp_path):
     agent = world.agent_client()
 
     catalog = agent.read(ASSETS_BASE).value
-    assert catalog["object_count"] == 1666
+    assert catalog["object_count"] == len(load_flood_library()["objects"])
+    assert catalog["counts"]["Catchment"] == 1
     assert catalog["counts"]["EvacuationSite"] == 719
     assert len(agent.list_asset_refs("Road")) == 423
     watershed = agent.read(agent.list_asset_refs("Watershed")[0]).value
@@ -56,7 +59,7 @@ def test_world_mounts_real_gis_assets_and_capability_resources(tmp_path):
     world.close()
 
     recovered = build_flood_world(database)
-    assert recovered.kernel.read(ASSETS_BASE).value["object_count"] == 1666
+    assert recovered.kernel.read(ASSETS_BASE).value["object_count"] == catalog["object_count"]
     # Session capabilities are new, but all domain resources are recovered
     # instead of being ingested as duplicate observations.
     assert recovered.kernel.store.journal_count == journal_count + 4

@@ -11,20 +11,21 @@ from pathlib import Path
 from unittest.mock import patch
 
 from domains.flood.runtime import hydrodynamic_grid
+from domains.flood.runtime import hydrodynamic_cache
 
 
 class HydrodynamicGridCacheTest(unittest.TestCase):
     def setUp(self):
-        with hydrodynamic_grid._DEPTH_CACHE_LOCK:
-            hydrodynamic_grid._DEPTH_CACHE.clear()
-            hydrodynamic_grid._DEPTH_LOADS.clear()
+        with hydrodynamic_cache.DEPTH_CACHE_LOCK:
+            hydrodynamic_cache.DEPTH_CACHE.clear()
+            hydrodynamic_cache.DEPTH_LOADS.clear()
         with hydrodynamic_grid._TILE_CACHE_LOCK:
             hydrodynamic_grid._TILE_CACHE.clear()
 
     def tearDown(self):
-        with hydrodynamic_grid._DEPTH_CACHE_LOCK:
-            hydrodynamic_grid._DEPTH_CACHE.clear()
-            hydrodynamic_grid._DEPTH_LOADS.clear()
+        with hydrodynamic_cache.DEPTH_CACHE_LOCK:
+            hydrodynamic_cache.DEPTH_CACHE.clear()
+            hydrodynamic_cache.DEPTH_LOADS.clear()
         with hydrodynamic_grid._TILE_CACHE_LOCK:
             hydrodynamic_grid._TILE_CACHE.clear()
 
@@ -191,6 +192,8 @@ class HydrodynamicGridCacheTest(unittest.TestCase):
             z = 13
             x, y = hydrodynamic_grid.lonlat_to_tile(lon, lat, z)
             with sqlite3.connect(db_path) as conn:
+                conn.execute("create table mesh_meta(key text, value text)")
+                conn.execute("insert into mesh_meta values ('feature_count', '2')")
                 conn.execute(
                     """
                     create table cells(
@@ -223,8 +226,27 @@ class HydrodynamicGridCacheTest(unittest.TestCase):
             ), patch.object(store, "_tile_rows") as full_tile_rows:
                 tile = store.tile(z, x, y, wet_only=True, time_h=1.0)
 
+            with patch.object(store, "ensure_ready"), patch.object(
+                hydrodynamic_grid, "PROJECT_DIR", Path(directory),
+            ), patch.object(
+                hydrodynamic_grid, "GT_PATH", Path(directory) / "GT.txt",
+            ), patch.object(
+                hydrodynamic_grid, "forecast_depth_entry",
+                side_effect=AssertionError("OS products must not resolve a workspace forecast"),
+            ):
+                explicit = store.tile_from_depths(
+                    z, x, y, {1: 0.7, 2: 0.8}, source_id="fcst_001",
+                    result_version="v1", wet_only=True, time_h=2.0,
+                )
+                meta = store.meta_from_depths({"forecast_id": "fcst_001"}, {1: 0.7})
+
         full_tile_rows.assert_not_called()
         self.assertEqual([1], [cell[0] for cell in tile["cells"]])
+        self.assertEqual([1], [cell[0] for cell in explicit["cells"]])
+        self.assertEqual(0.7, explicit["cells"][0][1])
+        self.assertEqual(2.0, explicit["time_h"])
+        self.assertEqual("fcst_001", meta["forecast"]["forecast_id"])
+        self.assertAlmostEqual(lon - 0.001, meta["forecast"]["bbox"]["min_lon"])
 
     @staticmethod
     def _run_concurrently(call):

@@ -20,6 +20,7 @@ const BOUNDARY_FLOW_LABELS = {
 const state = {
   map: null,
   watershedRenderer: null,
+  catchmentRenderer: null,
   baseLayer: null,
   basemapKey: DEFAULT_BASEMAP_KEY,
   basemapLayers: new Map(),
@@ -32,6 +33,10 @@ const state = {
   focusedOriginalStyle: null,
   highlightedLayers: [],
   selected: null,
+  mapSelections: new Map(),
+  mapActionReceipts: new Map(),
+  mapActionQueue: Promise.resolve(),
+  mapGeneration: 0,
   bootstrap: null,
   baseBounds: null,
   launchCoverVisible: true,
@@ -71,6 +76,9 @@ const state = {
   playbackLongPressTriggered: false,
   lastMockObservation: null,
   rainfallForecast: [],
+  basinRainfallHistory: [],
+  basinTab: "rain",
+  basinDispatchChart: "flow",
   boundaryFlowForecast: null,
   mapTimeContext: {
     mode: "current",
@@ -84,6 +92,8 @@ const state = {
   stationRainfallForecast: new Map(),
   stationRainfallLayerInitialized: false,
   reservoirTelemetry: null,
+  reservoirDispatchTime: null,
+  reservoirDispatchChart: "flow",
   reservoirTelemetryObservedAt: null,
   reservoirTelemetryHistory: [],
   reservoirForecast: null,
@@ -113,8 +123,9 @@ const state = {
   boundaryFlowHistoryTimes: [],
   boundaryFlowChartObserver: null,
   boundaryFlowChartFrame: null,
-  conclusionToasts: [],
-  nextConclusionToastId: 1,
+  agentNotification: null,
+  autonomyTraceIds: new Set(),
+  notificationChains: new Set(),
   hydrodynamicTimeline: {
     mode: "time_slice",
     hours: [],
@@ -135,10 +146,22 @@ const state = {
     playing: false,
   },
   impactAnalysis: null,
+  impactRequested: false,
+  impactListView: {
+    tab: "affected",
+    type: "all",
+    expanded: new Map(),
+    positions: new Map(),
+    renderedKey: null,
+  },
   impactMarkerLayer: null,
   impactMarkers: new Map(),
+  roadNameLayers: new Set(),
   selectedImpactKey: null,
+  selectedImpactTab: "affected",
   selectedImpactLayerKey: null,
+  impactRoadFocusLayer: null,
+  impactRoadFocusSeq: 0,
   impactFocusSeq: 0,
   impactRefreshTimer: null,
   impactRefreshController: null,
@@ -215,9 +238,11 @@ const BASEMAPS = {
 const OBJECT_CONFIG = {
   River: { label: "珊瑚河", color: "#0284c7" },
   Watershed: { label: "珊瑚河流域", color: "#1f2937" },
+  Catchment: { label: "水库集水区", color: "#0f766e" },
   County: { label: "县级边界", color: "#7b8794" },
   Town: { label: "乡镇边界", color: "#7a6a22" },
-  Road: { label: "道路", color: "#5f6772" },
+  Road: { label: "全部路段", color: "#facc15" },
+  RoadRoute: { label: "编号道路", color: "#fb923c" },
   Reservoir: { label: "水库", color: "#0284c7" },
   Sluice: { label: "水闸", color: "#158a8a" },
   Bridge: { label: "桥梁", color: "#202833" },
@@ -233,33 +258,50 @@ const OBJECT_CONFIG = {
   ForecastResult: { label: "预测淹没范围", color: "#dc2626" },
 };
 
+const ROAD_STYLES = {
+  expressway: { label: "高速（含匝道）", color: "#fb923c", outline: "#7c2d12", weight: 4.5 },
+  other: { label: "非高速", color: "#facc15", outline: "#422006", weight: 2.8 },
+};
+
 const OBJECT_LAYER_GROUPS = [
   {
-    label: "水系与监测",
-    objectTypes: ["River", "Watershed", "Reservoir", "Sluice"],
+    label: "水系与工程",
+    objectTypes: ["River", "Watershed", "Catchment", "Reservoir", "Sluice"],
+  },
+  {
+    label: "测站",
+    objectTypes: [],
     filterControl: "station",
   },
   {
-    label: "风险与应急",
-    objectTypes: ["DangerArea", "Road", "Bridge", "EvacuationSite"],
+    label: "淹没与风险",
+    objectTypes: ["ForecastResult", "DangerArea"],
+    expanded: true,
+  },
+  {
+    label: "道路与桥梁",
+    objectTypes: ["Road", "RoadRoute", "Bridge"],
+    roadLegend: true,
+  },
+  {
+    label: "设施与安置",
+    objectTypes: ["EvacuationSite"],
     filterControl: "facility",
   },
   {
-    label: "洪水预测",
-    objectTypes: ["ForecastResult", "HydrodynamicGridCell"],
-  },
-  {
-    label: "行政边界",
-    objectTypes: ["County", "Town"],
+    label: "边界与网格",
+    objectTypes: ["County", "Town", "HydrodynamicGridCell"],
   },
 ];
 
 const ID_FIELDS = {
   River: "river_id",
   Watershed: "watershed_id",
+  Catchment: "catchment_id",
   County: "county_id",
   Town: "town_id",
   Road: "road_id",
+  RoadRoute: "road_route_id",
   Reservoir: "reservoir_id",
   Sluice: "sluice_id",
   Bridge: "bridge_id",
@@ -429,6 +471,9 @@ function initMap() {
   state.map.attributionControl.setPrefix(false);
   state.watershedRenderer = L.svg({ padding: 0.25 });
 
+  state.map.createPane("catchmentPane");
+  state.map.getPane("catchmentPane").style.zIndex = "420";
+  state.catchmentRenderer = L.svg({ pane: "catchmentPane", padding: 0.25 });
   state.map.createPane("impactPane");
   state.map.getPane("impactPane").style.zIndex = "475";
   state.map.createPane("riverPane");
@@ -451,6 +496,17 @@ function initMap() {
   state.map.on("popupclose", () => {
     window.requestAnimationFrame(syncStationPopupOpenState);
   });
+  state.map.on("zoomend moveend resize", refreshRoadNameLabels);
+  state.map.on("resize", () => window.requestAnimationFrame(() => {
+    let lastPopup = null;
+    state.map.eachLayer((layer) => {
+      if (layer instanceof L.Popup && layer.isOpen()) {
+        layer.update();
+        lastPopup = layer;
+      }
+    });
+    if (lastPopup) keepPopupInsideMap(lastPopup);
+  }));
   setBasemap(readStoredBasemap(), { persist: false });
   initRainEffect();
 }
@@ -472,6 +528,7 @@ function keepPopupInsideMap(popup) {
   const popupRect = element.getBoundingClientRect();
   const mapRect = mapElement.getBoundingClientRect();
   const padding = 12;
+  const topPadding = element.querySelector(".dispatch-panel") ? 64 : padding;
   let offsetX = 0;
   let offsetY = 0;
   if (popupRect.left < mapRect.left + padding) {
@@ -479,8 +536,8 @@ function keepPopupInsideMap(popup) {
   } else if (popupRect.right > mapRect.right - padding) {
     offsetX = popupRect.right - mapRect.right + padding;
   }
-  if (popupRect.top < mapRect.top + padding) {
-    offsetY = popupRect.top - mapRect.top - padding;
+  if (popupRect.top < mapRect.top + topPadding) {
+    offsetY = popupRect.top - mapRect.top - topPadding;
   } else if (popupRect.bottom > mapRect.bottom - padding) {
     offsetY = popupRect.bottom - mapRect.bottom + padding;
   }
@@ -813,10 +870,17 @@ function gcjTransformLng(x, y) {
 async function bootstrap() {
   const res = await fetch("/api/bootstrap");
   state.bootstrap = await res.json();
+  if (state.bootstrap.id_fields && typeof state.bootstrap.id_fields === "object") {
+    Object.assign(ID_FIELDS, state.bootstrap.id_fields);
+  }
   if (state.bootstrap.title) document.title = state.bootstrap.title;
   state.workspaceId = state.bootstrap.workspace_id || null;
   updateMapContentContext();
   renderObjectList();
+  document.querySelectorAll("[data-catchment-focus]").forEach(button => {
+    button.disabled = !state.bootstrap.reservoir_catchment;
+  });
+  renderBasinWorkbench(state.lastMockObservation);
 }
 
 function deriveMapContentContext() {
@@ -920,9 +984,10 @@ function renderObjectList() {
   list.innerHTML = "";
 
   OBJECT_LAYER_GROUPS.forEach((groupConfig) => {
-    const group = document.createElement("section");
+    const group = document.createElement("details");
     group.className = "object-group";
-    group.innerHTML = `<div class="object-group-title">${groupConfig.label}</div>`;
+    group.open = Boolean(groupConfig.expanded);
+    group.innerHTML = `<summary class="object-group-title"><span>${groupConfig.label}</span><output class="object-group-count" aria-label="已显示类别数"></output></summary>`;
     const items = document.createElement("div");
     items.className = "object-group-items";
     groupConfig.objectTypes.forEach((objectType) => {
@@ -930,6 +995,15 @@ function renderObjectList() {
     });
     if (groupConfig.filterControl === "station") items.appendChild(createStationFilterControl());
     if (groupConfig.filterControl === "facility") items.appendChild(createFacilityFilterControl());
+    if (groupConfig.roadLegend) {
+      const legend = document.createElement("div");
+      legend.className = "road-style-legend";
+      legend.setAttribute("aria-label", "道路颜色图例");
+      legend.innerHTML = Object.values(ROAD_STYLES).map(style => `
+        <span><i aria-hidden="true" style="--road-color: ${style.color}; --road-outline: ${style.outline}; --road-width: ${style.weight}px"></i>${style.label}</span>
+      `).join("");
+      items.appendChild(legend);
+    }
     group.appendChild(items);
     list.appendChild(group);
   });
@@ -942,16 +1016,32 @@ function createObjectLayerButton(objectType) {
   btn.type = "button";
   btn.className = "object-row";
   btn.dataset.objectType = objectType;
-  btn.innerHTML = `${layerObjectIcon(objectType)}<span>${config.label}</span>`;
-  const active = hasLayerButtonType(objectType);
-  btn.classList.toggle("active", active);
-  btn.setAttribute("aria-pressed", String(active));
-  btn.title = `显示或隐藏${config.label}`;
-  btn.addEventListener("click", async () => {
-    await toggleObject(objectType);
-    if (window.matchMedia("(max-width: 900px)").matches) setLayerPanelOpen(false);
-  });
+  btn.dataset.layerLabel = config.label;
+  btn.setAttribute("role", "switch");
+  btn.innerHTML = `${layerObjectIcon(objectType)}<span>${config.label}</span><span class="layer-switch" aria-hidden="true"></span>`;
+  setLayerSwitchState(btn, hasLayerButtonType(objectType));
+  btn.addEventListener("click", () => runLayerToggle(btn, () => toggleObject(objectType)));
   return btn;
+}
+
+async function runLayerToggle(button, action) {
+  if (button.disabled) return;
+  const notice = document.getElementById("layerPanelNotice");
+  notice.hidden = true;
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  try {
+    await action();
+  } catch (error) {
+    let message = String(error.message || error);
+    try { message = JSON.parse(message).error || message; } catch { /* Plain text errors are also supported. */ }
+    notice.textContent = `${button.dataset.layerLabel}：${message}`;
+    notice.hidden = false;
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+    syncFilteredLayerButtons();
+  }
 }
 
 function createStationFilterControl() {
@@ -984,7 +1074,6 @@ function createFacilityFilterControl() {
 function createObjectFilterControl({ label, objectType, dataKey, filterKey, options, onToggle }) {
   const control = document.createElement("div");
   control.className = "object-filter-control";
-  control.innerHTML = `<div class="object-filter-label">${layerObjectIcon(objectType)}<span>${label}</span></div>`;
   const segmented = document.createElement("div");
   segmented.className = "segmented";
   segmented.setAttribute("role", "group");
@@ -993,9 +1082,12 @@ function createObjectFilterControl({ label, objectType, dataKey, filterKey, opti
     const button = document.createElement("button");
     button.type = "button";
     button.dataset[dataKey] = value;
-    button.setAttribute("aria-pressed", "false");
-    button.innerHTML = `${layerObjectIcon(objectType, { [filterKey]: value }, "layer-filter-icon")}<span>${optionLabel}</span>`;
-    button.addEventListener("click", () => onToggle(value));
+    button.dataset.layerLabel = `${optionLabel}${label}`;
+    button.setAttribute("role", "switch");
+    button.setAttribute("aria-label", `${optionLabel}${label}`);
+    button.innerHTML = `${layerObjectIcon(objectType, { [filterKey]: value }, "layer-filter-icon")}<span>${optionLabel}</span><span class="layer-switch" aria-hidden="true"></span>`;
+    setLayerSwitchState(button, false);
+    button.addEventListener("click", () => runLayerToggle(button, () => onToggle(value)));
     segmented.appendChild(button);
   });
   control.appendChild(segmented);
@@ -1013,6 +1105,89 @@ function layerObjectIcon(objectType, feature = {}, className = "layer-list-icon"
 }
 
 function bindEvents() {
+  document.getElementById("onlyVisibleLayers").addEventListener("change", (event) => {
+    document.querySelectorAll(".object-group").forEach(group => {
+      if (event.target.checked) {
+        group.dataset.unfilteredOpen = String(group.open);
+        group.open = true;
+      } else {
+        group.open = group.dataset.unfilteredOpen === "true";
+      }
+    });
+    syncLayerPanelSummary();
+  });
+  document.querySelectorAll("[data-situation-panel]").forEach((button) => {
+    button.addEventListener("click", () => revealSituationPanel(button.dataset.situationPanel));
+  });
+  document.querySelectorAll("[data-basin-dispatch-chart]").forEach(button => {
+    button.addEventListener("click", () => {
+      state.basinDispatchChart = button.dataset.basinDispatchChart;
+      renderBasinDispatchChart();
+    });
+  });
+  document.querySelectorAll("[data-basin-tab]").forEach((button, index, buttons) => {
+    button.addEventListener("click", () => setBasinTab(button.dataset.basinTab));
+    button.addEventListener("keydown", (event) => {
+      let next = index;
+      if (event.key === "ArrowRight") next = (index + 1) % buttons.length;
+      else if (event.key === "ArrowLeft") next = (index + buttons.length - 1) % buttons.length;
+      else if (event.key === "Home") next = 0;
+      else if (event.key === "End") next = buttons.length - 1;
+      else return;
+      event.preventDefault(); buttons[next].click(); buttons[next].focus();
+    });
+  });
+  document.getElementById("runImpactAnalysis").addEventListener("click", () => {
+    state.impactRequested = true;
+    refreshImpactAnalysisForTimeline();
+  });
+  document.getElementById("openReservoirDispatch").addEventListener("click", async () => {
+    try {
+      await loadObject("Station", { station_type: "reservoir" }, { fit: false });
+      await focusObject({ object_type: "Station", object_id: LONGTAN_RESERVOIR_STATION_ID });
+    } catch (error) { addTrace("ERR", "水库定位失败", String(error)); }
+  });
+  document.querySelectorAll("[data-catchment-focus]").forEach(button => {
+    button.addEventListener("click", async () => {
+      const catchment = state.bootstrap?.reservoir_catchment;
+      if (!catchment) return;
+      button.disabled = true;
+      try {
+        await loadObject("Reservoir", { reservoir_id: catchment.reservoir_id }, { fit: false });
+        await focusObject({ object_type: "Catchment", object_id: catchment.catchment_id });
+      } catch (error) { addTrace("ERR", "集水区定位失败", String(error)); }
+      finally { button.disabled = false; }
+    });
+  });
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-dispatch-time], [data-dispatch-chart]");
+    if (!button) return;
+    event.preventDefault();
+    if (button.dataset.dispatchChart) {
+      state.reservoirDispatchChart = button.dataset.dispatchChart;
+    } else {
+      state.reservoirDispatchTime = button.dataset.dispatchTime || null;
+    }
+    refreshStationTelemetryMarkers();
+    window.requestAnimationFrame(() => {
+      state.featureIndex.forEach((entry) => {
+        if (entry.layer.isPopupOpen?.()) keepPopupInsideMap(entry.layer.getPopup());
+      });
+    });
+  });
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-road-object-id]");
+    if (!button) return;
+    const objectType = button.dataset.roadObjectType;
+    if (!["Road", "RoadRoute"].includes(objectType)) return;
+    const objectId = button.dataset.roadObjectId;
+    const result = state.impactAnalysis?.lastResult;
+    const candidates = [...(result?.impacts || []), ...(result?.nearby_impacts || []), ...(result?.road_route_impacts || []), ...(result?.road_route_nearby_impacts || [])];
+    const impact = [...candidates, ...candidates.flatMap((item) => [...(item.segment_impacts || []), ...(item.nearby_segment_impacts || [])])]
+      .find((item) => item.object_type === objectType && String(item.object_id) === objectId);
+    void (impact ? focusImpactObject(impact) : focusObject({ object_type: objectType, object_id: objectId }))
+      .catch((error) => addTrace("MISS", "道路定位失败", String(error?.message || error)));
+  });
   const directiveToast = document.getElementById("directiveDraftToast");
   state.directiveToast = {
     id: "directive-draft",
@@ -1027,6 +1202,7 @@ function bindEvents() {
   document.getElementById("situationToggleBtn").addEventListener("click", toggleTelemetryPanel);
   document.getElementById("telemetryFloatBtn").addEventListener("click", () => toggleSituationPanelFloating("telemetryPanel"));
   document.getElementById("impactFloatBtn").addEventListener("click", () => toggleSituationPanelFloating("impactPanel"));
+  bindImpactListControls();
   document.getElementById("agentDrawerBtn").addEventListener("click", () => setAgentDrawerOpen(true));
   document.getElementById("agentCloseBtn").addEventListener("click", () => setAgentDrawerOpen(false));
   bindPlaybackSourceControls();
@@ -1276,12 +1452,20 @@ function revealSituationPanel(panelId, behavior = "smooth") {
   const body = document.querySelector(".situation-workbench-body");
   const panel = document.getElementById(panelId);
   if (!body || !panel) return;
-  const panelStart = panel.offsetLeft;
-  const panelEnd = panelStart + panel.offsetWidth;
-  const viewportStart = body.scrollLeft;
-  const viewportEnd = viewportStart + body.clientWidth;
-  if (panelStart >= viewportStart && panelEnd <= viewportEnd) return;
-  body.scrollTo({ left: panelStart, behavior });
+  const response = document.getElementById("responseWorkbench");
+  const scrollIntoPanel = (container, target) => {
+    const viewport = container.getBoundingClientRect();
+    const bounds = target.getBoundingClientRect();
+    if (bounds.left >= viewport.left - 1 && bounds.right <= viewport.right + 1) return;
+    container.scrollTo({ left: container.scrollLeft + bounds.left - viewport.left, behavior });
+  };
+  if (panel.classList.contains("is-floating")) return;
+  if (response.contains(panel)) {
+    scrollIntoPanel(body, response);
+    if (panel !== response) scrollIntoPanel(response.querySelector(".response-workbench-body"), panel);
+  } else {
+    scrollIntoPanel(body, panel);
+  }
 }
 
 function toggleSituationPanelFloating(panelId) {
@@ -1296,7 +1480,7 @@ function setSituationPanelFloating(panel, floating) {
   if (!floating) setMapPanelTranslation(panel, 0, 0);
   const button = panel.querySelector("#telemetryFloatBtn, #impactFloatBtn");
   if (button) {
-    const label = panel.id === "impactPanel" ? "受影响对象" : "演进数据";
+    const label = panel.id === "impactPanel" ? "影响分析" : "业务推演";
     button.title = floating ? `停靠${label}` : `浮动${label}`;
     button.setAttribute("aria-label", button.title);
     button.innerHTML = `<i data-lucide="${floating ? "panel-bottom" : "picture-in-picture-2"}"></i>`;
@@ -1339,19 +1523,16 @@ async function toggleObject(objectType) {
       removeLayer(key);
       return;
     }
-    clearHydrodynamicResults();
     await showHydrodynamicMesh({
       fit: true,
     });
     return;
   }
   if (objectType === "ForecastResult") {
-    const key = layerKey("HydrodynamicResult", { forecast_id: "latest" });
-    if (state.layerGroups.has(key)) {
-      removeLayer(key);
+    if (hasObjectType("HydrodynamicResult")) {
+      clearHydrodynamicResults();
       return;
     }
-    await showHydrodynamicMesh({ fit: false });
     await applyHydrodynamicResult({
       filters: { forecast_id: "latest" },
       label: OBJECT_CONFIG[objectType].label,
@@ -1360,18 +1541,17 @@ async function toggleObject(objectType) {
     return;
   }
   const filters = defaultObjectFilters(objectType);
-  const key = layerKey(objectType, filters);
-  if (state.layerGroups.has(key)) {
-    removeLayer(key);
+  if (hasObjectType(objectType)) {
+    removeObjectTypeLayers(objectType);
     return;
   }
   await loadObject(objectType, filters, { fit: false });
 }
 
 async function toggleFacility(type) {
-  const matchingKeys = filteredLayerKeys("Facility", "facility_type", type);
-  if (matchingKeys.length) {
-    matchingKeys.forEach(removeLayer);
+  const ids = visibleFilteredObjectIds("Facility", "facility_type", type);
+  if (ids.length) {
+    hideMapObjects({ object_type: "Facility", object_ids: ids });
     return;
   }
   const filters = { facility_type: type };
@@ -1380,13 +1560,11 @@ async function toggleFacility(type) {
 }
 
 async function toggleStation(type) {
-  const allKey = layerKey("Station", {});
-  const matchingKeys = filteredLayerKeys("Station", "station_type", type);
-  if (matchingKeys.length) {
-    matchingKeys.forEach(removeLayer);
+  const ids = visibleFilteredObjectIds("Station", "station_type", type);
+  if (ids.length) {
+    hideMapObjects({ object_type: "Station", object_ids: ids });
     return;
   }
-  if (state.layerGroups.has(allKey)) removeLayer(allKey);
   const labels = {
     flash_flood: "山洪测站",
     meteorological: "气象测站",
@@ -1396,10 +1574,16 @@ async function toggleStation(type) {
   await loadObject("Station", { station_type: type }, { fit: true, label: labels[type] });
 }
 
-function filteredLayerKeys(objectType, filterKey, value) {
-  return Array.from(state.layerMeta.entries())
-    .filter(([, meta]) => meta.objectType === objectType && meta.filters?.[filterKey] === value)
-    .map(([key]) => key);
+function visibleFilteredObjectIds(objectType, filterKey, value) {
+  const ids = new Set();
+  for (const [key, layer] of state.layerGroups) {
+    if (state.layerMeta.get(key)?.objectType !== objectType || !state.map.hasLayer(layer)) continue;
+    eachObjectFeature(layer, item => {
+      const props = item.feature?.properties;
+      if (props?.[filterKey] === value && props[ID_FIELDS[objectType]] != null) ids.add(String(props[ID_FIELDS[objectType]]));
+    });
+  }
+  return [...ids];
 }
 
 function defaultObjectFilters(objectType) {
@@ -1415,20 +1599,18 @@ async function loadObject(objectType, filters = {}, options = {}) {
     }
     return showHydrodynamicMesh(options);
   }
-  const resolvedFilters = filtersWithObjectIds(objectType, filters, options.objectIds || options.object_ids || []);
-  if (options.replaceObjectType || options.replace_object_type) {
-    removeObjectTypeLayers(objectType);
-  }
+  const generation = state.mapGeneration;
+  const requestedIds = options.objectIds ?? options.object_ids;
+  if (Array.isArray(requestedIds) && !requestedIds.length) return null;
+  const resolvedFilters = filtersWithObjectIds(objectType, filters, requestedIds);
   const key = layerKey(objectType, resolvedFilters);
-  if (options.refresh && state.layerGroups.has(key)) {
-    removeLayer(key);
-  }
-  if (state.layerGroups.has(key)) {
+  if (!options.refresh && options.mode !== "replace" && !options.replaceObjectIds && state.layerGroups.has(key)) {
     const existing = state.layerGroups.get(key);
     if (!state.map.hasLayer(existing)) existing.addTo(state.map);
     setObjectButtonActive(objectType, true);
     syncFilteredLayerButtons();
     if (options.fit) fitLayer(existing);
+    registerMapSelection(existing, objectType, options, key);
     updateMapContentContext();
     return existing;
   }
@@ -1440,27 +1622,44 @@ async function loadObject(objectType, filters = {}, options = {}) {
   const res = await fetch(`/api/geojson?${params.toString()}`);
   if (!res.ok) throw new Error(await res.text());
   const geojson = await res.json();
+  if (generation !== state.mapGeneration) throw new Error("地图已重置，取消旧的显示请求");
+  if (!geojson.features?.length) throw new Error("没有可显示的对象几何，原有图层已保留");
+  const returnedIds = new Set(geojson.features.map(feature => String(feature.properties?.[ID_FIELDS[objectType]])));
+  if (requestedIds?.some(id => !returnedIds.has(String(id)))) throw new Error("部分指定对象没有可显示的几何，原有图层已保留");
+  if (options.replaceObjectIds) hideMapObjects({object_type: objectType, object_ids: options.replaceObjectIds});
+  if (options.mode === "replace") removeObjectTypeLayers(objectType);
+  else if (state.layerGroups.has(key)) removeLayer(key);
   const mapSelectable = !MAP_NON_SELECTABLE_OBJECTS.has(objectType);
   const layer = objectType === "River"
     ? createRiverLayer(geojson, mapSelectable)
     : objectType === "Reservoir"
       ? createReservoirLayer(geojson, mapSelectable)
-      : L.geoJSON(geojson, {
-        interactive: mapSelectable,
-        renderer: objectType === "Watershed" ? state.watershedRenderer : undefined,
-        className: objectType === "Watershed" ? "watershed-boundary" : "",
-        style: (feature) => featureStyle(objectType, feature),
-        pointToLayer: (feature, latlng) => pointLayer(objectType, feature, latlng),
-        onEachFeature: (feature, layerItem) => {
-          if (!mapSelectable) return;
-          indexFeature(objectType, feature, layerItem);
-          layerItem.bindPopup(
-            popupHtml(objectType, feature),
-            objectPopupOptions(objectType),
-          );
-          layerItem.on("click", () => selectFeature(objectType, feature, layerItem));
-        },
-      });
+      : ["Road", "RoadRoute"].includes(objectType)
+        ? createRoadLayer(geojson, mapSelectable, objectType)
+        : L.geoJSON(geojson, {
+          interactive: mapSelectable,
+          pane: objectType === "Catchment" ? "catchmentPane" : "overlayPane",
+          renderer: objectType === "Watershed" ? state.watershedRenderer : objectType === "Catchment" ? state.catchmentRenderer : undefined,
+          className: objectType === "Watershed" ? "watershed-boundary" : objectType === "Catchment" ? "catchment-boundary" : "",
+          style: (feature) => featureStyle(objectType, feature),
+          pointToLayer: (feature, latlng) => pointLayer(objectType, feature, latlng),
+          onEachFeature: (feature, layerItem) => {
+            if (!mapSelectable) return;
+            indexFeature(objectType, feature, layerItem);
+            layerItem.bindPopup(
+              popupHtml(objectType, feature),
+              objectPopupOptions(objectType),
+            );
+            if (objectType === "Catchment") {
+              layerItem.bindTooltip(
+                `${escapeHtml(feature.properties.name)} · ${basinNumber(feature.properties.area_km2)} km²`,
+                { permanent: true, interactive: true, direction: "center", className: "catchment-label" },
+              );
+              layerItem.getTooltip().on("click", () => selectFeature(objectType, feature, layerItem));
+            }
+            layerItem.on("click", () => selectFeature(objectType, feature, layerItem));
+          },
+        });
   layer.addTo(state.map);
   renderIcons();
 
@@ -1476,8 +1675,140 @@ async function loadObject(objectType, filters = {}, options = {}) {
       fitLayer(layer);
     }
   }
+  registerMapSelection(layer, objectType, options, key);
   updateMapContentContext();
   return layer;
+}
+
+function eachObjectFeature(group, callback) {
+  if (group?.feature) { callback(group); return; }
+  group?.eachLayer?.(child => eachObjectFeature(child, callback));
+}
+
+function visibleObjectIds(objectType) {
+  const ids = new Set();
+  for (const [key, layer] of state.layerGroups) {
+    if (state.layerMeta.get(key)?.objectType !== objectType || !state.map.hasLayer(layer)) continue;
+    eachObjectFeature(layer, item => {
+      const id = item.feature?.properties?.[ID_FIELDS[objectType]];
+      if (id != null) ids.add(String(id));
+    });
+  }
+  return ids;
+}
+
+function registerMapSelection(layer, objectType, options, key) {
+  const ids = [];
+  eachObjectFeature(layer, item => {
+    const id = item.feature?.properties?.[ID_FIELDS[objectType]];
+    if (id != null) ids.push(String(id));
+    if (options.highlight && !state.highlightedLayers.some(entry => entry.layer === item)) applyHighlight(item, objectType);
+  });
+  const selectionId = options.selectionId || state.layerMeta.get(key)?.selectionId || `selection_${crypto.randomUUID()}`;
+  const label = options.label || OBJECT_CONFIG[objectType]?.label || objectType;
+  state.mapSelections.set(selectionId, { objectType, objectIds: [...new Set(ids)], label, objectSetId: options.objectSetId });
+  const meta = state.layerMeta.get(key);
+  if (meta) meta.selectionId = selectionId;
+}
+
+function visibleMapSelections() {
+  const byType = new Map();
+  const selections = [];
+  for (const [selectionId, selection] of state.mapSelections) {
+    if (!byType.has(selection.objectType)) byType.set(selection.objectType, visibleObjectIds(selection.objectType));
+    const visible = byType.get(selection.objectType);
+    const ids = selection.objectIds.filter(id => visible.has(id));
+    if (!ids.length) continue;
+    selections.push({ selection_id: selectionId, object_type: selection.objectType,
+      label: selection.label, count: ids.length, object_set_id: ids.length === selection.objectIds.length ? selection.objectSetId : undefined,
+      ...(ids.length <= 10 ? {object_ids: ids} : {}) });
+  }
+  return selections.slice(-20);
+}
+
+function hideMapObjects(action) {
+  const selection = action.selection_id ? state.mapSelections.get(action.selection_id) : null;
+  if (action.selection_id && !selection) throw new Error("显示集合不存在，请根据当前地图重新选择");
+  const objectType = selection?.objectType || action.object_type;
+  const ids = new Set(selection?.objectIds ?? action.object_ids ?? visibleObjectIds(objectType));
+  if (!ids.size) return;
+  function prune(group) {
+    for (const child of group.getLayers?.() || []) {
+      const id = child.feature?.properties?.[ID_FIELDS[objectType]];
+      if (id != null && ids.has(String(id))) {
+        if (state.focusedLayer === child) clearFocus();
+        group.removeLayer(child);
+        for (const entry of state.roadNameLayers) { if (entry.layer === child) state.roadNameLayers.delete(entry); }
+      } else if (!child.feature) prune(child);
+    }
+  }
+  for (const [key, layer] of Array.from(state.layerGroups)) {
+    const meta = state.layerMeta.get(key);
+    if (meta?.objectType !== objectType) continue;
+    const matches = [];
+    eachObjectFeature(layer, child => { if (ids.has(String(child.feature?.properties?.[ID_FIELDS[objectType]]))) matches.push(child); });
+    if (!matches.length) continue;
+    prune(layer);
+    const remaining = [];
+    eachObjectFeature(layer, child => remaining.push(String(child.feature.properties[ID_FIELDS[objectType]])));
+    if (!remaining.length) { removeLayer(key); continue; }
+    // Rename the partial layer so a later full query reloads the hidden objects.
+    const filters = filtersWithObjectIds(objectType, {}, remaining);
+    const nextKey = `${layerKey(objectType, filters)}:visible:${crypto.randomUUID()}`;
+    state.layerGroups.delete(key); state.layerMeta.delete(key);
+    state.layerGroups.set(nextKey, layer); state.layerMeta.set(nextKey, {...meta, filters});
+  }
+  if (state.selected?.object_type === objectType && ids.has(String(state.selected.id))) state.selected = null;
+  state.highlightedLayers = state.highlightedLayers.filter(({layer}) => state.map.hasLayer(layer));
+  for (const key of state.featureIndex.keys()) {
+    if (key.startsWith(`${objectType}:`)) state.featureIndex.delete(key);
+  }
+  for (const [key, layer] of state.layerGroups) {
+    if (state.layerMeta.get(key)?.objectType === objectType) eachObjectFeature(layer, child => indexFeature(objectType, child.feature, child));
+  }
+  syncFilteredLayerButtons();
+  updateMapContentContext();
+}
+
+function enqueueMapActions(data) {
+  const generation = state.mapGeneration;
+  const execute = async () => {
+    const operationId = data.operation_id || data.output_id || (data.run_id && `${data.run_id}:${data.seq}`);
+    if (operationId && state.mapActionReceipts.has(operationId)) return;
+    if (generation !== state.mapGeneration) return;
+    const receipt = { operation_id: operationId, status: "completed", actions: [] };
+    try {
+      for (const action of data.map_actions || []) {
+        const targetType = action.object_type || state.mapSelections.get(action.selection_id)?.objectType;
+        const before = targetType ? visibleObjectIds(targetType) : new Set();
+        await executeActions([action]);
+        const after = targetType ? visibleObjectIds(targetType) : new Set();
+        receipt.actions.push({ type: action.type, object_type: targetType, selection_id: action.selection_id,
+          ...(targetType ? {visible_count: after.size, added_count: [...after].filter(id => !before.has(id)).length,
+          removed_count: [...before].filter(id => !after.has(id)).length} : {}) });
+      }
+      receipt.hydrodynamic_timeline = currentHydrodynamicTimelineContext();
+      renderMetrics(data.result_cards || []);
+      addTrace("MAP", "地图动作已执行", JSON.stringify(receipt, null, 2));
+    } catch (error) {
+      receipt.status = receipt.actions.length ? "partial" : "failed";
+      receipt.error = error.message || String(error);
+      const trace = addTrace("ERR", "地图动作执行失败", receipt.error);
+      if (!data.replayed) notifyAgentTrace({tag: "ERR", label: "地图动作执行失败", notification_key: operationId}, trace);
+    }
+    if (operationId) {
+      state.mapActionReceipts.set(operationId, receipt);
+      if (data.run_id) {
+        try {
+          const response = await fetch("/api/agent/map-receipt", { method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({run_id: data.run_id, receipt}) });
+          if (!response.ok) throw new Error(await response.text());
+        } catch (error) { addTrace("ERR", "地图执行回执未送达", error.message); }
+      }
+    }
+  };
+  state.mapActionQueue = state.mapActionQueue.then(execute, execute);
+  return state.mapActionQueue;
 }
 
 async function showHydrodynamicMesh(options = {}) {
@@ -1529,12 +1860,11 @@ async function applyHydrodynamicResult(options = {}) {
   const key = layerKey("HydrodynamicResult", filters);
   const loadToken = ++state.hydrodynamicResultLoadToken;
   const timelineSelection = captureHydrodynamicTimelineSelection(key);
-  if (options.refresh && state.layerGroups.has(key)) removeLayer(key);
-  removeOtherHydrodynamicResultLayers(key);
-  if (state.layerGroups.has(key)) {
+  if (!options.refresh && state.layerGroups.has(key)) {
     const existing = state.layerGroups.get(key);
     if (!state.map.hasLayer(existing)) existing.addTo(state.map);
     showHydrodynamicTimeline(state.hydrodynamicResultMeta, existing, key, filters, timelineSelection);
+    if (options.fit) fitHydrodynamicResult();
     setObjectButtonActive(options.buttonType || "ForecastResult", true);
     updateMapContentContext();
     return existing;
@@ -1550,7 +1880,7 @@ async function applyHydrodynamicResult(options = {}) {
   if (loadToken !== state.hydrodynamicResultLoadToken) {
     return state.layerGroups.get(key) || null;
   }
-  state.hydrodynamicResultMeta = resultMeta;
+  if (!resultMeta.forecast?.depth_path) throw new Error("没有可用的预测结果");
   const resultVersion = String(resultMeta?.forecast?.result_version || "");
   const forecast = resultMeta?.forecast || {};
   const initialSteps = hydrodynamicTimelineSteps(forecast);
@@ -1560,9 +1890,14 @@ async function applyHydrodynamicResult(options = {}) {
     resultVersion,
     key,
     timelineSelection,
+    filters,
   );
+  if (options.refresh && state.layerGroups.has(key)) removeLayer(key);
+  removeOtherHydrodynamicResultLayers(key);
+  state.hydrodynamicResultMeta = resultMeta;
   const initialFilters = hydrodynamicTileFilters(filters, resultVersion);
-  if (initialHours.length) {
+  if (filters.view === "envelope") delete initialFilters.time_h;
+  else if (initialHours.length) {
     initialFilters.time_h = formatHydrodynamicHour(initialHours[initialIndex]);
   }
   const layer = L.gridLayer.hydrodynamicGrid({
@@ -1586,6 +1921,7 @@ async function applyHydrodynamicResult(options = {}) {
     label: options.label || "水动力结果",
   });
   showHydrodynamicTimeline(state.hydrodynamicResultMeta, layer, key, filters, timelineSelection);
+  if (options.fit) fitHydrodynamicResult();
   setObjectButtonActive(options.buttonType || "ForecastResult", true);
   updateMapContentContext();
   return layer;
@@ -1614,6 +1950,7 @@ function showHydrodynamicTimeline(meta, layer, key, filters, previousSelection =
     resultVersion,
     key,
     previousSelection,
+    filters,
   );
   const rainfallSeries = hydrodynamicRainfallSeries(forecast, resultVersion);
   state.hydrodynamicTimeline = {
@@ -1640,7 +1977,8 @@ function showHydrodynamicTimeline(meta, layer, key, filters, previousSelection =
   slider.value = String(index);
   control.classList.remove("is-hidden");
   setTelemetryPanelOpen(true);
-  setHydrodynamicTimelineIndex(index);
+  if (filters?.view === "envelope") setHydrodynamicEnvelope();
+  else setHydrodynamicTimelineIndex(index);
   renderForecastWindowSummary(state.lastMockObservation);
 }
 
@@ -1674,6 +2012,21 @@ function hydrodynamicRainfallSeries(forecast, resultVersion) {
   ], ["rainfall_mm"]);
 }
 
+function setHydrodynamicEnvelope() {
+  const timeline = state.hydrodynamicTimeline;
+  if (!timeline.layer) return;
+  stopHydrodynamicTimelinePlayback({ refreshImpact: false });
+  timeline.mode = "envelope";
+  const filters = hydrodynamicTileFilters(timeline.baseFilters, timeline.resultVersion);
+  delete filters.time_h;
+  timeline.layer.setResultFilters(filters);
+  document.getElementById("hydroTimeSlider").disabled = true;
+  document.getElementById("hydroTimeLabel").textContent = "最大淹没包络";
+  setMapTimeContext({mode: "envelope"});
+  renderSituationSummary();
+  scheduleImpactAnalysisRefresh();
+}
+
 function captureHydrodynamicTimelineSelection(key) {
   const timeline = state.hydrodynamicTimeline;
   const hour = Number(timeline.hours?.[timeline.index]);
@@ -1692,7 +2045,14 @@ function nearestHydrodynamicHourIndex(hours, targetHour) {
   ), 0);
 }
 
-function resolveHydrodynamicTimelineIndex(hours, resultVersion, key, previousSelection) {
+function resolveHydrodynamicTimelineIndex(hours, resultVersion, key, previousSelection, filters = {}) {
+  if (filters.time_h != null) {
+    const requestedHour = Number(filters.time_h);
+    if (!Number.isFinite(requestedHour) || !hours.length || requestedHour < hours[0] || requestedHour > hours.at(-1)) {
+      throw new Error("指定预测时刻不在可用时间范围内");
+    }
+    return nearestHydrodynamicHourIndex(hours, requestedHour);
+  }
   const preserveHour = Boolean(
     previousSelection
     && previousSelection.key === key
@@ -1965,6 +2325,9 @@ function removeLayer(key) {
   if (layer) state.map.removeLayer(layer);
   state.layerGroups.delete(key);
   state.layerMeta.delete(key);
+  if (state.selected && meta && state.selected.object_type === meta.objectType && !visibleObjectIds(meta.objectType).has(String(state.selected.id))) {
+    state.selected = null;
+  }
   if (meta) setObjectButtonActive(meta.buttonType || meta.objectType, hasLayerButtonType(meta.buttonType || meta.objectType));
   syncFilteredLayerButtons();
   updateMapContentContext();
@@ -1976,9 +2339,9 @@ function removeObjectTypeLayers(objectType) {
   });
 }
 
-function filtersWithObjectIds(objectType, filters = {}, objectIds = []) {
-  const ids = (objectIds || []).map(String).filter(Boolean);
-  if (!ids.length) return { ...(filters || {}) };
+function filtersWithObjectIds(objectType, filters = {}, objectIds = null) {
+  if (objectIds == null) return { ...(filters || {}) };
+  const ids = objectIds.map(String).filter(Boolean);
   const idField = ID_FIELDS[objectType];
   if (!idField) return { ...(filters || {}) };
   return {
@@ -1988,6 +2351,8 @@ function filtersWithObjectIds(objectType, filters = {}, objectIds = []) {
 }
 
 function resetMap() {
+  state.mapGeneration += 1;
+  state.mapSelections.clear();
   state.hydrodynamicResultLoadToken += 1;
   setWatershedInundationAlert(false);
   clearFocus();
@@ -2024,26 +2389,34 @@ function clearImpactAnalysisState() {
   state.impactRefreshSeq += 1;
   state.impactFocusSeq += 1;
   state.impactAnalysis = null;
+  state.impactRequested = false;
   state.impactMarkerLayer?.clearLayers();
   state.impactMarkers.clear();
   clearImpactObjectSelection({ removeLayer: true });
   updateMapContentContext();
   const panel = document.getElementById("impactPanel");
   panel?.classList.remove("is-loading");
+  panel?.setAttribute("aria-busy", "false");
   const count = document.getElementById("impactCount");
   const time = document.getElementById("impactTimeLabel");
   const status = document.getElementById("impactStatus");
   const list = document.getElementById("impactList");
-  if (count) count.textContent = "0 个";
+  if (count) count.textContent = "0";
   if (time) {
-    time.textContent = "--";
+    time.textContent = "等待预测结果";
     time.title = "当前影响分析范围";
   }
   if (status) {
     status.textContent = "等待结果";
     status.title = "等待水动力结果";
   }
-  if (list) list.innerHTML = "";
+  state.impactListView.positions.clear();
+  state.impactListView.renderedKey = null;
+  updateImpactListControls({ impacts: [], nearby: [] });
+  document.getElementById("impactNotice").hidden = true;
+  document.getElementById("impactListSummary").textContent = "道路按已收录路段统计";
+  if (list) list.innerHTML = '<p class="impact-empty">加载预测结果后查看影响分析</p>';
+  renderImpactReadiness();
 }
 
 function clearEventMarkers() {
@@ -2060,12 +2433,10 @@ function startAutonomyStream() {
   es.addEventListener("runtime_status", (event) => {
     const data = parseEvent(event);
     acceptWorkspace(data.workspace_id);
-    if ([
-      "等待水文事件",
-      "等待边界流量事件",
-      "等待启动边界流量回放",
-      "等待启动 Domain OS 演进",
-    ].includes(data.label)) return;
+    if (["等待水文事件", "等待边界流量事件", "等待启动边界流量回放", "等待启动 Domain OS 演进"].includes(data.label)) {
+      updateTelemetryRuntimeStatus(data);
+      return;
+    }
     if (data.speed_multiplier) setPlaybackSpeedControl(data.speed_multiplier);
     updateTelemetryRuntimeStatus(data);
     addTrace("AUTO", data.label || "事件运行时", data.detail || "");
@@ -2080,6 +2451,7 @@ function startAutonomyStream() {
   es.addEventListener("boundary_flow_data", (event) => {
     const data = parseEvent(event);
     acceptWorkspace(data.workspace_id);
+    if (data.forecast_context && !data.forecast_context.available) clearHydrodynamicResults();
     renderMockObservation(data.event || {});
   });
 
@@ -2095,19 +2467,16 @@ function startAutonomyStream() {
       void refreshPlaybackStatus();
     }
     if (shouldHideAutonomyTrace(data)) return;
-    addTrace(data.tag || "AGENT", data.label || "智能体事件处理", data.detail || "");
+    if (data.output_id && state.autonomyTraceIds.has(data.output_id)) return;
+    if (data.output_id) state.autonomyTraceIds.add(data.output_id);
+    const trace = addTrace(data.tag || "AGENT", data.label || "智能体事件处理", data.detail || "");
+    if (!data.replayed) notifyAgentTrace(data, trace);
   });
 
   es.addEventListener("map_actions", async (event) => {
     const data = parseEvent(event);
     acceptWorkspace(data.workspace_id);
-    try {
-      await executeActions(data.map_actions || []);
-      renderMetrics(data.result_cards || []);
-      addTrace("MAP", "地图动作", (data.map_actions || []).map((item) => item.object_type || item.type).join(", "));
-    } catch (error) {
-      addTrace("ERR", "地图动作执行失败", error.message || String(error));
-    }
+    await enqueueMapActions(data);
   });
 
   es.onerror = () => {
@@ -2545,6 +2914,8 @@ function acceptWorkspace(workspaceId) {
 }
 
 function clearRuntimeWorkspaceView() {
+  if (state.activeRunId) fetch(`/api/agent/runs/${encodeURIComponent(state.activeRunId)}/cancel`, {method: "POST"}).catch(() => {});
+  finishStream(true);
   resetMap();
   clearMockTelemetry();
   state.lastTrace = null;
@@ -2555,10 +2926,10 @@ function clearRuntimeWorkspaceView() {
   if (traceCount) traceCount.textContent = "0";
   if (chat) chat.innerHTML = "";
   resetDirectiveWorkspaceView();
-  state.conclusionToasts.forEach((item) => item.element?.remove());
-  state.conclusionToasts = [];
-  document.querySelectorAll("#conclusionToastRegion .conclusion-toast:not(.directive-draft-toast)")
-    .forEach((element) => element.remove());
+  dismissAgentNotification();
+  state.autonomyTraceIds.clear();
+  state.notificationChains.clear();
+  state.mapActionReceipts.clear();
 }
 
 function resetDirectiveWorkspaceView() {
@@ -3020,6 +3391,7 @@ function updatePlaybackStepButton() {
 }
 
 function updateTelemetryRuntimeStatus(data) {
+  if (data.forecast_context && !data.forecast_context.available && state.hydrodynamicTimeline.layer) clearHydrodynamicResults();
   if (typeof data.auto_pause_enabled === "boolean") {
     setPlaybackAutoPauseControl(data.auto_pause_enabled);
   }
@@ -3071,16 +3443,9 @@ function renderMockObservation(event) {
     applyMapTimeContext();
   }
   document.getElementById("telemetryTime").textContent = formatMockTime(simulationTime);
-  renderTelemetryWeather(observation.rainfall_mm);
-  setMockField("rainfall_mm", observation.rainfall_mm, 1);
-  setMockField("reservoir_level_m", observation.reservoir_level_m, 3);
-  setMockField("reservoir_inflow_m3s", observation.reservoir_inflow_m3s, 2);
-  setMockField("reservoir_release_m3s", observation.reservoir_release_m3s, 2);
-  BOUNDARY_FLOW_KEYS.forEach((key) => {
-    const target = document.querySelector(`[data-mock-boundary="${key}"]`);
-    const flow = observation.boundaries?.[key]?.flow_m3s;
-    if (target) target.textContent = formatMockNumber(flow, 2);
-  });
+  state.basinRainfallHistory = state.basinRainfallHistory.filter((row) => row.valid_time !== simulationTime);
+  state.basinRainfallHistory.push({ ...observation, valid_time: simulationTime });
+  state.basinRainfallHistory = state.basinRainfallHistory.slice(-48);
   recordBoundaryFlowObservation(observation);
   renderBoundaryFlowHistoryChart();
   renderForecastWindowSummary(observation);
@@ -3114,7 +3479,7 @@ function clearMockTelemetry() {
   setMapTimeContext({ mode: "current", currentAt: null });
   clearBoundaryFlowHistory();
   document.getElementById("telemetryTime").textContent = "--";
-  renderTelemetryWeather(null);
+  state.basinRainfallHistory = [];
   document.querySelectorAll("[data-mock-field], [data-mock-boundary]").forEach((element) => {
     element.textContent = "--";
   });
@@ -3286,55 +3651,18 @@ function renderBoundaryFlowHistoryChart() {
 }
 
 function renderForecastWindowSummary(observation) {
+  renderBasinWorkbench(observation);
   const flow = state.boundaryFlowForecast;
-  const assessment = state.reservoirAssessment;
   const window = document.getElementById("telemetryForecastWindow");
-  const cnnVersion = state.hydrodynamicTimeline.forecastVersion;
+  const forecastVersion = state.hydrodynamicTimeline.forecastVersion;
   if (window) {
     const timeRange = flow?.window_start && flow?.window_end
       ? `${formatRainfallChartTime(flow.window_start)} → ${formatRainfallChartTime(flow.window_end)}`
       : "等待预测窗口";
-    window.textContent = cnnVersion
-      ? `${timeRange} · CNN ${formatForecastVersion(cnnVersion)}`
+    window.textContent = forecastVersion
+      ? `${timeRange} · 水动力模型 ${formatForecastVersion(forecastVersion)}`
       : timeRange;
   }
-  const flowPeak = document.getElementById("forecastFlowPeak");
-  const flowPeakTime = document.getElementById("forecastFlowPeakTime");
-  const thresholdTime = document.getElementById("forecastFlowThresholdTime");
-  const reservoirPeak = document.getElementById("forecastReservoirPeak");
-  const reservoirPeakTime = document.getElementById("forecastReservoirPeakTime");
-  const alert = document.getElementById("forecastReservoirAlert");
-  const alertTime = document.getElementById("forecastReservoirAlertTime");
-  if (flowPeak) flowPeak.textContent = flow ? formatMockNumber(flow.peak_total_flow_m3s, 1) : "--";
-  if (flowPeakTime) flowPeakTime.textContent = flow?.peak_at
-    ? `${formatRainfallChartTime(flow.peak_at)} · m³/s`
-    : "m³/s";
-  if (thresholdTime) thresholdTime.textContent = flow?.first_threshold_exceeded_at
-    ? formatRainfallChartTime(flow.first_threshold_exceeded_at)
-    : (flow ? "未超过" : "--");
-  if (reservoirPeak) reservoirPeak.textContent = assessment?.peak
-    ? formatReservoirLevel(assessment.peak.level_m)
-    : "--";
-  if (reservoirPeakTime) reservoirPeakTime.textContent = assessment?.peak?.valid_time
-    ? `${formatRainfallChartTime(assessment.peak.valid_time)} · m`
-    : "m";
-  if (alert) {
-    alert.textContent = forecastAlertSummaryLabel(assessment?.alert, Boolean(assessment));
-    alert.title = assessment?.alert ? reservoirAlertText(assessment.alert) : "";
-    alert.classList.toggle("is-alert", Boolean(assessment?.alert));
-  }
-  if (alertTime) alertTime.textContent = assessment?.alert?.triggered_at
-    ? formatRainfallChartTime(assessment.alert.triggered_at)
-    : "";
-}
-
-function forecastAlertSummaryLabel(alert, hasAssessment) {
-  if (!alert) return hasAssessment ? "无预警" : "--";
-  return {
-    critical: "超校核水位",
-    danger: "逼近校核水位",
-    warning: "接近设计水位",
-  }[alert.severity] || "已触发预警";
 }
 
 function expandFlowRange(min, max) {
@@ -3400,38 +3728,6 @@ function evolutionPlaybackStatusLabel() {
   return state.lastMockObservation ? "待继续" : "等待数据";
 }
 
-function renderTelemetryWeather(value) {
-  const parsed = value === null || value === undefined || value === "" ? null : Number(value);
-  const rainfall = Number.isFinite(parsed) ? parsed : null;
-  const weather = telemetryWeatherForRainfall(rainfall);
-  const container = document.getElementById("telemetryWeather");
-  container.dataset.weather = weather.key;
-  document.getElementById("telemetryWeatherIcon").innerHTML = `<i data-lucide="${weather.icon}"></i>`;
-  document.getElementById("telemetryWeatherLabel").textContent = weather.label;
-  document.getElementById("telemetryWeatherDetail").textContent = rainfall === null
-    ? "当前时段降雨 -- mm"
-    : `当前时段降雨 ${rainfall.toFixed(1)} mm`;
-  renderIcons();
-}
-
-function telemetryWeatherForRainfall(rainfall) {
-  if (rainfall === null) return { key: "waiting", label: "等待数据", icon: "cloud-sun" };
-  const key = rainfallLevel(rainfall);
-  return {
-    dry: { key, label: "无降雨", icon: "cloud-sun" },
-    light: { key, label: "小雨", icon: "cloud-drizzle" },
-    moderate: { key, label: "中雨", icon: "cloud-rain" },
-    heavy: { key, label: "大雨", icon: "cloud-rain-wind" },
-    storm: { key, label: "暴雨", icon: "cloud-lightning" },
-    severe: { key, label: "大暴雨", icon: "cloud-lightning" },
-  }[key];
-}
-
-function setMockField(field, value, digits) {
-  const target = document.querySelector(`[data-mock-field="${field}"]`);
-  if (target) target.textContent = formatMockNumber(value, digits);
-}
-
 function formatMockNumber(value, digits) {
   const number = Number(value);
   return Number.isFinite(number) ? number.toFixed(digits) : "--";
@@ -3485,7 +3781,7 @@ function eventDetail(data) {
   }
   if (data.event_type === "ImpactAnalyzed") {
     const summary = payload.summary || {};
-    const labels = { Facility: "设施", Bridge: "桥梁", Road: "道路", EvacuationRoute: "路线", EvacuationUnit: "转移单元", EvacuationSite: "安置点" };
+    const labels = { Facility: "设施", Bridge: "桥梁", Road: "道路", EvacuationRoute: "路线", EvacuationUnit: "转移单元", EvacuationSite: "安置点", Station: "测站" };
     const parts = Object.keys(labels).map((key) => {
       const count = Number((summary[key] || {}).count || 0);
       return count ? `${labels[key]} ${count} 个` : "";
@@ -3588,11 +3884,12 @@ function featureStyle(objectType, feature) {
     return hydrodynamicCellStyle(depth);
   }
   if (objectType === "Watershed") return watershedStyle(state.inundationAlertActive);
+  if (objectType === "Catchment") return { color: "#2dd4bf", weight: 2.5, dashArray: "7 4", fillColor: "#14b8a6", fillOpacity: 0.08 };
   if (objectType === "River") return riverMainStyle();
   if (objectType === "Reservoir") return reservoirWaterStyle();
   if (objectType === "County") return { color: "#7b8794", weight: 1.2, fillOpacity: 0 };
   if (objectType === "Town") return { color: "#7a6a22", weight: 1, fillColor: "#facc15", fillOpacity: 0.08 };
-  if (objectType === "Road") return { color: "#5f6772", weight: 2, opacity: 0.82 };
+  if (objectType === "Road" || objectType === "RoadRoute") return roadLineStyle(feature);
   if (objectType === "EvacuationRoute") return { color: "#d44a3a", weight: 3, opacity: 0.92 };
   if (objectType === "HydraulicStructure") return { color: "#0f766e", weight: 2, opacity: 0.9 };
   return { color: OBJECT_CONFIG[objectType]?.color || "#334155", weight: 2 };
@@ -3662,6 +3959,135 @@ function reservoirHighlightStyle() {
     lineCap: "round",
     lineJoin: "round",
   };
+}
+
+function roadClassInfo(feature) {
+  const props = feature?.properties || feature || {};
+  const roadClass = String(props.road_class || "").trim().toLowerCase();
+  const isLink = !props.road_route_id && roadClass === "motorway_link";
+  const isExpressway = props.road_category
+    ? props.road_category === "expressway"
+    : roadClass === "motorway" || roadClass === "motorway_link";
+  const style = ROAD_STYLES[isExpressway ? "expressway" : "other"];
+  return {
+    ...style,
+    label: props.road_category === "mixed" ? "包含高速及非高速路段" : isLink ? "高速匝道" : isExpressway ? "高速公路" : "非高速道路",
+    weight: isLink ? 3.2 : style.weight,
+  };
+}
+
+function roadLineStyle(feature, outline = false) {
+  const style = roadClassInfo(feature);
+  return {
+    color: outline ? style.outline : style.color,
+    weight: style.weight + (outline ? 2.5 : 0),
+    opacity: outline ? 0.9 : 1,
+    lineCap: "round",
+    lineJoin: "round",
+  };
+}
+
+function createRoadLayer(geojson, mapSelectable, objectType = "Road") {
+  const group = L.featureGroup();
+  const namedLayers = [];
+  L.geoJSON(geojson, {
+    interactive: false,
+    style: (feature) => roadLineStyle(feature, true),
+  }).addTo(group);
+  L.geoJSON(geojson, {
+    interactive: mapSelectable,
+    style: (feature) => featureStyle(objectType, feature),
+    onEachFeature: (feature, layerItem) => {
+      const name = roadMapName(feature.properties || {});
+      if (name) {
+        layerItem.bindTooltip(escapeHtml(name), {
+          permanent: true,
+          direction: "center",
+          offset: [0, -13],
+          opacity: 1,
+          interactive: false,
+          className: "road-name-label",
+        });
+        namedLayers.push({ layer: layerItem, name, objectType });
+      }
+      if (!mapSelectable) return;
+      indexFeature(objectType, feature, layerItem);
+      layerItem.bindPopup(popupHtml(objectType, feature), objectPopupOptions(objectType));
+      layerItem.on("click", () => selectFeature(objectType, feature, layerItem));
+    },
+  }).addTo(group);
+  group.on("add", () => {
+    namedLayers.forEach((entry) => state.roadNameLayers.add(entry));
+    refreshRoadNameLabels();
+  });
+  group.on("remove", () => {
+    namedLayers.forEach((entry) => state.roadNameLayers.delete(entry));
+    refreshRoadNameLabels();
+  });
+  return group;
+}
+
+function roadMapName(props) {
+  const name = String(props.name || "").trim();
+  if (!name || /^(未命名|无名|unnamed\b|unknown\b)/i.test(name)) return "";
+  if (["generated_from_stable_id", "generated_stable_id", "generated_from_source_id"].includes(props.name_source)) return "";
+  return name;
+}
+
+function roadLabelAnchor(layer, viewport) {
+  const latlngs = layer.getLatLngs();
+  const lines = latlngs[0]?.lat !== undefined ? [latlngs] : latlngs;
+  let anchor = null;
+  let longest = 0;
+  let visibleLength = 0;
+  for (const line of lines) {
+    const points = line.map((latlng) => state.map.latLngToContainerPoint(latlng));
+    for (let index = 1; index < points.length; index += 1) {
+      const clipped = L.LineUtil.clipSegment(points[index - 1], points[index], viewport);
+      if (!clipped) continue;
+      const length = clipped[0].distanceTo(clipped[1]);
+      visibleLength += length;
+      if (length > longest) {
+        longest = length;
+        // Keep labels on an actual visible line, including disconnected routes.
+        anchor = clipped[0].add(clipped[1]).divideBy(2);
+      }
+    }
+  }
+  return anchor ? { point: anchor, visibleLength } : null;
+}
+
+function refreshRoadNameLabels() {
+  if (!state.map) return;
+  const viewport = L.bounds([0, 0], state.map.getSize());
+  const candidates = [];
+  state.roadNameLayers.forEach((entry) => {
+    const element = entry.layer.getTooltip()?.getElement();
+    if (!element) return;
+    element.style.visibility = "hidden";
+    const anchor = roadLabelAnchor(entry.layer, viewport);
+    if (anchor) candidates.push({ ...entry, ...anchor, element });
+  });
+  candidates.sort((a, b) => (
+    Number(b.objectType === "RoadRoute") - Number(a.objectType === "RoadRoute")
+    || b.visibleLength - a.visibleLength
+  ));
+  const placed = [];
+  for (const item of candidates) {
+    const halfWidth = item.element.offsetWidth / 2 + 6;
+    const halfHeight = item.element.offsetHeight / 2 + 4;
+    const center = item.point.subtract([0, 13]);
+    const bounds = L.bounds(
+      center.subtract([halfWidth, halfHeight]),
+      center.add([halfWidth, halfHeight]),
+    );
+    if (!viewport.contains(bounds)) continue;
+    if (placed.some((other) => bounds.intersects(other.bounds)
+      || (item.name === other.name && center.distanceTo(other.center) < 260))) continue;
+    item.layer.getTooltip().setLatLng(state.map.containerPointToLatLng(item.point));
+    item.element.style.visibility = "visible";
+    placed.push({ name: item.name, center, bounds });
+  }
 }
 
 function createReservoirLayer(geojson, mapSelectable) {
@@ -3942,12 +4368,14 @@ function objectIconInfo(objectType, feature) {
   return {
     River: { key: "river", icon: "route", label: "珊瑚河" },
     Watershed: { key: "watershed", icon: "map", label: "珊瑚河流域" },
+    Catchment: { key: "catchment", icon: "map", label: "水库集水区" },
     County: { key: "county", icon: "map", label: "县级边界" },
     Town: { key: "town", icon: "map", label: "乡镇边界" },
     Reservoir: { key: "reservoir", icon: "waves-horizontal", label: "水库" },
     Sluice: { key: "sluice", icon: "dam", label: "水闸" },
     Bridge: { key: "bridge", icon: "bridge", label: "桥梁" },
-    Road: { key: "road", icon: "route", label: "道路" },
+    Road: { key: "road", icon: "route", label: "路段" },
+    RoadRoute: { key: "road", icon: "route", label: "编号道路" },
     EvacuationSite: { key: "place", icon: "house-heart", label: "安置地点" },
     EvacuationUnit: { key: "evacuation-unit", icon: "users", label: "转移单元" },
     EvacuationRoute: { key: "route", icon: "route", label: "转移路线" },
@@ -3979,6 +4407,24 @@ function popupHtml(objectType, feature) {
   const props = feature.properties || {};
   const name = props.name || props[ID_FIELDS[objectType]] || OBJECT_CONFIG[objectType]?.label || objectType;
   const id = props[ID_FIELDS[objectType]] || "";
+  if (objectType === "Catchment") {
+    return `<div class="popup-title">${escapeHtml(name)}</div>
+      <div class="popup-meta">集水面积 ${basinNumber(props.area_km2)} km² · 汇入${escapeHtml(props.reservoir_name)}</div>
+      <div class="popup-meta">上游降雨 → 入库流量 → 水库调度</div>`;
+  }
+  if (objectType === "RoadRoute") {
+    return `<div class="popup-title">${escapeHtml(props.ref)} · ${escapeHtml(name)}</div>
+      <div class="popup-meta">${escapeHtml(roadClassInfo(props).label)} · 已收录 ${escapeHtml(String(props.segment_count))} 段</div>
+      <div class="popup-meta">${escapeHtml(props.coverage_scope)}</div>`;
+  }
+  if (objectType === "Road") {
+    const description = [roadClassInfo(feature).label, props.ref].filter(Boolean).join(" · ");
+    return `
+      <div class="popup-title">${escapeHtml(name)}</div>
+      <div class="popup-meta">${escapeHtml(description)}</div>
+      <div class="popup-meta">路段 ${escapeHtml(id)} · ${escapeHtml(formatRouteDistance(props.length_m))}</div>
+    `;
+  }
   if (objectType === "EvacuationRoute") {
     const steps = parseRouteInstructions(props.instructions);
     return `
@@ -3986,6 +4432,10 @@ function popupHtml(objectType, feature) {
       <div class="popup-meta">路线 ${escapeHtml(id)} · ${formatRouteDistance(props.length_m)} · ${formatRouteDuration(props.duration_s)}</div>
       ${steps.length ? `<div class="popup-meta">导航步骤 ${steps.length} 步，点击路线查看详情</div>` : ""}
     `;
+  }
+  if (objectType === "Reservoir" && props.reservoir_id === "longtan") {
+    return `<div class="popup-title">${escapeHtml(name)}</div>
+      ${reservoirTelemetryPopupHtml(reservoirTelemetryForProps(props))}`;
   }
   if (objectType === "Station") {
     const stationType = objectIconInfo(objectType, feature).label;
@@ -4010,10 +4460,10 @@ function objectPopupOptions(objectType) {
     closeOnClick: false,
     closeButton: true,
   };
-  if (objectType !== "Station") return options;
+  if (!["Station", "Reservoir"].includes(objectType)) return options;
   return {
     ...options,
-    maxWidth: 320,
+    maxWidth: 400,
     autoPanPaddingTopLeft: L.point(18, 18),
     autoPanPaddingBottomRight: L.point(18, 18),
   };
@@ -4028,6 +4478,7 @@ function selectFeature(objectType, feature, layerItem) {
     name: props.name || props[idField],
   };
   document.getElementById("selectedObject").innerHTML = detailHtml(objectType, props);
+  syncLayerSelectionSummary();
   applyFocus(layerItem, objectType);
   layerItem.openPopup();
 }
@@ -4179,6 +4630,10 @@ function ensureStationRainfallLayer(readings) {
 
 function refreshStationTelemetryMarkers() {
   state.featureIndex.forEach((entry) => {
+    if (entry.objectType === "Reservoir") {
+      entry.layer.setPopupContent?.(popupHtml("Reservoir", entry.feature));
+      return;
+    }
     if (entry.objectType !== "Station") return;
     const props = entry.feature?.properties || {};
     if (!["meteorological", "reservoir"].includes(props.station_type)) return;
@@ -4233,9 +4688,9 @@ function stationRainfallForProps(props = {}) {
 }
 
 function reservoirTelemetryForProps(props = {}) {
-  if (props.station_type !== "reservoir") return null;
+  if (props.station_type !== "reservoir" && props.reservoir_id !== "longtan") return null;
   const stationId = String(props.station_id || props.station_code || "");
-  if (stationId !== LONGTAN_RESERVOIR_STATION_ID) return null;
+  if (stationId !== LONGTAN_RESERVOIR_STATION_ID && props.reservoir_id !== "longtan") return null;
   const current = state.reservoirTelemetry;
   if (!current || state.mapTimeContext.mode !== "time_slice") {
     return current ? {
@@ -4421,11 +4876,13 @@ function rainfallLevel(value) {
 }
 
 function updateReservoirTelemetry(observation, observedAt) {
+  state.reservoirDispatchTime = null;
   const reservoirLevel = finiteTelemetryNumber(observation?.reservoir_level_m);
   const current = observedAt && reservoirLevel !== null
     ? {
       station_id: LONGTAN_RESERVOIR_STATION_ID,
       reservoir_id: "longtan",
+      reservoir_dispatch: observation.reservoir_dispatch || null,
       reservoir_level_m: reservoirLevel,
       reservoir_inflow_m3s: finiteTelemetryNumber(observation.reservoir_inflow_m3s),
       reservoir_release_m3s: finiteTelemetryNumber(observation.reservoir_release_m3s),
@@ -4454,6 +4911,7 @@ function recordReservoirTelemetryHistory(current, observedAt) {
     .filter((point) => point.observed_time !== time);
   history.push({
     observed_time: time,
+    reservoir_dispatch: current.reservoir_dispatch,
     reservoir_level_m: current.reservoir_level_m,
     reservoir_inflow_m3s: current.reservoir_inflow_m3s,
     reservoir_release_m3s: current.reservoir_release_m3s,
@@ -4471,6 +4929,7 @@ function normalizeReservoirForecast(forecast) {
       reservoir_inflow_m3s: finiteTelemetryNumber(point?.reservoir_inflow_m3s),
       reservoir_release_m3s: finiteTelemetryNumber(point?.reservoir_release_m3s),
       status: point?.status || null,
+      reservoir_dispatch: point?.reservoir_dispatch || null,
     }))
     .filter((point) => point.valid_time && point.reservoir_level_m !== null);
   return { ...forecast, series };
@@ -4507,44 +4966,105 @@ function reservoirStatusKey(status) {
   return ["normal", "warning", "danger", "critical"].includes(key) ? key : "normal";
 }
 
-function reservoirTelemetryPopupHtml(telemetry) {
-  if (!telemetry) return "";
-  const assessment = state.reservoirAssessment;
-  const forecast = telemetry.display_mode === "forecast";
-  const currentStatus = telemetry.status || assessment?.current?.status;
-  const statusKey = reservoirStatusKey(currentStatus);
-  return `
-    <div class="station-reservoir-panel">
-      <div class="station-reservoir-current is-${statusKey}">
-        <div class="station-reservoir-current-head">
-          <span>${forecast ? "当前地图预测" : "当前模拟观测"}</span>
-          <time>${escapeHtml(formatRainfallChartTime(telemetry.display_time || state.reservoirTelemetryObservedAt))}</time>
-          <strong>${escapeHtml(currentStatus?.label || "正常")}</strong>
-        </div>
-        <div class="station-reservoir-current-values">
-          <div><span>水库水位</span><strong>${escapeHtml(formatReservoirLevel(telemetry.reservoir_level_m))}</strong><small>m</small></div>
-          <div><span>入库流量</span><strong>${escapeHtml(formatReservoirFlow(telemetry.reservoir_inflow_m3s))}</strong><small>m³/s</small></div>
-          <div><span>泄洪流量</span><strong>${escapeHtml(formatReservoirFlow(telemetry.reservoir_release_m3s))}</strong><small>m³/s</small></div>
-        </div>
-      </div>
-      ${reservoirLevelChartHtml()}
-      ${reservoirFlowChartHtml()}
-      ${reservoirForecastAssessmentHtml()}
-    </div>
-  `;
+const DISPATCH_STATES = {
+  NORMAL: { label: "正常蓄水", color: "#238b57" },
+  PRERELEASE: { label: "预泄判定", color: "#a47708" },
+  FULL_CAPACITY: { label: "全能力下泄", color: "#c46114" },
+  DRAWDOWN: { label: "退水腾库", color: "#087f8c" },
+  EMERGENCY: { label: "应急下泄判定", color: "#c62828" },
+};
+
+function reservoirDispatchPoints() {
+  return reservoirChartTimeline(state.reservoirTelemetryHistory, state.reservoirForecast?.series || []);
 }
 
-function reservoirLevelChartHtml() {
+function selectedReservoirDispatchPoint() {
+  const points = reservoirDispatchPoints();
+  const requested = state.reservoirDispatchTime
+    || (state.mapTimeContext.mode === "time_slice" ? state.mapTimeContext.validAt : state.reservoirTelemetryObservedAt);
+  const target = Date.parse(requested);
+  // Decisions are discrete hourly results; never interpolate state/reason/capacity.
+  if (!Number.isFinite(target)) return null;
+  if (!points.length || target < Date.parse(points[0].time) || target > Date.parse(points.at(-1).time)) return null;
+  return points.findLast((point) => Date.parse(point.time) <= target) || null;
+}
+
+function reservoirTelemetryPopupHtml(telemetry) {
+  if (!telemetry) return `<div class="station-reservoir-panel dispatch-empty">开始演进后查看水库模拟调度过程。</div>`;
+  const point = selectedReservoirDispatchPoint();
+  const decision = point?.reservoir_dispatch;
+  const info = DISPATCH_STATES[decision?.state];
+  const future = point && Date.parse(point.time) > Date.parse(state.reservoirTelemetryObservedAt);
+  const thresholds = decision?.thresholds;
+  const stats = point ? [
+    ["入库流量", formatReservoirFlow(point.reservoir_inflow_m3s), "m³/s"],
+    ["计算泄流", formatReservoirFlow(point.reservoir_release_m3s), "m³/s"],
+    ["时段末水位", formatReservoirLevel(point.reservoir_level_m), "m"],
+  ].map(([label, value, unit]) => `<div><span>${label}</span><strong>${escapeHtml(value)}</strong><small>${unit}</small></div>`).join("") : "";
+  return `<div class="station-reservoir-panel dispatch-panel">
+    <header class="dispatch-head" style="--dispatch-color:${info?.color || "#64748b"}">
+      <div><span>模拟调度 · ${!point ? "暂无数据" : future ? "未来预计算" : "已回放"}</span>
+        <h3>${escapeHtml(info?.label || "暂无调度记录")}</h3></div>
+      <button type="button" data-dispatch-time="" title="跟随当前地图时间">跟随时间</button>
+    </header>
+    <div class="dispatch-time">${point ? escapeHtml(formatMockTime(point.time)) : "该时刻不在当前可查看的调度范围内"}</div>
+    <div class="dispatch-metrics">${stats}</div>
+    <div class="dispatch-chart-tabs" role="group" aria-label="调度过程图">
+      <button type="button" data-dispatch-chart="flow" aria-pressed="${state.reservoirDispatchChart === "flow"}">入流 / 泄流</button>
+      <button type="button" data-dispatch-chart="level" aria-pressed="${state.reservoirDispatchChart === "level"}">库水位</button>
+    </div>
+    ${state.reservoirDispatchChart === "level" ? reservoirLevelChartHtml() : reservoirFlowChartHtml()}
+    ${reservoirDispatchTimelineHtml(point)}
+    ${decision ? `<details class="dispatch-reason">
+      <summary>调度依据与约束</summary>
+    ${thresholds ? `<div class="dispatch-limits">汛限 ${thresholds.flood_limit_level_m.toFixed(2)} · 设计 ${thresholds.design_flood_level_m.toFixed(2)} · 校核 ${thresholds.check_flood_level_m.toFixed(2)} m</div>` : ""}
+      <p>${escapeHtml(decision.reason || "暂无判定依据")}</p>
+      <dl><div><dt>时段初水位（泄流能力依据）</dt><dd>${escapeHtml(formatReservoirLevel(decision.start_level_m))} m</dd></div><div><dt>预泄所需平均流量</dt><dd>${escapeHtml(formatReservoirFlow(decision.required_release_m3s))} m³/s</dd></div>
+      <div><dt>当前泄流能力</dt><dd>${escapeHtml(formatReservoirFlow(decision.available_release_m3s))} m³/s</dd></div>
+      <div><dt>全能力下泄预计最高水位</dt><dd>${escapeHtml(formatReservoirLevel(decision.forecast_max_level_full_m))} m</dd></div></dl>
+      <p class="dispatch-constraint">${escapeHtml(decision.constraint || "")}</p>
+      ${decision.curve_extrapolated ? '<p class="dispatch-constraint">本时段结果包含曲线范围外推。</p>' : ""}
+    </details>` : ""}
+    <footer class="dispatch-footnote">虚线为预计算 · 点击状态带查看 · 模拟调度</footer>
+  </div>`;
+}
+
+function reservoirDispatchTimelineHtml(selected) {
+  const points = reservoirDispatchPoints();
+  const segments = points.map((point) => {
+    const info = DISPATCH_STATES[point.reservoir_dispatch?.state];
+    const future = Date.parse(point.time) > Date.parse(state.reservoirTelemetryObservedAt);
+    const label = `${formatMockTime(point.time)} · ${future ? "未来预计算" : "已回放"} · ${info?.label || "暂无记录"}`;
+    return `<button type="button" class="dispatch-segment${future ? " is-future" : ""}" style="--dispatch-color:${info?.color || "#cbd5e1"}" data-dispatch-time="${escapeHtml(point.time)}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}" aria-pressed="${point.time === selected?.time}"></button>`;
+  }).join("");
+  const legend = Object.values(DISPATCH_STATES).map((info) => `<span style="--dispatch-color:${info.color}">${info.label}</span>`).join("");
+  return `<section class="dispatch-timeline"><strong>逐时调度状态</strong><div class="dispatch-track">${segments}</div><div class="dispatch-legend">${legend}</div></section>`;
+}
+
+function reservoirDispatchCursorHtml(timeline, width, bottom) {
+  const selected = selectedReservoirDispatchPoint();
+  const index = timeline.findIndex((point) => point.time === selected?.time);
+  if (index < 0) return "";
+  const x = reservoirChartXFactory(timeline.length, width)(index);
+  return `<line class="dispatch-cursor" x1="${x}" x2="${x}" y1="7" y2="${bottom}"></line>`;
+}
+
+function reservoirLevelChartHtml({ showSelection = true } = {}) {
   const observed = state.reservoirTelemetryHistory;
   const forecast = state.reservoirForecast?.series || [];
   const timeline = reservoirChartTimeline(observed, forecast);
   const levels = timeline
     .map((point) => finiteTelemetryNumber(point.reservoir_level_m))
     .filter((value) => value !== null);
-  const thresholds = state.reservoirAssessment?.thresholds;
+  const dispatchLimits = state.reservoirTelemetry?.reservoir_dispatch?.thresholds;
+  const thresholds = dispatchLimits ? {
+    normal_pool_level_m: dispatchLimits.flood_limit_level_m,
+    design_flood_level_m: dispatchLimits.design_flood_level_m,
+    check_flood_level_m: dispatchLimits.check_flood_level_m,
+  } : state.reservoirAssessment?.thresholds;
   if (!levels.length || !thresholds) return "";
 
-  const width = 280;
+  const width = 340;
   const chartTop = 12;
   const chartBottom = 94;
   const normalPool = Number(thresholds.normal_pool_level_m);
@@ -4596,6 +5116,7 @@ function reservoirLevelChartHtml() {
       <svg viewBox="0 0 ${width} 100" role="img" aria-label="实线为模拟观测，虚线为未来24小时预测">
         ${bands}
         ${thresholdLines}
+        ${showSelection ? reservoirDispatchCursorHtml(timeline, width, chartBottom) : ""}
         <path class="station-reservoir-level-line is-observed" d="${observedPath}"></path>
         <path class="station-reservoir-level-line is-forecast" d="${forecastPath}"></path>
         <line class="station-reservoir-now" x1="${nowX.toFixed(2)}" y1="7" x2="${nowX.toFixed(2)}" y2="${chartBottom + 2}"></line>
@@ -4605,7 +5126,7 @@ function reservoirLevelChartHtml() {
   `;
 }
 
-function reservoirFlowChartHtml() {
+function reservoirFlowChartHtml({ showSelection = true } = {}) {
   const observed = state.reservoirTelemetryHistory;
   const forecast = state.reservoirForecast?.series || [];
   const timeline = reservoirChartTimeline(observed, forecast);
@@ -4616,7 +5137,7 @@ function reservoirFlowChartHtml() {
   ]).filter((value) => value !== null);
   if (!values.length) return "";
 
-  const width = 280;
+  const width = 340;
   const chartTop = 12;
   const chartBottom = 82;
   const maxFlow = Math.max(1, ...values) * 1.08;
@@ -4652,9 +5173,11 @@ function reservoirFlowChartHtml() {
         <line class="station-reservoir-grid" x1="0" y1="${((chartTop + chartBottom) / 2).toFixed(2)}" x2="${width}" y2="${((chartTop + chartBottom) / 2).toFixed(2)}"></line>
         <line class="station-reservoir-axis" x1="0" y1="${chartBottom}" x2="${width}" y2="${chartBottom}"></line>
         ${paths}
+        ${showSelection ? reservoirDispatchCursorHtml(timeline, width, chartBottom) : ""}
         <line class="station-reservoir-now" x1="${nowX.toFixed(2)}" y1="7" x2="${nowX.toFixed(2)}" y2="${chartBottom + 2}"></line>
         <text class="station-reservoir-max-label" x="2" y="10">${escapeHtml(formatReservoirFlow(maxFlow))}</text>
       </svg>
+      ${reservoirChartTimesHtml(timeline, nowX / width * 100)}
     </div>
   `;
 }
@@ -4754,30 +5277,15 @@ async function focusObject(action = {}) {
   const selected = state.selected || {};
   const objectType = action.object_type || selected.object_type;
   const objectId = action.object_id || action.id || selected.id;
-  if (MAP_NON_SELECTABLE_OBJECTS.has(objectType)) {
-    await loadObject(objectType, action.filters || {}, { fit: false, label: action.label });
-    return false;
+  if (!objectType || !objectId || MAP_NON_SELECTABLE_OBJECTS.has(objectType)) {
+    throw new Error("缺少可定位的具体对象");
   }
-  if (!objectType || !objectId) {
-    fitAll();
-    return false;
-  }
-
-  await loadObject(objectType, action.filters || {}, { fit: false, label: action.label });
   let entry = state.featureIndex.get(featureIndexKey(objectType, objectId));
-  if (!entry) {
-    for (const [key, value] of state.featureIndex.entries()) {
-      if (key.startsWith(`${objectType}:`) && String(value.feature?.properties?.name || "") === String(objectId)) {
-        entry = value;
-        break;
-      }
-    }
+  if (!entry || !state.map.hasLayer(entry.layer)) {
+    await loadObject(objectType, {}, { fit: false, objectIds: [String(objectId)], label: action.label });
+    entry = state.featureIndex.get(featureIndexKey(objectType, objectId));
   }
-  if (!entry) {
-    addTrace("MISS", "未找到对象", `${objectType} ${objectId}`);
-    return false;
-  }
-
+  if (!entry) throw new Error(`未找到对象：${objectType} ${objectId}`);
   selectFeature(objectType, entry.feature, entry.layer);
   fitFeatureLayer(entry.layer);
   return true;
@@ -4795,7 +5303,9 @@ function applyFocus(layerItem, objectType) {
   }
   const isPoint = Boolean(layerItem.setRadius);
   const radius = pointRadius(objectType) + 1.6;
-  const style = isPoint
+  const style = objectType === "Catchment"
+    ? { ...featureStyle(objectType, layerItem.feature), weight: 3.5, fillOpacity: 0.1 }
+    : isPoint
     ? { radius, color: "#f8fafc", weight: 1.8, fillColor: "#f59e0b", fillOpacity: 0.96 }
     : { color: "#f59e0b", weight: 4, fillColor: "#f59e0b", fillOpacity: 0.28 };
   layerItem.setStyle?.(style);
@@ -4804,6 +5314,7 @@ function applyFocus(layerItem, objectType) {
 }
 
 function clearFocus() {
+  clearImpactRoadFocus();
   if (!state.focusedLayer) return;
   const objectType = state.focusedOriginalStyle?.objectType;
   if (state.focusedOriginalStyle?.iconMarker) {
@@ -4901,11 +5412,51 @@ function fitHighlighted() {
 }
 
 function detailHtml(objectType, props) {
+  if (objectType === "Catchment") {
+    return `<div class="muted"><strong>${escapeHtml(props.name)}</strong>
+      <div>集水面积：${basinNumber(props.area_km2)} km²</div>
+      <div>汇入水库：${escapeHtml(props.reservoir_name)}</div>
+      <div>对应雨量：水库上游分区面雨量</div>
+      <div>用于推演降雨形成的入库流量</div></div>`;
+  }
+  if (objectType === "Road") return roadDetailHtml(props);
+  if (objectType === "RoadRoute") return roadRouteDetailHtml(props);
   if (objectType === "EvacuationRoute") return routeDetailHtml(props);
   if (objectType === "Station") return stationDetailHtml(props);
   const keys = Object.keys(props).filter((key) => props[key] !== "" && props[key] !== null && key !== "geometry");
   const rows = keys.slice(0, 8).map((key) => `<div><strong>${escapeHtml(key)}</strong>: ${escapeHtml(String(props[key]))}</div>`);
   return `<div class="muted"><strong>${escapeHtml(OBJECT_CONFIG[objectType]?.label || objectType)}</strong>${rows.join("")}</div>`;
+}
+
+function roadDetailHtml(props) {
+  const rows = [
+    ["名称", props.name],
+    ["道路编号", props.ref || "未标注"],
+    ["类型", roadClassInfo(props).label],
+    ["路段ID", props.road_id],
+    ["路段长度", formatRouteDistance(props.length_m)],
+    ["通行方向", { F: "单向", T: "反向单向", B: "双向" }[props.one_way] || "未标注"],
+    ["桥上路段", props.bridge_flag ? "是" : "否"],
+    ["隧道路段", props.tunnel_flag ? "是" : "否"],
+  ];
+  const routes = (props.road_route_ids || []).map((id) => roadObjectButton("RoadRoute", id, id.replace("road_route_", ""))).join("");
+  return `<div class="muted"><strong>道路路段</strong>${rows.map(([label, value]) => `<div><strong>${label}</strong>: ${escapeHtml(String(value ?? "未标注"))}</div>`).join("")}
+    <div>所属编号道路：${routes || "未归属（缺少可靠编号）"}</div></div>`;
+}
+
+function roadObjectButton(objectType, objectId, label) {
+  return `<button type="button" class="road-object-link" data-road-object-type="${escapeHtml(objectType)}" data-road-object-id="${escapeHtml(String(objectId))}">${escapeHtml(String(label))}</button>`;
+}
+
+function roadRouteDetailHtml(props) {
+  const segments = (props.road_ids || []).map((id) => roadObjectButton("Road", id, id)).join("");
+  return `<div class="muted"><strong>${escapeHtml(props.ref)} · ${escapeHtml(props.name)}</strong>
+    <div>${escapeHtml(roadClassInfo(props).label)} · 已收录 ${escapeHtml(String(props.segment_count))} 段</div>
+    <div>共线路段：${escapeHtml(String(props.shared_segment_count))} 段</div>
+    <div>路段累计长度：${escapeHtml(formatRouteDistance(props.recorded_length_m))}（含双向线及匝道）</div>
+    <div>${escapeHtml(props.coverage_scope)}</div>
+    <details><summary>成员路段（点击定位）</summary><div class="road-member-list">${segments}</div></details>
+  </div>`;
 }
 
 function stationDetailHtml(props) {
@@ -4941,6 +5492,7 @@ function routeDetailHtml(props) {
     ["路线ID", props.evacuation_route_id],
     ["名称", props.name],
     ["方式", routeProfileLabel(props.profile)],
+    ["洪水校核", {initial_dry: "演示初始无洪水", not_checked: "未进行（历史记录）", checked: "已按预测校核"}[props.flood_validation]],
     ["距离", formatRouteDistance(props.length_m)],
     ["预计用时", formatRouteDuration(props.duration_s)],
     ["道路", props.road_detail],
@@ -5036,15 +5588,17 @@ async function onChatSubmit(event) {
   const message = input.value.trim();
   if (!message) return;
 
+  const selected = structuredClone(frontendAgentContext());
+  await refreshPlaybackStatus();
   settlePendingQuestion();
   input.value = "";
   addMessage("user", message);
   const assistant = addMessage("agent", "");
   addTrace("RUN", "Agent 执行中", message);
-  connectChatStream({ message, assistant });
+  connectChatStream({ message, assistant, selected });
 }
 
-function connectChatStream({ message = "", assistant, runId = "", since = 0 }) {
+function connectChatStream({ message = "", assistant, runId = "", since = 0, selected = null }) {
   const params = new URLSearchParams({
     session_id: state.sessionId,
     since: String(since || 0),
@@ -5053,68 +5607,84 @@ function connectChatStream({ message = "", assistant, runId = "", since = 0 }) {
     params.set("run_id", runId);
   } else {
     params.set("message", message);
-    params.set("selected", JSON.stringify(frontendAgentContext()));
+    params.set("selected", JSON.stringify(selected || frontendAgentContext()));
   }
   const es = new EventSource(`/api/agent/chat/stream?${params.toString()}`);
   state.activeStream = es;
   setSending(true);
 
-  es.addEventListener("run", (event) => {
+  const listen = (name, callback) => es.addEventListener(name, event => {
+    const data = JSON.parse(event.data);
+    if (data.workspace_id && data.workspace_id !== state.workspaceId) return;
+    callback(event);
+  });
+
+  listen("run", (event) => {
     const data = parseEvent(event);
     state.activeRunId = data.run_id;
   });
 
-  es.addEventListener("map_actions", async (event) => {
+  listen("map_actions", async (event) => {
     const data = parseEvent(event);
-    await executeActions(data.map_actions || []);
-    addTrace("MAP", "地图动作", (data.map_actions || []).map((item) => item.object_type || item.type).join(", "));
+    await enqueueMapActions(data);
   });
 
-  es.addEventListener("directive_draft", (event) => {
+  listen("directive_draft", (event) => {
     const data = parseEvent(event);
     openDirectiveDraft(data.draft || {});
     attachDirectiveDraftCard(assistant, data.draft || {});
     addTrace("COMMAND", "应急指令初稿已生成", data.draft?.title || "已打开指令编辑器");
   });
 
-  es.addEventListener("text", (event) => {
+  listen("text", (event) => {
     const data = parseEvent(event);
     appendMessageMarkdown(assistant, data.content || "");
     scrollChat();
   });
 
-  es.addEventListener("tool_call", (event) => {
+  listen("tool_call", (event) => {
     const data = parseEvent(event);
     addTrace("CALL", readableTool(data.name, data.args || {}), JSON.stringify(data.args || {}, null, 2));
   });
 
-  es.addEventListener("tool_result", (event) => {
+  listen("domain_result", (event) => {
     const data = parseEvent(event);
-    addTrace(data.blocked ? "BLOCK" : "RESULT", data.name || "tool result", compactText(data.result || ""));
-    if (!data.blocked && data.name === "analyze_inundation_impacts") {
-      registerImpactAnalysisResult(parseToolJsonResult(data.result));
+    if (data.name === "analyze_inundation_impacts") {
+      const generation = state.mapGeneration;
+      const applyResult = () => {
+        if (generation === state.mapGeneration) registerImpactAnalysisResult(data.result);
+      };
+      // A preceding forecast display loads asynchronously and may clear old analysis.
+      state.mapActionQueue = state.mapActionQueue.then(applyResult, applyResult);
     }
   });
 
-  es.addEventListener("reasoning", () => {});
-
-  es.addEventListener("debug", () => {});
-
-  es.addEventListener("confirmation_required", (event) => {
+  listen("tool_result", (event) => {
     const data = parseEvent(event);
-    addTrace("ASK", `需要确认: ${data.tool_name}`, JSON.stringify(data.args || {}, null, 2));
+    addTrace(data.blocked ? "BLOCK" : "RESULT", data.name || "tool result", compactText(data.result || ""));
+  });
+
+  listen("reasoning", () => {});
+
+  listen("debug", () => {});
+
+  listen("confirmation_required", (event) => {
+    const data = parseEvent(event);
+    const trace = addTrace("ASK", `需要确认: ${data.tool_name}`, JSON.stringify(data.args || {}, null, 2));
+    notifyAgentTrace({tag: "ASK", label: "需要确认", notification_key: state.activeRunId}, trace);
     appendConfirmation(data);
     finishStream(false);
   });
 
-  es.addEventListener("question", (event) => {
+  listen("question", (event) => {
     const data = parseEvent(event);
-    addTrace("ASK", "等待用户输入", data.question || "");
+    const trace = addTrace("ASK", "等待用户输入", data.question || "");
+    notifyAgentTrace({tag: "ASK", label: "等待用户输入", notification_key: state.activeRunId}, trace);
     appendQuestion(data);
     finishStream(false);
   });
 
-  es.addEventListener("done", () => {
+  listen("done", () => {
     if (!assistant.dataset.rawMarkdown?.trim()) setMessageMarkdown(assistant, "已完成。");
     finishStream(true);
   });
@@ -5144,6 +5714,12 @@ function stopActiveRun() {
 
 async function executeActions(actions) {
   for (const action of actions) {
+    if (action.type === "hide_hydrodynamic_mesh") {
+      removeObjectTypeLayers("HydrodynamicGridCell");
+    }
+    if (action.type === "hide_objects") {
+      hideMapObjects(action);
+    }
     if (action.type === "reset") {
       resetMap();
     }
@@ -5160,7 +5736,11 @@ async function executeActions(actions) {
         simplify_tolerance: action.simplify_tolerance,
         refresh: action.refresh,
         objectIds: action.object_ids,
-        replaceObjectType: action.replace_object_type || action.replaceObjectType,
+        mode: action.mode || "add",
+        selectionId: action.selection_id,
+        objectSetId: action.object_set_id,
+        replaceObjectIds: action.replace_object_ids,
+        highlight: action.highlight,
       });
     }
     if (action.type === "show_hydrodynamic_mesh") {
@@ -5567,7 +6147,7 @@ function latLngToTilePixel(lat, lon, z, origin) {
 function showEventMarker(event, action = {}) {
   const lon = Number(event.longitude);
   const lat = Number(event.latitude);
-  if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+  if (!Number.isFinite(lon) || !Number.isFinite(lat) || Math.abs(lon) > 180 || Math.abs(lat) > 90) throw new Error("事件坐标无效");
   const eventId = event.event_id || `${event.event_type}:${lon}:${lat}`;
   if (state.eventMarkers.has(eventId)) {
     const existing = state.eventMarkers.get(eventId);
@@ -5724,9 +6304,7 @@ function addTrace(tag, label, detail) {
   if (traceCount) traceCount.textContent = String(wrap.childElementCount);
   state.lastTrace = { key, item, count: 1 };
   wrap.scrollTop = wrap.scrollHeight;
-  if (String(label || "").trim() === "智能体结论") {
-    enqueueConclusionToast(label, detail);
-  }
+
   return item;
 }
 
@@ -5742,78 +6320,90 @@ function renderTraceDetail(tag, detail) {
   return `<details class="trace-detail-disclosure"><summary>${summary}</summary>${rendered}</details>`;
 }
 
-function enqueueConclusionToast(label, detail) {
-  const item = {
-    id: state.nextConclusionToastId++,
-    label: String(label || "智能体结论"),
-    detail: String(detail || ""),
-    dragX: 0,
-    dragY: 0,
-    element: null,
+function notifyAgentTrace(data, trace) {
+  const error = data.tag === "ERR" || data.tag === "BLOCK";
+  const needsInput = data.tag === "ASK";
+  if (!error && !needsInput && data.label !== "智能体结论") return;
+  const key = `${data.workspace_id || state.workspaceId || "manual"}:${data.notification_key || data.output_id || data.label}`;
+  const previous = state.agentNotification;
+  // Completed chains already dismissed or expired stay quiet on later stages.
+  if (!error && !needsInput && state.notificationChains.has(key) && previous?.key !== key) return;
+  state.notificationChains.add(key);
+  if (previous?.sticky && !error && !needsInput) return;
+  const title = error ? (data.label || "智能体处理失败") : needsInput ? "需要你的确认或补充" : "智能体研判已完成";
+  showAgentNotification({ key, title, trace, sticky: error || needsInput, needsInput, error });
+}
+
+function showAgentNotification({ key, title, trace, sticky = false, needsInput = false, error = false }) {
+  let item = state.agentNotification;
+  if (item?.key === key) {
+    item.trace = trace;
+    item.sticky = item.sticky || sticky;
+    item.needsInput = needsInput;
+    item.element.querySelector(".agent-notification-title").textContent = title;
+    item.element.querySelector(".agent-notification-view").textContent = needsInput ? "去处理" : error ? "查看原因" : "查看结论";
+    item.element.classList.toggle("is-attention", item.sticky);
+    pauseAgentNotification(item);
+    item.remaining = 6000;
+    resumeAgentNotification(item);
+    return;
+  }
+  dismissAgentNotification();
+  const element = document.createElement("article");
+  element.className = `agent-notification${sticky ? " is-attention" : ""}`;
+  element.innerHTML = `<span class="agent-notification-dot" aria-hidden="true"></span>
+    <strong class="agent-notification-title"></strong>
+    <button class="agent-notification-view" type="button">${needsInput ? "去处理" : error ? "查看原因" : "查看结论"}</button>
+    <button class="agent-notification-close" type="button" aria-label="关闭通知">×</button>`;
+  element.querySelector(".agent-notification-title").textContent = title;
+  item = { key, trace, sticky, needsInput, element, remaining: 6000, timer: null, started: 0, hovered: false };
+  state.agentNotification = item;
+  element.querySelector(".agent-notification-close").onclick = dismissAgentNotification;
+  element.querySelector(".agent-notification-view").onclick = () => {
+    setAgentDrawerOpen(true);
+    activateAgentPane(item.needsInput ? "chat" : "trace");
+    const target = item.needsInput ? document.getElementById("chatLog").lastElementChild : item.trace;
+    if (target?.isConnected) {
+      target.tabIndex = -1;
+      requestAnimationFrame(() => {
+        target.scrollIntoView({ block: "center", behavior: "smooth" });
+        target.focus({ preventScroll: true });
+        target.classList.add("is-notification-target");
+        window.setTimeout(() => target.classList.remove("is-notification-target"), 2200);
+      });
+    }
+    dismissAgentNotification();
   };
-  item.element = createConclusionToastElement(item);
-  state.conclusionToasts.push(item);
-  document.getElementById("conclusionToastRegion").appendChild(item.element);
-  bindConclusionToastDrag(item);
-  updateConclusionToastStack();
-  renderIcons();
-  requestAnimationFrame(() => {
-    item.element?.classList.add("is-visible");
-    clampConclusionToastsToMap();
-  });
+  element.addEventListener("mouseenter", () => { item.hovered = true; pauseAgentNotification(item); });
+  element.addEventListener("mouseleave", () => { item.hovered = false; resumeAgentNotification(item); });
+  element.addEventListener("focusin", () => pauseAgentNotification(item));
+  element.addEventListener("focusout", () => window.setTimeout(() => resumeAgentNotification(item), 0));
+  document.getElementById("agentNotificationRegion").appendChild(element);
+  resumeAgentNotification(item);
 }
 
-function createConclusionToastElement(item) {
-  const toast = document.createElement("article");
-  toast.className = "conclusion-toast";
-  toast.dataset.toastId = String(item.id);
-  toast.setAttribute("role", "status");
-  toast.innerHTML = `
-    <header class="conclusion-toast-drag-handle" title="拖动">
-      <div class="conclusion-toast-heading">
-        <i data-lucide="sparkles"></i>
-        <span>${escapeHtml(item.label)}</span>
-      </div>
-      <div class="conclusion-toast-header-actions">
-        <span class="conclusion-toast-queue" hidden></span>
-        <i class="conclusion-toast-grip" data-lucide="grip-horizontal" aria-hidden="true"></i>
-      </div>
-    </header>
-    <div class="conclusion-toast-body markdown-body">${renderMarkdown(item.detail)}</div>
-    <footer>
-      <button class="conclusion-dismiss" type="button" aria-label="关闭智能体结论">
-        <i data-lucide="x"></i>
-        <span>关闭</span>
-      </button>
-    </footer>
-  `;
-  toast.querySelector(".conclusion-dismiss").addEventListener("click", () => {
-    dismissConclusionToast(item.id);
-  });
-  return toast;
+function pauseAgentNotification(item) {
+  if (item.timer !== null) {
+    clearTimeout(item.timer);
+    item.remaining = Math.max(0, item.remaining - (performance.now() - item.started));
+    item.timer = null;
+  }
 }
 
-function dismissConclusionToast(id) {
-  const index = state.conclusionToasts.findIndex((item) => item.id === id);
-  if (index < 0) return;
-  const [item] = state.conclusionToasts.splice(index, 1);
-  item.element?.remove();
-  updateConclusionToastStack();
+function resumeAgentNotification(item) {
+  if (state.agentNotification !== item || item.sticky || item.hovered || item.element.contains(document.activeElement) || item.timer !== null) return;
+  item.started = performance.now();
+  item.timer = window.setTimeout(() => {
+    if (state.agentNotification === item) dismissAgentNotification();
+  }, item.remaining);
 }
 
-function updateConclusionToastStack() {
-  const total = state.conclusionToasts.length;
-  state.conclusionToasts.forEach((item, index) => {
-    const depth = Math.min(index, 4);
-    item.element.style.setProperty("--stack-x", `${depth * 7}px`);
-    item.element.style.setProperty("--stack-y", `${depth * 8}px`);
-    item.element.style.setProperty("--drag-x", `${item.dragX}px`);
-    item.element.style.setProperty("--drag-y", `${item.dragY}px`);
-    item.element.style.zIndex = String(Math.max(1, 1000 - index));
-    const count = item.element.querySelector(".conclusion-toast-queue");
-    count.hidden = index !== 0 || total < 2;
-    count.textContent = index === 0 && total > 1 ? `+${total - 1}` : "";
-  });
+function dismissAgentNotification() {
+  const item = state.agentNotification;
+  if (!item) return;
+  pauseAgentNotification(item);
+  item.element.remove();
+  state.agentNotification = null;
 }
 
 function bindConclusionToastDrag(item) {
@@ -5888,7 +6478,7 @@ function clampConclusionToastsToMap() {
   if (!bounds || !region) return;
   const availableHeight = Math.max(72, bounds.bottom - bounds.top - 108);
   region.style.setProperty("--conclusion-body-max-height", `${Math.min(360, availableHeight)}px`);
-  const items = [...state.conclusionToasts];
+  const items = [];
   if (state.directiveToast?.element && !state.directiveToast.element.hidden) {
     items.push(state.directiveToast);
   }
@@ -5930,8 +6520,12 @@ function frontendAgentContext() {
   const selected = state.selected || {};
   return {
     ...selected,
+    workspace_id: state.workspaceId,
     map_time_context: { ...state.mapTimeContext },
     hydrodynamic_timeline: currentHydrodynamicTimelineContext(),
+    visible_selections: visibleMapSelections(),
+    visible_layers: Array.from(state.layerMeta.values(), meta => ({object_type: meta.objectType, label: meta.label, selection_id: meta.selectionId})),
+    map_action_receipts: Array.from(state.mapActionReceipts.values()).slice(-8),
   };
 }
 
@@ -5984,12 +6578,15 @@ function parseToolJsonResult(value) {
 }
 
 function registerImpactAnalysisResult(result, options = {}) {
+  state.impactRequested = true;
   if (!result || typeof result !== "object") return;
-  if (!["completed", "no_forecast_cells"].includes(result.status)) return;
+  if (!["completed", "partial", "no_forecast_cells"].includes(result.status)) return;
   const params = result.parameters || {};
   state.impactAnalysis = {
     forecastId: result.forecast_id || "latest",
     targetType: result.target_type || "all",
+    objectIds: result.analysis_scope?.requested_object_ids ?? null,
+    filters: result.analysis_scope?.filters || {},
     minDepthM: Number(params.min_depth_m ?? 0.15),
     maxDistanceM: Number(params.max_distance_m ?? 10),
     bridgeInfluenceRadiusM: Number(params.bridge_influence_radius_m ?? 80),
@@ -6012,6 +6609,8 @@ function registerImpactAnalysisResult(result, options = {}) {
 }
 
 function scheduleImpactAnalysisRefresh() {
+  renderImpactReadiness();
+  if (!state.impactRequested) return;
   if (!["time_slice", "envelope"].includes(currentHydrodynamicTimelineContext().mode)) return;
   if (state.hydrodynamicTimeline.playing) return;
   if (state.impactRefreshTimer) window.clearTimeout(state.impactRefreshTimer);
@@ -6031,13 +6630,15 @@ async function refreshImpactAnalysisForTimeline() {
     || "latest";
   const params = new URLSearchParams({
     forecast_id: forecastId,
-    target_type: "all",
-    min_depth_m: "0.15",
-    max_distance_m: "10",
+    target_type: state.impactAnalysis?.targetType || "all",
+    min_depth_m: String(state.impactAnalysis?.minDepthM ?? 0.15),
+    max_distance_m: String(state.impactAnalysis?.maxDistanceM ?? 10),
     bridge_influence_radius_m: String(
       state.impactAnalysis?.bridgeInfluenceRadiusM ?? 80,
     ),
   });
+  if (state.impactAnalysis?.objectIds != null) params.set("object_ids", JSON.stringify(state.impactAnalysis.objectIds));
+  if (state.impactAnalysis?.filters) params.set("filters", JSON.stringify(state.impactAnalysis.filters));
   if (timeline.mode === "time_slice") {
     params.set("time_h", String(timeline.current_hydrodynamic_time_h));
   }
@@ -6045,6 +6646,7 @@ async function refreshImpactAnalysisForTimeline() {
   const controller = new AbortController();
   state.impactRefreshController?.abort();
   state.impactRefreshController = controller;
+  renderImpactReadiness();
   setImpactAnalysisLoading(
     timeline.current_hydrodynamic_time_h,
     timeline.current_hydrodynamic_valid_at,
@@ -6060,6 +6662,7 @@ async function refreshImpactAnalysisForTimeline() {
     }
     if (!res.ok) throw new Error(await res.text());
     const result = await res.json();
+    if (result.error) throw new Error(result.error);
     if (seq !== state.impactRefreshSeq) return;
     registerImpactAnalysisResult(result, { render: false });
     renderImpactAnalysisResult(result);
@@ -6071,6 +6674,7 @@ async function refreshImpactAnalysisForTimeline() {
   } finally {
     if (state.impactRefreshController === controller) {
       state.impactRefreshController = null;
+      renderImpactReadiness();
     }
   }
 }
@@ -6078,6 +6682,7 @@ async function refreshImpactAnalysisForTimeline() {
 function setImpactAnalysisLoading(hour, validAt = null, mode = "time_slice") {
   const panel = document.getElementById("impactPanel");
   panel?.classList.add("is-loading");
+  panel?.setAttribute("aria-busy", "true");
   const count = document.getElementById("impactCount");
   const time = document.getElementById("impactTimeLabel");
   const status = document.getElementById("impactStatus");
@@ -6093,6 +6698,12 @@ function setImpactAnalysisLoading(hour, validAt = null, mode = "time_slice") {
 
 function setImpactAnalysisError(error) {
   document.getElementById("impactPanel")?.classList.remove("is-loading");
+  document.getElementById("impactPanel")?.setAttribute("aria-busy", "false");
+  const notice = document.getElementById("impactNotice");
+  notice.hidden = false;
+  notice.textContent = "本次分析失败，下方保留的是上一次结果。";
+  const previous = state.impactAnalysis?.lastResult;
+  if (previous) setImpactScopeLabel(document.getElementById("impactTimeLabel"), previous.time_h, previous.analysis_time_at, previous.time_h == null);
   const status = document.getElementById("impactStatus");
   if (status) {
     status.textContent = "分析失败";
@@ -6112,7 +6723,8 @@ function setImpactAnalysisUnavailable() {
 }
 
 function isDomainOSForecastProductId(value) {
-  return String(value || "").startsWith("water.flood.forecast/");
+  const selected = String(value || "");
+  return selected.startsWith("water.flood.forecast/") || selected.startsWith("fcst_");
 }
 
 function setImpactScopeLabel(element, hour, validAt, envelope = false) {
@@ -6123,19 +6735,17 @@ function setImpactScopeLabel(element, hour, validAt, envelope = false) {
     return;
   }
   const offset = `+${formatHydrodynamicHour(hour)}h`;
-  const actual = formatForecastActualTime(validAt);
-  element.textContent = actual ? `${offset} · ${actual}` : offset;
+  const actual = formatForecastActualTime(validAt, true);
+  element.textContent = actual ? `预测时刻 · ${actual}` : `预测时刻 · ${offset}`;
   element.title = `分析范围：${formatHydrodynamicTimeLabel(hour, validAt)}`;
 }
 
 function renderImpactAnalysisResult(result) {
-  const impacts = (result?.impacts || []).filter((impact) => (
-    impact?.object_type
-    && impact?.object_id != null
-    && Number.isFinite(Number(impact.longitude))
-    && Number.isFinite(Number(impact.latitude))
-  ));
-  const currentKeys = new Set(impacts.map(impactObjectKey));
+  state.impactRequested = true;
+  const { impacts, nearby, routes: routeImpacts } = impactListData(result);
+  const detailImpacts = [...impacts, ...nearby, ...routeImpacts,
+    ...routeImpacts.flatMap((item) => [...(item.segment_impacts || []), ...(item.nearby_segment_impacts || [])])];
+  const currentKeys = new Set(detailImpacts.map(impactObjectKey));
   if (state.selectedImpactKey && !currentKeys.has(state.selectedImpactKey)) {
     clearImpactObjectSelection({ removeLayer: true });
   }
@@ -6143,15 +6753,16 @@ function renderImpactAnalysisResult(result) {
     ...(state.impactAnalysis || {}),
     lastResult: result,
   };
-  renderImpactMarkers(impacts);
-  renderImpactList(result, impacts);
-  updateSelectedImpactDetails(impacts);
+  renderImpactMarkers([...impacts, ...nearby]);
+  renderImpactList(result);
+  renderImpactReadiness();
+  updateSelectedImpactDetails(detailImpacts);
 }
 
 function renderImpactMarkers(impacts) {
   state.impactMarkerLayer?.clearLayers();
   state.impactMarkers.clear();
-  impacts.forEach((impact) => {
+  impacts.filter(impactHasLocation).forEach((impact) => {
     const key = impactObjectKey(impact);
     const selected = key === state.selectedImpactKey;
     const marker = L.marker([Number(impact.latitude), Number(impact.longitude)], {
@@ -6179,7 +6790,7 @@ function impactMarkerIcon(impact, selected = false) {
     ? impact.risk_level
     : "unknown";
   return L.divIcon({
-    className: `impact-point-marker is-${riskLevel}${selected ? " is-selected" : ""}`,
+    className: `impact-point-marker is-${riskLevel}${impact.impact_status === "nearby_flood" ? " is-nearby" : ""}${selected ? " is-selected" : ""}`,
     html: '<span class="impact-point-core" aria-hidden="true"></span>',
     iconSize: [16, 16],
     iconAnchor: [8, 8],
@@ -6189,59 +6800,334 @@ function impactMarkerIcon(impact, selected = false) {
 
 function impactTooltipHtml(impact) {
   const depthLabel = impactDepthLabel(impact);
-  const status = impactPassabilityLabel(impact.passability_status);
+  const status = impactStatusLabel(impact) || impactPassabilityLabel(impact.passability_status);
   return `<strong>${escapeHtml(impact.name || impact.object_id)}</strong><br>${escapeHtml(impactTypeLabel(impact.object_type))} · ${escapeHtml(depthLabel)} ${formatImpactNumber(impact.depth_m, 2)} m${status ? `<br>${escapeHtml(status)}` : ""}`;
 }
 
-function renderImpactList(result, impacts) {
+function impactHasLocation(impact) {
+  return impact.longitude != null && impact.latitude != null
+    && Number.isFinite(Number(impact.longitude)) && Number.isFinite(Number(impact.latitude));
+}
+
+function uniqueImpactObjects(items) {
+  return [...new Map(items.filter((item) => item?.object_type && item.object_id != null)
+    .map((item) => [impactObjectKey(item), item])).values()];
+}
+
+function impactListData(result) {
+  const routes = uniqueImpactObjects([
+    ...(result?.road_route_impacts || []), ...(result?.road_route_nearby_impacts || []),
+    ...(result?.impacts || []).filter((item) => item.object_type === "RoadRoute"),
+    ...(result?.nearby_impacts || []).filter((item) => item.object_type === "RoadRoute"),
+  ]);
+  // Count leaf objects once, even for a RoadRoute-only result or shared road segments.
+  const impacts = uniqueImpactObjects([
+    ...(result?.impacts || []).filter((item) => item.object_type !== "RoadRoute"),
+    ...routes.flatMap((route) => route.segment_impacts || []),
+  ]);
+  const affectedKeys = new Set(impacts.map(impactObjectKey));
+  const nearby = uniqueImpactObjects([
+    ...(result?.nearby_impacts || []).filter((item) => item.object_type !== "RoadRoute"),
+    ...routes.flatMap((route) => route.nearby_segment_impacts || []),
+  ]).filter((item) => !affectedKeys.has(impactObjectKey(item)));
+  return { impacts, nearby, routes };
+}
+
+function impactGroupLabel(type) {
+  return type === "Road" ? "道路" : impactTypeLabel(type);
+}
+
+function bindImpactListControls() {
+  const tabs = [...document.querySelectorAll("[data-impact-tab]")];
+  tabs.forEach((button, index) => {
+    button.addEventListener("click", () => {
+      state.impactListView.tab = button.dataset.impactTab;
+      refreshImpactListView();
+    });
+    button.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
+        : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+      tabs[next].focus();
+      tabs[next].click();
+    });
+  });
+  document.getElementById("impactTypeFilter").addEventListener("change", (event) => {
+    state.impactListView.type = event.target.value;
+    refreshImpactListView();
+  });
+}
+
+function refreshImpactListView() {
+  const result = state.impactAnalysis?.lastResult;
+  if (result) renderImpactList(result);
+  else updateImpactListControls({ impacts: [], nearby: [] });
+}
+
+function updateImpactListControls(data, noData = false) {
+  const view = state.impactListView;
+  document.querySelectorAll("[data-impact-tab]").forEach((button) => {
+    const active = button.dataset.impactTab === view.tab;
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
+  });
+  document.getElementById("impactCount").textContent = noData ? "--" : data.impacts.length;
+  document.getElementById("impactNearbyCount").textContent = noData ? "--" : data.nearby.length;
+  document.getElementById("impactList").setAttribute("aria-labelledby", view.tab === "nearby" ? "impactNearbyTab" : "impactAffectedTab");
+  const rows = view.tab === "nearby" ? data.nearby : data.impacts;
+  const types = [...new Set([...data.impacts, ...data.nearby].map((item) => item.object_type))];
+  if (view.type !== "all" && !types.includes(view.type)) types.push(view.type);
+  types.sort((a, b) => (a === "Road" ? -1 : b === "Road" ? 1 : impactGroupLabel(a).localeCompare(impactGroupLabel(b), "zh-CN")));
+  const select = document.getElementById("impactTypeFilter");
+  select.replaceChildren(new Option("全部类型", "all"), ...types.map((type) => (
+    new Option(`${impactGroupLabel(type)} (${rows.filter((item) => item.object_type === type).length})`, type)
+  )));
+  select.value = view.type;
+}
+
+function rememberImpactListPosition(list) {
+  const view = state.impactListView;
+  if (!view.renderedKey || !list.clientHeight) return;
+  const top = list.getBoundingClientRect().top;
+  const anchor = [...list.querySelectorAll("[data-impact-row]")].find((row) => (
+    row.getClientRects().length && row.getBoundingClientRect().bottom > top
+  ));
+  // Retain the last position when a time slice temporarily has no matching objects.
+  if (!anchor) return;
+  view.positions.set(view.renderedKey, {
+    top: list.scrollTop,
+    anchor: anchor.dataset.impactRow,
+    offset: anchor.getBoundingClientRect().top - top,
+  });
+}
+
+function restoreImpactListPosition(list) {
+  const view = state.impactListView;
+  view.renderedKey = `${view.tab}:${view.type}`;
+  const position = view.positions.get(view.renderedKey);
+  list.scrollTop = position?.top || 0;
+  if (!position?.anchor) return;
+  const anchor = [...list.querySelectorAll("[data-impact-row]")].find((row) => row.dataset.impactRow === position.anchor);
+  if (anchor?.getClientRects().length) {
+    list.scrollTop += anchor.getBoundingClientRect().top - list.getBoundingClientRect().top - position.offset;
+  }
+}
+
+function renderImpactList(result) {
   const panel = document.getElementById("impactPanel");
   const count = document.getElementById("impactCount");
   const time = document.getElementById("impactTimeLabel");
   const status = document.getElementById("impactStatus");
   const list = document.getElementById("impactList");
-  if (!panel || !count || !time || !status || !list) return;
+  const notice = document.getElementById("impactNotice");
+  const data = impactListData(result);
+  const { impacts, nearby } = data;
+  const view = state.impactListView;
+  rememberImpactListPosition(list);
+  const focusedControl = list.contains(document.activeElement) ? document.activeElement.dataset.impactControl : null;
   panel.classList.remove("is-loading");
-  count.textContent = `${impacts.length} 个`;
-  setImpactScopeLabel(
-    time,
-    result?.time_h,
-    result?.analysis_time_at,
-    result?.time_h == null,
-  );
+  panel.setAttribute("aria-busy", "false");
+  count.title = "预测影响对象数；道路按唯一路段统计，编号道路汇总不重复计数";
+  setImpactScopeLabel(time, result?.time_h, result?.analysis_time_at, result?.time_h == null);
   status.textContent = impacts.length ? "已分析" : "未发现";
-  status.title = impacts.length
-    ? `按水深与风险排序，共 ${impacts.length} 个对象`
-    : (result?.time_h == null
-      ? "未来24小时最大包络未发现受影响对象"
-      : "当前预测时刻未发现受影响对象");
-  list.innerHTML = "";
-  impacts.forEach((impact) => {
-    const key = impactObjectKey(impact);
-    const iconInfo = objectIconInfo(impact.object_type, impact);
-    const symbol = window.FloodMapSymbols?.render(iconInfo.icon) || "";
-    const button = document.createElement("button");
-    const passability = impactPassabilityLabel(impact.passability_status);
-    button.type = "button";
-    button.className = "impact-list-item";
-    button.classList.toggle("is-selected", key === state.selectedImpactKey);
-    button.dataset.impactKey = key;
-    button.innerHTML = `
-      <span class="impact-list-symbol object-symbol-${escapeHtml(iconInfo.key)}">
-        <span class="impact-object-icon" title="${escapeHtml(iconInfo.label)}" aria-hidden="true">${symbol}</span>
-        <span class="impact-risk-dot is-${escapeHtml(impact.risk_level || "unknown")}" role="img" aria-label="${escapeHtml(impactRiskLabel(impact.risk_level))}"></span>
-      </span>
-      <span class="impact-list-copy">
-        <strong>${escapeHtml(impact.name || impact.object_id)}</strong>
-        <small>${escapeHtml(impactTypeLabel(impact.object_type))}${passability ? ` · ${escapeHtml(passability)}` : ""} · ${escapeHtml(String(impact.object_id))}</small>
-      </span>
-      <span class="impact-list-depth" title="${escapeHtml(impactDepthLabel(impact))}">${formatImpactNumber(impact.depth_m, 2)}<small>m</small></span>
-    `;
-    button.addEventListener("click", () => void focusImpactObject(impact));
-    list.appendChild(button);
-  });
-  if (panel.classList.contains("is-floating")) {
-    window.requestAnimationFrame(() => clampMapPanelToStage(panel));
+  status.title = "仅表示预测影响；道路通行状态需另行判定";
+  const noData = result?.status === "no_forecast_cells";
+  notice.hidden = true;
+  if (noData) {
+    count.textContent = "--";
+    status.textContent = "无预测数据";
+    status.title = "缺少对应预测数据，无法判定受影响对象";
+  } else if (result?.status === "partial") {
+    status.textContent = "部分未评估";
+    const unassessed = result.linear_analysis?.unassessed_objects?.length || 0;
+    const skipped = result.linear_analysis?.skipped_cell_ids?.length || 0;
+    notice.textContent = [unassessed ? `${unassessed} 个对象未评估` : "", skipped ? `${skipped} 个网格几何无效` : ""].filter(Boolean).join("；") || "部分几何缺失或无效";
+    notice.textContent += "，不能据此判断安全。";
+    notice.hidden = false;
+  } else if (!impacts.length && nearby.length) {
+    status.textContent = "需核查";
+    status.title = `未发现预测影响，另有 ${nearby.length} 个对象邻近积水`;
   }
+  updateImpactListControls(data, noData);
+  const rows = (view.tab === "nearby" ? nearby : impacts).filter((item) => view.type === "all" || item.object_type === view.type);
+  list.replaceChildren();
+  if (!rows.length || noData) {
+    const empty = document.createElement("p");
+    empty.className = "impact-empty";
+    empty.textContent = noData ? "当前范围无可用预测网格，无法判断影响。"
+      : view.type !== "all" ? `当前${view.tab === "nearby" ? "邻近积水" : "预测影响"}结果中没有${impactGroupLabel(view.type)}。可切换对象类型查看。`
+      : view.tab === "nearby" ? "当前分析范围内未发现仅邻近积水的对象。"
+      : "当前分析范围内未发现预测影响对象。";
+    list.appendChild(empty);
+  } else {
+    const groups = new Map();
+    rows.forEach((item) => {
+      if (!groups.has(item.object_type)) groups.set(item.object_type, []);
+      groups.get(item.object_type).push(item);
+    });
+    // Keep categories stable as depths change. Within a category show risk, then depth.
+    const order = ["Road", "Bridge", "EvacuationRoute", "EvacuationUnit", "EvacuationSite", "Facility", "Station"];
+    [...groups].sort(([a], [b]) => (order.indexOf(a) < 0 ? 99 : order.indexOf(a)) - (order.indexOf(b) < 0 ? 99 : order.indexOf(b)))
+      .forEach(([type, items]) => {
+        const section = document.createElement("details");
+        section.className = "impact-group";
+        section.dataset.impactGroup = type;
+        const expansionKey = `${view.tab}:group:${type}`;
+        section.open = view.expanded.get(expansionKey) ?? (type === "Road" || view.type !== "all" || groups.size === 1);
+        const heading = document.createElement("summary");
+        heading.dataset.impactRow = heading.dataset.impactControl = `group:${type}`;
+        heading.innerHTML = `<span>${escapeHtml(impactGroupLabel(type))}</span><span class="impact-group-count">${items.length} ${type === "Road" ? "段" : "个"}</span>`;
+        section.appendChild(heading);
+        section.addEventListener("toggle", () => {
+          if (section.isConnected) view.expanded.set(expansionKey, section.open);
+        });
+        if (type === "Road") renderImpactRoads(section, items, data.routes);
+        else sortImpactListItems(items).forEach((item) => section.appendChild(impactListItem(item)));
+        list.appendChild(section);
+      });
+  }
+  document.getElementById("impactListSummary").textContent = noData ? "无预测数据不代表无影响"
+    : view.tab === "nearby" ? `${rows.length} 个待核查 · 不计入预测影响数`
+    : `显示 ${rows.length} / ${impacts.length} 个对象 · 道路按唯一路段计数`;
+  restoreImpactListPosition(list);
+  if (focusedControl) {
+    [...list.querySelectorAll("[data-impact-control]")].find((item) => item.dataset.impactControl === focusedControl)?.focus({ preventScroll: true });
+  }
+  if (panel.classList.contains("is-floating")) window.requestAnimationFrame(() => clampMapPanelToStage(panel));
+}
+
+function sortImpactListItems(items) {
+  const rank = { critical: 4, high: 3, medium: 2, low: 1 };
+  return [...items].sort((a, b) => (rank[b.risk_level] || 0) - (rank[a.risk_level] || 0)
+    || Number(b.depth_m || 0) - Number(a.depth_m || 0)
+    || String(a.object_id).localeCompare(String(b.object_id)));
+}
+
+function impactRouteName(route) {
+  return [...new Set([route.ref, route.name].map((value) => String(value || "").trim()).filter(Boolean))].join(" · ") || String(route.object_id);
+}
+
+function impactRouteForTab(route, tab) {
+  if (tab !== "nearby" || !route.nearby_segment_impacts?.length) return route;
+  const members = route.nearby_segment_impacts;
+  const deepest = members.reduce((a, b) => Number(a.depth_m) >= Number(b.depth_m) ? a : b);
+  return {
+    ...route,
+    ...Object.fromEntries(["depth_m", "velocity_mps", "depth_source", "velocity_source", "risk_basis", "longitude", "latitude", "mesh_cell_id", "forecast_cell_id", "risk_level"].map((key) => [key, deepest[key]])),
+    impact_status: "nearby_flood",
+    depth_basis: "nearby_forecast_cells",
+    passability_status: "inspection_required",
+    structure_unverified_segment_count: 0,
+    nearest_distance_m: Math.min(...members.map((item) => Number(item.nearest_distance_m ?? item.distance_m))),
+    distance_m: Math.min(...members.map((item) => Number(item.nearest_distance_m ?? item.distance_m))),
+  };
+}
+
+function renderImpactRoads(container, roads, routes) {
+  const view = state.impactListView;
+  const memberField = view.tab === "nearby" ? "nearby_segment_impacts" : "segment_impacts";
+  const byKey = new Map(roads.map((item) => [impactObjectKey(item), item]));
+  const grouped = new Set();
+  const memberships = new Map();
+  const groups = routes.map((route) => ({
+    route,
+    members: uniqueImpactObjects(route[memberField] || []).map((item) => byKey.get(impactObjectKey(item))).filter(Boolean),
+  })).filter(({ members }) => members.length);
+  groups.forEach(({ members }) => members.forEach((item) => memberships.set(impactObjectKey(item), (memberships.get(impactObjectKey(item)) || 0) + 1)));
+  groups.forEach(({ route, members }) => {
+    const key = impactObjectKey(route);
+    const name = impactRouteName(route);
+    const expansionKey = `${view.tab}:route:${key}`;
+    const section = document.createElement("div");
+    section.className = "impact-road-route";
+    const head = document.createElement("div");
+    head.className = "impact-route-header";
+    head.dataset.impactRow = `route:${key}`;
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "impact-route-toggle";
+    toggle.dataset.impactControl = `toggle:${key}`;
+    toggle.innerHTML = '<span aria-hidden="true">›</span>';
+    const children = document.createElement("div");
+    children.className = "impact-route-members";
+    children.id = `impact-members-${encodeURIComponent(String(route.object_id))}`;
+    const setOpen = (open) => {
+      children.hidden = !open;
+      toggle.setAttribute("aria-expanded", String(open));
+      toggle.setAttribute("aria-label", `${open ? "收起" : "展开"}${name}的路段`);
+    };
+    toggle.setAttribute("aria-controls", children.id);
+    setOpen(view.expanded.get(expansionKey) ?? false);
+    toggle.addEventListener("click", () => {
+      const open = children.hidden;
+      view.expanded.set(expansionKey, open);
+      setOpen(open);
+    });
+    const routeView = impactRouteForTab(route, view.tab);
+    const button = impactListItem(routeView, { title: name });
+    button.classList.add("impact-route-focus");
+    button.querySelector(".impact-list-evidence").textContent = `已收录 ${route.recorded_segment_count} 段 · ${members.length} 段${view.tab === "nearby" ? "邻近积水" : "相交"}`;
+    head.append(toggle, button);
+    members.forEach((item) => {
+      grouped.add(impactObjectKey(item));
+      children.appendChild(impactListItem(item, {
+        title: item.name && ![route.name, route.ref].includes(item.name) ? `${item.name} · 路段 ${item.object_id}` : `路段 ${item.object_id}`,
+        parentKey: key,
+        shared: memberships.get(impactObjectKey(item)) > 1,
+      }));
+    });
+    section.append(head, children);
+    container.appendChild(section);
+  });
+  const ungrouped = roads.filter((item) => !grouped.has(impactObjectKey(item)));
+  if (ungrouped.length) {
+    const label = document.createElement("div");
+    label.className = "impact-ungrouped-label";
+    label.textContent = `未归属编号道路 · ${ungrouped.length} 段`;
+    container.appendChild(label);
+    sortImpactListItems(ungrouped).forEach((item) => container.appendChild(impactListItem(item)));
+  }
+  const note = document.createElement("p");
+  note.className = "impact-road-note";
+  note.textContent = `仅统计已收录路段${[...memberships.values()].some((count) => count > 1) ? "；共线路段在各道路下列出，总数去重" : "；道路汇总不重复计数"}`;
+  container.appendChild(note);
+}
+
+function impactListItem(impact, options = {}) {
+  const key = impactObjectKey(impact);
+  const isNearby = impact.impact_status === "nearby_flood";
+  const linear = ["Road", "EvacuationRoute"].includes(impact.object_type);
+  const needsElevation = impact.impact_status === "structure_overlap_unverified" || impact.data_quality === "insufficient_bridge_elevation" || impact.structure_unverified_segment_count > 0;
+  const iconInfo = objectIconInfo(impact.object_type, impact);
+  const symbol = window.FloodMapSymbols?.render(iconInfo.icon) || "";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `impact-list-item${isNearby ? " is-nearby" : ""}`;
+  button.classList.toggle("is-selected", key === state.selectedImpactKey);
+  button.dataset.impactKey = key;
+  button.dataset.impactRow = button.dataset.impactControl = `${options.parentKey || "object"}/${key}`;
+  let evidence = isNearby ? `邻近网格最大水深 ${formatImpactNumber(impact.depth_m, 3)} m`
+    : linear ? `相交 ${formatImpactNumber(impact.overlap_length_m, 1)} m · ${impact.intersecting_mesh_cell_ids?.length || 0} 个网格`
+    : impact.object_type === "Bridge" ? (impact.impact_status === "bridge_approach_inundated" ? "桥头影响区积水" : "桥梁影响区积水")
+    : `预测网格 ${impact.mesh_cell_id || "--"}`;
+  const title = options.title || impact.name || `${impactTypeLabel(impact.object_type)} ${impact.object_id}`;
+  const value = isNearby ? formatImpactNumber(impact.nearest_distance_m ?? impact.distance_m, 1) : formatImpactNumber(impact.depth_m, 3);
+  const metric = isNearby ? "距积水边界" : linear || impact.object_type === "RoadRoute" ? "相交网格最大水深" : impact.object_type === "Bridge" ? "洪泛区最大水深" : "预测网格水深";
+  button.title = `${title} · ${evidence} · ${metric} ${value} m · ID ${impact.object_id}`;
+  button.innerHTML = `
+    <span class="impact-list-symbol object-symbol-${escapeHtml(iconInfo.key)}">
+      <span class="impact-object-icon" aria-hidden="true">${symbol}</span>
+      <span class="impact-risk-dot is-${escapeHtml(impact.risk_level || "unknown")}" role="img" aria-label="${escapeHtml(impactRiskLabel(impact.risk_level))}"></span>
+    </span>
+    <span class="impact-list-copy">
+      <strong>${escapeHtml(title)}</strong>
+      <small class="impact-list-evidence">${escapeHtml(evidence)}</small>
+      ${needsElevation || isNearby || options.shared ? `<span class="impact-item-badges">${needsElevation ? '<span>高程待核查</span>' : ""}${isNearby ? '<span>需核查</span>' : ""}${options.shared ? '<span class="is-shared">共线路段</span>' : ""}</span>` : ""}
+    </span>
+    <span class="impact-list-depth"><b>${value}<small>m</small></b><span>${metric}</span></span>`;
+  button.addEventListener("click", () => void focusImpactObject(impact));
+  return button;
 }
 
 async function focusImpactObject(impact) {
@@ -6254,6 +7140,7 @@ async function focusImpactObject(impact) {
     state.selectedImpactLayerKey = null;
   }
   state.selectedImpactKey = key;
+  state.selectedImpactTab = impact.impact_status === "nearby_flood" ? "nearby" : "affected";
   updateImpactSelectionStyles();
 
   let entry = state.featureIndex.get(featureIndexKey(objectType, objectId));
@@ -6285,11 +7172,91 @@ async function focusImpactObject(impact) {
     updateImpactSelectionStyles();
     return;
   }
-  selectFeature(objectType, entry.feature, entry.layer);
+  if (objectType === "RoadRoute") {
+    clearFocus();
+    state.selected = { object_type: objectType, id: objectId, name: impactRouteName(impact) };
+  } else {
+    selectFeature(objectType, entry.feature, entry.layer);
+  }
+  setLayerPanelOpen(true);
   entry.layer.setPopupContent?.(impactPopupHtml(impact));
-  entry.layer.openPopup?.();
+  entry.layer.openPopup?.(impactHasLocation(impact) ? [Number(impact.latitude), Number(impact.longitude)] : undefined);
   document.getElementById("selectedObject").innerHTML = impactDetailHtml(impact, entry.feature?.properties || {});
-  fitFeatureLayer(entry.layer);
+  syncLayerSelectionSummary();
+  if (objectType === "RoadRoute") {
+    await updateImpactRoadFocus(impact, { fit: true });
+  } else if (["Road", "EvacuationRoute"].includes(objectType) && impactHasLocation(impact)) {
+    state.map.flyTo([Number(impact.latitude), Number(impact.longitude)], Math.max(state.map.getZoom(), 16), { duration: 0.65 });
+  } else {
+    fitFeatureLayer(entry.layer);
+  }
+}
+
+function impactRouteFocusMembers(impact) {
+  return uniqueImpactObjects(impact.impact_status === "nearby_flood"
+    ? impact.nearby_segment_impacts || []
+    : impact.segment_impacts || []);
+}
+
+function clearImpactRoadFocus() {
+  state.impactRoadFocusSeq += 1;
+  state.impactRoadFocusLayer?.remove();
+  state.impactRoadFocusLayer = null;
+}
+
+async function updateImpactRoadFocus(impact, { fit = false } = {}) {
+  clearImpactRoadFocus();
+  const seq = state.impactRoadFocusSeq;
+  const key = impactObjectKey(impact);
+  const members = impactRouteFocusMembers(impact);
+  if (!members.length) return;
+  const features = [];
+  const missingIds = [];
+  members.forEach((member) => {
+    const feature = state.featureIndex.get(featureIndexKey("Road", member.object_id))?.feature;
+    if (feature?.geometry) features.push(feature);
+    else missingIds.push(String(member.object_id));
+  });
+  if (missingIds.length) {
+    try {
+      const params = new URLSearchParams({
+        object_type: "Road",
+        filters: JSON.stringify(filtersWithObjectIds("Road", {}, missingIds)),
+      });
+      const response = await fetch(`/api/geojson?${params.toString()}`);
+      if (!response.ok) throw new Error(await response.text());
+      const geojson = await response.json();
+      const requested = new Set(missingIds);
+      features.push(...(geojson.features || []).filter((feature) => requested.has(String(feature.properties?.road_id))));
+    } catch (error) {
+      if (seq === state.impactRoadFocusSeq) addTrace("MISS", "路段几何加载失败，将按影响位置定位", String(error?.message || error));
+    }
+  }
+  // A later selection or timeline result must win over an earlier geometry request.
+  if (seq !== state.impactRoadFocusSeq || key !== state.selectedImpactKey || key !== impactObjectKey(state.selected)) return;
+  if (features.length) {
+    state.impactRoadFocusLayer = L.geoJSON({ type: "FeatureCollection", features }, {
+      interactive: false,
+      pane: "impactPane",
+      style: { color: "#f59e0b", weight: 6, opacity: 1, lineCap: "round", lineJoin: "round" },
+    }).addTo(state.map);
+  }
+  if (!fit) return;
+  if (members.length === 1 && impactHasLocation(members[0])) {
+    const member = members[0];
+    state.map.flyTo([Number(member.latitude), Number(member.longitude)], Math.max(state.map.getZoom(), 16), { duration: 0.65 });
+    return;
+  }
+  const bounds = state.impactRoadFocusLayer?.getBounds() || L.latLngBounds([]);
+  members.filter(impactHasLocation).forEach((member) => bounds.extend([Number(member.latitude), Number(member.longitude)]));
+  if (bounds.isValid()) {
+    state.map.flyToBounds(bounds.pad(0.15), {
+      animate: true,
+      duration: 0.65,
+      maxZoom: 16,
+      padding: [32, 32],
+    });
+  }
 }
 
 function updateImpactSelectionStyles() {
@@ -6307,15 +7274,20 @@ function updateImpactSelectionStyles() {
 
 function updateSelectedImpactDetails(impacts) {
   if (!state.selectedImpactKey) return;
-  const impact = impacts.find((item) => impactObjectKey(item) === state.selectedImpactKey);
+  let impact = impacts.find((item) => impactObjectKey(item) === state.selectedImpactKey);
   if (!impact) return;
+  if (impact.object_type === "RoadRoute") impact = impactRouteForTab(impact, state.selectedImpactTab);
   const entry = state.featureIndex.get(featureIndexKey(impact.object_type, impact.object_id));
   if (!entry) return;
   entry.layer.setPopupContent?.(impactPopupHtml(impact));
   document.getElementById("selectedObject").innerHTML = impactDetailHtml(impact, entry.feature?.properties || {});
+  if (impact.object_type === "RoadRoute" && impactObjectKey(state.selected) === state.selectedImpactKey) {
+    void updateImpactRoadFocus(impact);
+  }
 }
 
 function clearImpactObjectSelection(options = {}) {
+  clearImpactRoadFocus();
   const selectedKey = state.selectedImpactKey;
   state.selectedImpactKey = null;
   state.impactFocusSeq += 1;
@@ -6330,6 +7302,7 @@ function clearImpactObjectSelection(options = {}) {
     const selected = document.getElementById("selectedObject");
     if (selected) selected.innerHTML = '<span class="muted">未选中</span>';
   }
+  syncLayerSelectionSummary();
 }
 
 function impactObjectKey(impact) {
@@ -6337,6 +7310,7 @@ function impactObjectKey(impact) {
 }
 
 function impactTypeLabel(objectType) {
+  if (objectType === "Road") return "道路路段";
   return OBJECT_CONFIG[objectType]?.label || objectType || "领域对象";
 }
 
@@ -6349,7 +7323,20 @@ function impactRiskLabel(level) {
   }[level] || "受影响";
 }
 
+function impactStatusLabel(impact) {
+  return {
+    forecast_overlap: "与预测湿网格相交",
+    nearby_flood: "邻近积水，需核查",
+    structure_overlap_unverified: "桥上/隧道路段相交，路面高程待核查",
+    bridge_approach_inundated: "桥头影响区积水，桥面高程待核查",
+    bridge_influence_zone: "桥梁影响区积水，桥面高程待核查",
+  }[impact?.impact_status] || "";
+}
+
 function impactDepthLabel(impact) {
+  if (impact?.depth_basis === "nearby_forecast_cells") return "邻近网格最大水深";
+  if (impact?.depth_basis === "intersecting_forecast_cells") return "相交网格最大水深";
+  if (impact?.object_type === "RoadRoute") return "受影响路段对应网格最大水深";
   return impact?.object_type === "Bridge" && impact?.directly_inundated === false
     ? "邻近洪泛区最大水深"
     : "水深";
@@ -6359,36 +7346,59 @@ function impactPassabilityLabel(status) {
   return {
     inspection_required: "需现场核查",
     likely_impassable: "可能无法通行",
+    not_assessed: "整体通行状态未判定",
   }[status] || "";
+}
+
+function linearImpactEvidenceHtml(impact) {
+  if (!["Road", "EvacuationRoute"].includes(impact.object_type) || !impact.impact_status) return "";
+  if (impact.impact_status === "nearby_flood") {
+    return `<div class="popup-meta">完整线形未与达标湿网格相交，最近距网格边界 ${formatImpactNumber(impact.nearest_distance_m, 1)} m；不能据此认定路面已淹。</div>`;
+  }
+  const ids = impact.intersecting_mesh_cell_ids || [];
+  return `<div class="popup-meta">相交网格 ${ids.length} 个：${escapeHtml(ids.slice(0, 10).join("、"))}${ids.length > 10 ? "…" : ""}<br>
+    相交线形累计 ${formatImpactNumber(impact.overlap_length_m, 1)} m；水深为模型网格值，通行状态需另行判定。</div>`;
 }
 
 function impactPopupHtml(impact) {
   const depthLabel = impactDepthLabel(impact);
-  const passability = impactPassabilityLabel(impact.passability_status);
+  const passability = impactStatusLabel(impact) || impactPassabilityLabel(impact.passability_status);
   return `
     <div class="popup-title">${escapeHtml(impact.name || impact.object_id)}</div>
     <div class="popup-meta">${escapeHtml(impactTypeLabel(impact.object_type))} ${escapeHtml(impact.object_id)}</div>
     <div class="popup-depth">${formatImpactNumber(impact.depth_m, 2)} <span>m ${escapeHtml(depthLabel)}</span></div>
-    <div class="popup-meta">${escapeHtml(passability || impactRiskLabel(impact.risk_level))} · 流速 ${formatImpactNumber(impact.velocity_mps, 2)} m/s · 距网格 ${formatImpactNumber(impact.distance_m, 1)} m</div>
+    ${linearImpactEvidenceHtml(impact)}
+    <div class="popup-meta">${escapeHtml(passability || impactRiskLabel(impact.risk_level))} · ${impactVelocityText(impact)} · 距网格 ${formatImpactNumber(impact.distance_m, 1)} m</div>
   `;
 }
 
 function impactDetailHtml(impact, props) {
   const depthLabel = impactDepthLabel(impact);
-  const passability = impactPassabilityLabel(impact.passability_status);
+  const passability = impactStatusLabel(impact) || impactPassabilityLabel(impact.passability_status);
   return `
     <div class="impact-selected-summary">
       <strong>${escapeHtml(passability || impactRiskLabel(impact.risk_level))}</strong>
       <span>${escapeHtml(depthLabel)} ${formatImpactNumber(impact.depth_m, 2)} m</span>
-      <span>流速 ${formatImpactNumber(impact.velocity_mps, 2)} m/s</span>
+      <span>${impactVelocityText(impact)}</span>
     </div>
+    ${linearImpactEvidenceHtml(impact)}
+    ${impact.object_type === "RoadRoute" ? `<div class="muted">已收录 ${impact.recorded_segment_count} 段中 ${impact.affected_segment_count} 段受影响（与湿网格相交），另有 ${impact.nearby_segment_count || 0} 段仅邻近积水；不代表整条道路不可通行。</div>
+      <details open><summary>受影响路段（点击查看详情）</summary>${(impact.segment_impacts || []).map((segment) => roadObjectButton("Road", segment.object_id, `${segment.object_id} · ${formatImpactNumber(segment.depth_m, 2)} m`)).join("")}</details>` : ""}
+    ${impact.nearby_segment_impacts?.length ? `<details open><summary>仅邻近积水的路段（需核查）</summary>${impact.nearby_segment_impacts.map((segment) => roadObjectButton("Road", segment.object_id, `${segment.object_id} · 距网格 ${formatImpactNumber(segment.nearest_distance_m, 1)} m`)).join("")}</details>` : ""}
     ${detailHtml(impact.object_type, props)}
   `;
 }
 
 function formatImpactNumber(value, digits) {
+  if (value == null || value === "") return "--";
   const number = Number(value);
   return Number.isFinite(number) ? number.toFixed(digits) : "--";
+}
+
+function impactVelocityText(impact) {
+  if (impact.velocity_mps == null) return "流速未提供";
+  const label = impact.velocity_source === "depth_estimate" ? "估算流速" : "流速（来源未注明）";
+  return `${label} ${formatImpactNumber(impact.velocity_mps, 2)} m/s`;
 }
 
 function parseEvent(event) {
@@ -6410,11 +7420,19 @@ function readableTool(name, args) {
     count: "统计数量",
     inspect: "查看定义",
     run_flood_forecast: "运行洪水预测",
-    run_emergency_cycle: "运行闭环预警",
+    assess_flood_emergency: "单次应急研判",
     analyze_inundation_impacts: "分析淹没影响",
     ui_show_objects: "地图显示",
     ui_show_event_marker: "地图标记事件",
-    ui_clear_map: "清空地图",
+    ui_hide_objects: "隐藏指定对象",
+    ui_hide_forecast: "隐藏淹没结果",
+    ui_reset_map: "重置整个地图",
+    find_nearby_objects: "查询附近对象",
+    get_flood_status: "查询淹没状态",
+    plan_route: "规划路线",
+    refine_object_set: "筛选候选集合",
+    compare_evacuation_sites: "筛选并推荐安置点",
+    review_route: "复核既有路线",
     ui_focus_object: "地图定位",
     ui_open_emergency_directive_editor: "生成应急指令初稿",
     ui_set_inundation_alert: "设置流域淹没警戒",
@@ -6496,6 +7514,7 @@ function submitQuestionAnswer(answer) {
 }
 
 function settlePendingQuestion() {
+  if (state.agentNotification?.needsInput) dismissAgentNotification();
   const item = state.pendingQuestion?.element;
   item?.querySelectorAll(".question-option, .question-cancel").forEach((button) => {
     button.disabled = true;
@@ -6504,6 +7523,7 @@ function settlePendingQuestion() {
 }
 
 async function runConfirm(approved) {
+  if (state.agentNotification?.needsInput) dismissAgentNotification();
   const assistant = addMessage("agent", "");
   const res = await fetch("/api/agent/confirm", {
     method: "POST",
@@ -6535,36 +7555,75 @@ async function runConfirm(approved) {
   scrollChat();
 }
 
+function setLayerSwitchState(button, active) {
+  button.classList.toggle("active", active);
+  button.setAttribute("aria-checked", String(active));
+  button.title = `${active ? "隐藏已显示的" : "显示"}${button.dataset.layerLabel}`;
+}
+
 function setObjectButtonActive(objectType, active) {
-  document.querySelectorAll(`[data-object-type="${objectType}"]`).forEach((btn) => {
-    btn.classList.toggle("active", active);
-    btn.setAttribute("aria-pressed", String(active));
-  });
+  document.querySelectorAll(`[data-object-type="${objectType}"]`).forEach(btn => setLayerSwitchState(btn, active));
+  syncLayerPanelSummary();
 }
 
 function syncFilteredLayerButtons() {
+  document.querySelectorAll("#objectList [data-object-type]").forEach(btn => {
+    setLayerSwitchState(btn, hasLayerButtonType(btn.dataset.objectType));
+  });
   document.querySelectorAll("[data-facility]").forEach((btn) => {
-    const type = btn.dataset.facility;
-    const active = Array.from(state.layerMeta.values()).some((meta) => (
-      meta.objectType === "Facility" && meta.filters?.facility_type === type
-    ));
-    btn.classList.toggle("active", active);
-    btn.setAttribute("aria-pressed", String(active));
+    setLayerSwitchState(btn, visibleFilteredObjectIds("Facility", "facility_type", btn.dataset.facility).length > 0);
   });
   document.querySelectorAll("[data-station]").forEach((btn) => {
-    const type = btn.dataset.station;
-    const active = filteredLayerKeys("Station", "station_type", type).length > 0;
-    btn.classList.toggle("active", active);
-    btn.setAttribute("aria-pressed", String(active));
+    setLayerSwitchState(btn, visibleFilteredObjectIds("Station", "station_type", btn.dataset.station).length > 0);
   });
+  syncLayerPanelSummary();
+}
+
+function syncLayerPanelSummary() {
+  const onlyVisible = document.getElementById("onlyVisibleLayers").checked;
+  let total = 0;
+  document.querySelectorAll(".object-group").forEach(group => {
+    const buttons = [...group.querySelectorAll('[role="switch"]')];
+    const count = buttons.filter(button => button.getAttribute("aria-checked") === "true").length;
+    total += count;
+    const output = group.querySelector(".object-group-count");
+    output.textContent = `${count} / ${buttons.length}`;
+    output.setAttribute("aria-label", `已显示 ${count} 类，共 ${buttons.length} 类`);
+    output.classList.toggle("has-visible", count > 0);
+    if (onlyVisible && group.hidden && count) group.open = true;
+    group.hidden = onlyVisible && count === 0;
+    buttons.forEach(button => {
+      button.hidden = onlyVisible && button.getAttribute("aria-checked") !== "true";
+      if (button.hidden && document.activeElement === button) document.getElementById("onlyVisibleLayers").focus();
+    });
+    group.querySelectorAll(".object-filter-control").forEach(control => {
+      control.hidden = onlyVisible && !control.querySelector('[aria-checked="true"]');
+    });
+    const legend = group.querySelector(".road-style-legend");
+    if (legend) legend.hidden = onlyVisible && !buttons.some(button => ["Road", "RoadRoute"].includes(button.dataset.objectType) && !button.hidden);
+  });
+  document.getElementById("layerVisibleCount").textContent = `已显示 ${total} 类`;
+  document.getElementById("visibleLayersEmpty").hidden = !onlyVisible || total > 0;
+  syncLayerSelectionSummary();
+}
+
+function syncLayerSelectionSummary() {
+  const name = document.getElementById("selectedObjectName");
+  const details = document.getElementById("selectedObjectDetails");
+  name.textContent = state.selected?.name || state.selected?.id || "未选中";
+  name.title = name.textContent;
+  if (!state.selected) {
+    details.open = false;
+    document.getElementById("selectedObject").textContent = "未选中";
+  }
 }
 
 function hasObjectType(objectType) {
-  return Array.from(state.layerMeta.values()).some((meta) => meta.objectType === objectType);
+  return Array.from(state.layerMeta.entries()).some(([key, meta]) => meta.objectType === objectType && state.map.hasLayer(state.layerGroups.get(key)));
 }
 
 function hasLayerButtonType(buttonType) {
-  return Array.from(state.layerMeta.values()).some((meta) => (meta.buttonType || meta.objectType) === buttonType);
+  return Array.from(state.layerMeta.entries()).some(([key, meta]) => (meta.buttonType || meta.objectType) === buttonType && state.map.hasLayer(state.layerGroups.get(key)));
 }
 
 function layerKey(objectType, filters) {
@@ -6596,4 +7655,120 @@ function getSessionId() {
     window.localStorage.setItem(key, value);
   }
   return value;
+}
+
+const BASIN_RAIN_FIELDS = [
+  ["interval1_rainfall_mm", "区间 1", "interval1", "#1f7a5c"],
+  ["interval2_rainfall_mm", "区间 2", "interval2", "#2878b9"],
+  ["reservoir_rainfall_mm", "水库上游", "reservoir", "#0f766e"],
+];
+
+function setBasinTab(tab) {
+  state.basinTab = tab;
+  document.querySelectorAll("[data-basin-tab]").forEach((button) => {
+    const active = button.dataset.basinTab === tab;
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
+    document.getElementById(button.getAttribute("aria-controls")).hidden = !active;
+  });
+}
+
+function basinNumber(value, digits = 2) {
+  const number = finiteTelemetryNumber(value);
+  return number === null ? "--" : number.toFixed(digits);
+}
+
+function basinPeak(points, field) {
+  const valid = points.filter((row) => finiteTelemetryNumber(row?.[field]) !== null);
+  return valid.length ? valid.reduce((best, row) => Number(row[field]) > Number(best[field]) ? row : best) : null;
+}
+
+function basinTable(headers, rows) {
+  return `<table class="basin-table"><thead><tr>${headers.map(h => `<th scope="col">${h}</th>`).join("")}</tr></thead><tbody>${rows.map(cells => `<tr>${cells.map((cell, index) => index === 0 ? `<th scope="row">${cell}</th>` : `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+}
+
+function renderBasinWorkbench(observation) {
+  const future = observation?.rainfall_forecast || [];
+  const hours = future.length;
+  const period = !observation || hours === 24 ? "未来 24h" : `剩余 ${hours}h`;
+  const rainRows = BASIN_RAIN_FIELDS.map(([field, label, basin, color]) => {
+    const area = state.bootstrap?.basin_areas_km2?.[basin];
+    const areaLabel = `${basinNumber(area, Number.isInteger(area) ? 0 : 2)} km²`;
+    const values = future.map(row => finiteTelemetryNumber(row[field]));
+    const complete = values.length && values.every(value => value !== null);
+    const peak = basinPeak(future, field);
+    return [`<span class="basin-dot" style="background:${color}"></span>${label} <small>${areaLabel}</small>`,
+      `<strong>${basinNumber(observation?.[field])}</strong>`,
+      complete ? values.reduce((a, b) => a + b, 0).toFixed(2) : "--",
+      `${basinNumber(peak?.[field])}<small>${peak ? escapeHtml(formatRainfallChartTime(peak.valid_time)) : "--"}</small>`];
+  });
+  document.getElementById("basinRainTable").innerHTML = basinTable(
+    ["分区 / 控制面积", "当前雨量", `${period}累计`, "最大时段 / 时刻"], rainRows);
+  renderBasinRainChart(observation);
+  const flows = observation?.boundary_flow_forecast?.series || [];
+  const currentTime = observation?.simulation_time || observation?.observed_at;
+  const flowRows = BOUNDARY_FLOW_KEYS.map(key => {
+    const current = observation?.boundaries?.[key]?.flow_m3s;
+    const points = observation ? [{ valid_time: currentTime, value: current }, ...flows.map(row => ({ valid_time: row.valid_time, value: row.boundaries?.[key]?.flow_m3s }))] : [];
+    const peak = basinPeak(points, "value");
+    const source = key === "tonggu" ? "区间2 × 0.946" : key === "upstream" ? "水库计算泄流" : "分区面雨量产流";
+    return [`<span class="basin-dot" style="background:${BOUNDARY_FLOW_COLORS[key]}"></span>${BOUNDARY_FLOW_LABELS[key]}<small>${source}</small>`, `<strong>${basinNumber(current)}</strong>`, basinNumber(peak?.value), peak ? escapeHtml(formatRainfallChartTime(peak.valid_time)) : "--"];
+  });
+  document.getElementById("basinFlowTable").innerHTML = basinTable(["水动力模型边界 / 来源", "当前流量", "窗口峰值", "峰值时刻"], flowRows);
+  const decision = observation?.reservoir_dispatch;
+  const label = DISPATCH_STATES[decision?.state]?.label || "等待调度数据";
+  const reservoirFuture = observation?.reservoir_forecast?.series || [];
+  const reservoirWindow = observation ? [observation, ...reservoirFuture] : [];
+  const dispatchRows = [["reservoir_inflow_m3s", "入库流量 · m³/s"], ["reservoir_release_m3s", "计算泄流 · m³/s"], ["reservoir_level_m", "时段末水位 · m"]].map(([field, name]) => {
+    const peak = basinPeak(reservoirWindow, field);
+    return [name, `<strong>${basinNumber(observation?.[field])}</strong>`, basinNumber(peak?.[field])];
+  });
+  document.getElementById("basinDispatchSummary").innerHTML = `<div class="basin-dispatch-state"><strong>${escapeHtml(label)}</strong><span>模拟调度 · 演进当前</span></div>
+    ${basinTable(["水库指标", "演进当前", `未来${reservoirFuture.length}h窗口最大`], dispatchRows)}`;
+  renderBasinDispatchChart();
+}
+
+function renderBasinDispatchChart() {
+  const level = state.basinDispatchChart === "level";
+  document.querySelectorAll("[data-basin-dispatch-chart]").forEach(button => {
+    button.setAttribute("aria-pressed", String(button.dataset.basinDispatchChart === state.basinDispatchChart));
+  });
+  const chart = state.lastMockObservation
+    ? (level ? reservoirLevelChartHtml({ showSelection: false }) : reservoirFlowChartHtml({ showSelection: false }))
+    : "";
+  document.getElementById("basinDispatchChart").innerHTML = chart;
+}
+
+function renderBasinRainChart(observation) {
+  const element = document.getElementById("basinRainChart");
+  if (!observation) { element.innerHTML = ""; return; }
+  const past = state.basinRainfallHistory;
+  const future = observation.rainfall_forecast || [];
+  const points = [...past, ...future];
+  const maximum = Math.max(1, ...points.flatMap(row => BASIN_RAIN_FIELDS.map(([field]) => Number(row[field]) || 0)));
+  const x = i => 22 + i / Math.max(1, points.length - 1) * 294;
+  const y = v => 94 - v / maximum * 82;
+  const path = (rows, field, offset) => rows.map((row, i) => finiteTelemetryNumber(row[field]) === null ? "" : `${i ? "L" : "M"}${x(i + offset).toFixed(2)},${y(Number(row[field])).toFixed(2)}`).join(" ");
+  const lines = BASIN_RAIN_FIELDS.map(([field, label, , color]) => `<path d="${path(past, field, 0)}" stroke="${color}"/><path d="${path(past.length ? [past.at(-1), ...future] : future, field, Math.max(0, past.length - 1))}" stroke="${color}" stroke-dasharray="3 3"><title>${label} · 未来输入</title></path>`).join("");
+  element.innerHTML = `<span>三分区雨量 · 实线已回放 / 虚线未来输入</span><svg viewBox="0 0 320 112" role="img" aria-label="三分区面雨量过程"><g fill="none" stroke-width="1.3">${lines}<path d="M${x(Math.max(0, past.length - 1))},8V96" stroke="#64748b" stroke-dasharray="2 3"/></g><text x="0" y="10">${maximum.toFixed(1)}</text><text x="22" y="110">${escapeHtml(formatMockClock(points[0]?.valid_time))}</text><text x="316" y="110" text-anchor="end">${escapeHtml(formatMockClock(points.at(-1)?.valid_time))}</text></svg>`;
+}
+
+function renderImpactReadiness() {
+  const timeline = currentHydrodynamicTimelineContext();
+  const ready = ["time_slice", "envelope"].includes(timeline.mode) && Boolean(state.hydrodynamicTimeline.layer);
+  const button = document.getElementById("runImpactAnalysis");
+  const busy = Boolean(state.impactRefreshController);
+  button.disabled = !ready || busy;
+  button.textContent = busy ? "分析中…" : state.impactAnalysis?.lastResult ? "重新分析当前范围" : "分析当前范围";
+  const scope = state.impactAnalysis?.lastResult?.analysis_scope;
+  document.getElementById("impactReadiness").textContent = ready
+    ? `淹没预测 ${state.hydrodynamicTimeline.forecastVersion || ""} 已就绪${scope?.mode === "selected" ? ` · 指定 ${scope.matched_count} 个对象` : ""}`
+    : "尚无淹没预测";
+  if (!state.impactRequested && !state.impactAnalysis) {
+    document.getElementById("impactCount").textContent = "--";
+    document.getElementById("impactNearbyCount").textContent = "--";
+    document.getElementById("impactStatus").textContent = ready ? "未分析" : "等待预测";
+    document.getElementById("impactList").innerHTML = `<p class="impact-empty">${ready ? "淹没预测已就绪，尚未进行对象级影响分析。点击上方按钮分析当前范围。" : "加载淹没预测后，可对道路、桥梁等对象进行影响分析。"}</p>`;
+    if (ready) setImpactScopeLabel(document.getElementById("impactTimeLabel"), timeline.current_hydrodynamic_time_h, timeline.current_hydrodynamic_valid_at, timeline.mode === "envelope");
+  }
 }

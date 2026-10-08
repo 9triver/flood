@@ -6,13 +6,17 @@ from typing import Any
 
 def readable_event_tool(name: str) -> str:
     return {
+        "get_flood_status": "查询淹没状态",
         "run_flood_forecast": "运行水动力模型",
-        "run_emergency_cycle": "运行预警调度闭环",
+        "assess_flood_emergency": "单次应急研判",
         "analyze_inundation_impacts": "分析淹没影响对象",
         "ui_show_objects": "地图展示对象",
         "ui_show_event_marker": "地图展示事件",
         "ui_focus_object": "地图聚焦对象",
-        "ui_clear_map": "清空地图",
+        "ui_hide_objects": "隐藏指定对象",
+        "ui_hide_forecast": "隐藏淹没结果",
+        "ui_reset_map": "重置整个地图",
+        "find_nearby_objects": "查询附近对象",
         "ui_set_inundation_alert": "设置流域淹没警戒",
     }.get(name, name or "tool")
 
