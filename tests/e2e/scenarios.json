@@ -112,7 +112,7 @@
   },
   {
     "id": "draft",
-    "message": "把刚才确认的路线写入转移准备指令草稿，接收对象同古镇政府，使用这批候选对象作为依据，只打开草稿不要发出",
+    "message": "把刚才确认的路线写入转移准备指令草稿，接收对象同古镇政府，只打开草稿不要发出",
     "tools": [
       {
         "name": "ui_open_emergency_directive_editor",
@@ -120,9 +120,7 @@
           "title": "平竹村转移准备",
           "recipients": "同古镇政府",
           "priority": "urgent",
-          "content": "请核实安置点接收条件，并按已确认步行路线组织转移准备。发出后按现场指挥安排执行。",
-          "evacuation_route_id": "$route.route.evacuation_route_id",
-          "object_set_id": "$filtered.object_set_id"
+          "content": "请核实安置点接收条件，并按已确认步行路线组织转移准备。发出后按现场指挥安排执行。"
         },
         "save": "draft"
       }
@@ -187,9 +185,56 @@
       {
         "name": "review_route",
         "args": {
-          "evacuation_route_id": "$issued.0.basis.evacuation_route_id"
+          "evacuation_route_id": "$route.route.evacuation_route_id"
         },
         "save": "review_changed"
+      }
+    ]
+  },
+  {
+    "id": "current_roads",
+    "message": "分析一下当前情况：已收录路段中有多少受影响？按当前地图选中时刻说明，不要切换时间轴。",
+    "tools": [
+      {
+        "name": "analyze_inundation_impacts",
+        "args": {
+          "target_type": "Road",
+          "view": "current"
+        }
+      }
+    ]
+  },
+  {
+    "id": "dispatch_trial",
+    "message": "针对刚才选中时刻的道路影响，试算把龙潭水库改为固定下泄每秒2立方米，先校核水库安全，再比较该时刻与未来24小时全部已收录路段的影响，只试算不要应用。",
+    "tools": [
+      {
+        "name": "get_longtan_dispatch_plan",
+        "args": {}
+      },
+      {
+        "name": "simulate_longtan_dispatch",
+        "args": {
+          "settings": {
+            "mode": "OUTFLOW",
+            "target_outflow_m3s": 2
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "draft_blocked",
+    "message": "虽然刚才路线已受阻，仍请给同古镇政府生成指令草稿：暂停使用该路线，组织现场核查并准备替代转移方案，只打开草稿不要发出。",
+    "tools": [
+      {
+        "name": "ui_open_emergency_directive_editor",
+        "args": {
+          "title": "平竹村受阻路线核查与替代方案准备",
+          "recipients": "同古镇政府",
+          "priority": "urgent",
+          "content": "当前预测下原步行路线已受阻，请暂停使用，组织现场核查并准备替代转移方案。"
+        }
       }
     ]
   }

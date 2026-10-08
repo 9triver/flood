@@ -113,7 +113,7 @@ npm test --prefix tests/e2e
 npm run test:live --prefix tests/e2e
 ```
 
-固定场景回归不调用 LLM；真实模型模式调用 LLM。两种模式均使用固定路由响应和预测夹具，覆盖查询筛选、安置点比较、路线与时间分析、草稿发出及后续复核。详见 [端到端用例说明](tests/e2e/README.md)。原有地图专项回归仍可通过 `NODE_PATH=tests/e2e/node_modules node tests/browser/map-tools.cjs` 在本地服务上运行。
+固定场景回归不调用 LLM；真实模型模式调用 LLM。两种模式均使用固定路由响应和预测夹具，覆盖查询筛选、安置点推荐、路线与时间分析、草稿发出及后续复核。详见 [端到端用例说明](tests/e2e/README.md)。原有地图专项回归仍可通过 `NODE_PATH=tests/e2e/node_modules node tests/browser/map-tools.cjs` 在本地服务上运行。
 
 ## 智能体运行日志评测材料
 

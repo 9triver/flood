@@ -59,6 +59,10 @@ class FloodAppConfigTest(unittest.TestCase):
         register_directive_tools(tools, ONTOLOGY)
 
         tool = tools.get("ui_open_emergency_directive_editor")
+        self.assertEqual(
+            {"title", "content", "recipients", "priority"},
+            set(tool.parameters["properties"]),
+        )
         result = json.loads(tool.handler({
             "title": "组织新民村避洪转移",
             "content": "立即组织群众转移。",

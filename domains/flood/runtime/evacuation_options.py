@@ -12,11 +12,20 @@ from .object_sets import read_object_set, save_object_set, set_summary
 from .route_safety import build_flood_avoidance_areas, path_intersects_areas
 
 
-def compare_evacuation_sites(resolver, evacuation_unit_id: str, object_set_id: str,
+def compare_evacuation_sites(resolver, evacuation_unit_id: str, object_set_id: str = "",
                              required_capacity: int | None = None, view: str = "current",
-                             time_h: float | None = None, forecast_id: str = "latest") -> dict:
+                             time_h: float | None = None, forecast_id: str = "latest",
+                             object_ids: list[str] | None = None) -> dict:
     try:
-        selected = read_object_set(object_set_id, "EvacuationSite")
+        if object_set_id:
+            if object_ids is not None:
+                raise ValueError("object_set_id 与 object_ids 不能同时提供")
+            selected = read_object_set(object_set_id, "EvacuationSite")
+            candidate_ids = selected["object_ids"]
+        else:
+            if not isinstance(object_ids, list) or any(not isinstance(ident, str) or not ident for ident in object_ids):
+                raise ValueError("请提供候选 object_set_id 或 object_ids 列表；空列表表示没有候选点")
+            candidate_ids = list(dict.fromkeys(object_ids))
         unit = resolver.query_by_id("EvacuationUnit", evacuation_unit_id)
         if not unit or not row_point(unit):
             raise ValueError("转移单元不存在或缺少位置")
@@ -29,12 +38,12 @@ def compare_evacuation_sites(resolver, evacuation_unit_id: str, object_set_id: s
         impacted = set()
         if context["constraint_source"] == "forecast":
             result = analyze_inundation_impacts(resolver, forecast_id=forecast_id, target_type="EvacuationSite",
-                                                object_ids=selected["object_ids"], time_h=context["time_h"])
+                                                object_ids=candidate_ids, time_h=context["time_h"])
             if result.get("error"):
                 return result
             impacted = set(result.get("affected_object_ids", {}).get("EvacuationSite", []))
         candidates = []
-        for ident in selected["object_ids"]:
+        for ident in candidate_ids:
             site = resolver.query_by_id("EvacuationSite", ident)
             point = row_point(site) if site else None
             capacity = site.get("capacity_person") if site else None
@@ -52,12 +61,17 @@ def compare_evacuation_sites(resolver, evacuation_unit_id: str, object_set_id: s
                                "distance_m": round(distance_m(row_point(unit), point), 1) if point else None})
         candidates.sort(key=lambda row: (not row["eligible"], row["distance_m"] if row["distance_m"] is not None else float("inf"), row["object_id"]))
         eligible = [row["object_id"] for row in candidates if row["eligible"]]
-        result_set = save_object_set("EvacuationSite", eligible, parent_set_id=object_set_id,
-                                    basis={"required_capacity": required, "forecast_context": context})
-        return {"status": "completed", "origin_unit_id": evacuation_unit_id, "required_capacity": required,
-                "candidates": candidates, "eligible_set": set_summary(result_set),
+        result = {"status": "completed", "origin_unit_id": evacuation_unit_id, "required_capacity": required,
+                "candidates": candidates, "eligible_object_ids": eligible, "eligible_set": None,
                 "recommended_site_id": eligible[0] if eligible else None, "forecast_context": context,
                 "route_checked": False, "basis": "按容量及地点预测受淹情况筛选，再按直线距离排序；尚未验证路线可达性，也未预留床位。"}
+        try:
+            result_set = save_object_set("EvacuationSite", eligible, parent_set_id=object_set_id or None,
+                                        basis={"required_capacity": required, "forecast_context": context})
+            result["eligible_set"] = set_summary(result_set)
+        except (OSError, ValueError):
+            result["set_storage_warning"] = "候选集合未能保存，可使用 eligible_object_ids 继续分析或展示。"
+        return result
     except (TypeError, ValueError) as exc:
         return {"error": str(exc)}
 

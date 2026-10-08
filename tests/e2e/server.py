@@ -45,7 +45,8 @@ from server.app import Handler
 from server.container import ApplicationContext
 from server.flood_app import FloodApp
 from server.chat.service import FloodChatService
-from server.chat.agent_factory import load_env, configure_agent_query_tools, configure_domain_tool_schemas
+from server.chat.agent_factory import load_env, configure_agent_query_tools
+from server.chat.analysis_context import normalize_analysis_tool
 from server.presentation.map_actions import MapActionBuilder, tool_result_to_map_event
 from server.presentation.map_tools import register_map_tools
 from server.presentation.directive_tools import register_directive_tools
@@ -80,6 +81,14 @@ mesh_rows = []
 for index, (lon, lat) in enumerate(centers, 1):
     r = 0.00012
     mesh_rows.append((index, lon-r, lat-r, lon+r, lat+2*r, lon-r, lat-r, lon+r, lat-r, lon, lat+2*r))
+# Two dry triangles cover the complete route corridor. Point-only triangles
+# leave most of the path unmodelled and cannot establish a safe departure time.
+west, east = min(p[0] for p in centers)-0.001, max(p[0] for p in centers)+0.001
+south, north = min(p[1] for p in centers)-0.001, max(p[1] for p in centers)+0.001
+mesh_rows.extend([
+    (4, west, south, east, north, west, south, east, south, east, north),
+    (5, west, south, east, north, west, south, east, north, west, north),
+])
 meta = {"feature_count": len(mesh_rows), "min_lon": min(p[0] for p in centers)-0.001,
         "max_lon": max(p[0] for p in centers)+0.001, "min_lat": min(p[1] for p in centers)-0.001,
         "max_lat": max(p[1] for p in centers)+0.001}
@@ -110,16 +119,23 @@ def seed_forecast(wet_now=False):
     depths = np.zeros((48, len(mesh_rows)), dtype=np.float32)
     depths[np.asarray(steps) >= (1 if wet_now else 6), 0] = 1.0
     depths[np.asarray(steps) >= (1 if wet_now else 6), 2] = 1.0
-    np.save(latest / "depth_series.npy", depths)
-    (latest / "max_depth.csv").write_text("cell_id,max_depth\n1,1.0\n3,1.0\n")
-    write_json(latest / "time_steps.json", {"time_steps_h": steps})
+    for output in (root / f"forecasts/{version}", latest):
+        np.save(output / "depth_series.npy", depths)
+        (output / "max_depth.csv").write_text("cell_id,max_depth\n1,1.0\n3,1.0\n")
+        write_json(output / "time_steps.json", {"time_steps_h": steps})
+    activate_forecast(metadata, 2 if wet_now else 1)
+    return metadata
+
+
+def activate_forecast(metadata, version):
+    clock = metadata["generated_at"]
     WORKSPACES.update_manifest(status="paused", simulation_time=clock)
     runtime = context.event_runtime
     runtime._playback_paused = True
     runtime._playback_phase = "paused"
     policy = runtime._boundary_flow_runner.playback.policy
     policy.last_observation = {"simulation_time": clock, "observed_at": clock, "sequence": 1}
-    policy.version = 2 if wet_now else 1
+    policy.version = version
     policy.completed_forecast_version = policy.version
     runtime._append_output("runtime_status", {**runtime.status(), "label": "测试预测已就绪"})
     # Exercise the same default presentation tool request as automatic events.
@@ -130,6 +146,55 @@ def seed_forecast(wet_now=False):
     if not event:
         raise AssertionError(payload)
     runtime._append_output("map_actions", event)
+
+
+def write_dispatch_prediction(boundary, folder):
+    """Deterministic CNN substitute; reservoir continuation/impact code stays real."""
+    steps = np.arange(0.5, 24.5, 0.5)
+    upstream = boundary["summary"]["boundaries"]["upstream"]["series"]
+    flows = np.interp(steps, [row["time_h"] for row in upstream], [row["flow_m3s"] for row in upstream])
+    depths = np.repeat((flows / 20 * steps / 24)[:, None], len(mesh_rows), axis=1).astype(np.float32)
+    folder.mkdir(parents=True, exist_ok=True)
+    np.save(folder / "depth_series.npy", depths)
+    write_json(folder / "time_steps.json", {"time_steps_h": steps.tolist()})
+    (folder / "max_depth.csv").write_text("cell_id,max_depth\n" + "".join(
+        f"{index + 1},{depth}\n" for index, depth in enumerate(depths.max(axis=0))))
+
+
+def seed_dispatch_forecast():
+    from datetime import datetime, timedelta
+    from domains.flood.runtime.boundary_flow import BoundaryFlowPlaybackSource, FloodForecastPolicy
+    from domains.flood.runtime.reservoir_dispatch import DispatchSettings
+    from domains.flood.runtime import dispatch_trial
+    root = workspace_dir()
+    rainfall = root / "dispatch-rainfall.csv"
+    rainfall.write_text("time_period_end,interval1_rainfall_mm,interval2_rainfall_mm,reservoir_rainfall_mm\n" + "".join(
+        f"{datetime(2026, 7, 1) + timedelta(hours=index):%Y-%m-%d %H:%M},0,0,0\n" for index in range(60)))
+    source = BoundaryFlowPlaybackSource(rainfall, root / "dispatch-observations.jsonl",
+        dispatch_settings=DispatchSettings(mode="OUTFLOW", initial_level_m=246.5, target_outflow_m3s=20))
+    source.index = 5
+    observation = source.next_observation()
+    policy = FloodForecastPolicy(source.rows, total_trigger_m3s=1,
+        forecast_input_dir=root / "boundary_flows/forecast_inputs",
+        latest_forecast_input_path=root / "boundary_flows/latest_forecast_input.json")
+    policy.observe(observation)
+    snapshot = policy.latest_forecast_input
+    metadata = {"workspace_id": WORKSPACES.active_id, "forecast_id": "v003", "forecast_version": "v003",
+        "forecast_input_id": snapshot["boundary_flow_id"], "status": "completed",
+        "valid_from": observation["observed_at"], "valid_to": snapshot["summary"]["window_end"],
+        "generated_at": observation["observed_at"], "forecast_time": observation["observed_at"],
+        "boundary_flow": json.dumps(snapshot["summary"])}
+    for output in (root / "forecasts/v003", root / "forecasts/latest"):
+        write_dispatch_prediction(snapshot, output)
+    write_json(root / "forecasts/v003/forecast.json", metadata)
+    write_json(root / "forecasts/latest.json", {"forecast_id": "v003"})
+    with (root / "forecasts/forecast_runs.jsonl").open("a") as stream:
+        stream.write(json.dumps(metadata) + "\n")
+    def predict(boundary, target, *, work_dir):
+        write_dispatch_prediction(boundary, target.parent)
+        return {"status": "completed"}
+    dispatch_trial.run_cnn_v2_forecast = predict
+    activate_forecast(metadata, 3)
     return metadata
 
 
@@ -142,9 +207,9 @@ class ReplayAgent:
         self.harness = Harness(ontology=app.ontology, repository=app.repository, registry=app.registry,
                                llm_client=None, model="replay", config=HarnessConfig())
         configure_agent_query_tools(self.harness)
-        configure_domain_tool_schemas(self.harness)
         register_map_tools(self.harness.tools, app.resolver, app.ontology)
         register_directive_tools(self.harness.tools, app.ontology)
+        self.harness.hooks.register("pre_tool_call", normalize_analysis_tool)
         self.harness.hooks.register("post_tool_call", app.side_effects.capture_tool_event)
 
     def pending_tool_name(self, session_id):
@@ -186,6 +251,8 @@ class TestHandler(Handler):
         if urlparse(self.path).path == "/__test__/forecast":
             body = self._read_json()
             return self._json(seed_forecast(bool(body.get("wet_now"))))
+        if urlparse(self.path).path == "/__test__/dispatch-forecast":
+            return self._json(seed_dispatch_forecast())
         return super().do_POST()
 
     def log_message(self, *values):

@@ -206,7 +206,7 @@ def actual_cell_time_h(cells: list[dict[str, Any]], fallback: float | None) -> f
     if fallback is None:
         return None
     for cell in cells:
-        value = coerce_time_h(cell.get("lead_time_h"))
+        value = coerce_time_h(cell.get("time_h", cell.get("lead_time_h")))
         if value is not None:
             return round(value, 3)
     return round(float(fallback), 3)
@@ -280,6 +280,7 @@ def aggregate_road_route_impacts(resolver, road_impacts: list[dict],
             **{key: deepest[key] for key in (
                 "depth_m", "velocity_mps", "distance_m", "forecast_cell_id", "mesh_cell_id", "longitude", "latitude",
             )},
+            **{key: deepest.get(key) for key in ("depth_source", "velocity_source", "risk_basis")},
             "object_type": "RoadRoute",
             "object_id": route["road_route_id"],
             "name": route["name"],
@@ -376,10 +377,7 @@ def analyze_bridge_objects(
                 1,
             ),
             "nearby_max_depth_m": round(float(deepest.get("depth_m") or 0), 3),
-            "nearby_max_velocity_mps": round(
-                float(deepest.get("velocity_mps") or 0),
-                3,
-            ),
+            "nearby_max_velocity_mps": impact["velocity_mps"],
             "nearby_cell_count": len(matched),
             "bridge_influence_radius_m": round(float(influence_radius_m), 1),
             "affected_side_count": len(affected_sides),
@@ -529,14 +527,17 @@ def make_impact(object_type: str, row: dict[str, Any], object_id_field: str,
                 cell: dict[str, Any], basis: str,
                 impact_point: tuple[float, float]) -> dict[str, Any]:
     depth = float(cell.get("depth_m") or 0)
-    velocity = float(cell.get("velocity_mps") or 0)
+    velocity = float(cell["velocity_mps"]) if cell.get("velocity_mps") is not None else None
     impact = {
         "object_type": object_type,
         "object_id": str(row.get(object_id_field) or ""),
         "name": row.get("name") or row.get(object_id_field) or "",
-        "risk_level": cell.get("risk_level") or risk_level(depth, velocity),
+        "risk_level": cell.get("risk_level") or risk_level(depth, velocity or 0),
         "depth_m": round(depth, 3),
-        "velocity_mps": round(velocity, 3),
+        "depth_source": cell.get("depth_source", "unspecified"),
+        "velocity_mps": round(velocity, 3) if velocity is not None else None,
+        "velocity_source": cell.get("velocity_source", "unspecified" if velocity is not None else "unavailable"),
+        "risk_basis": cell.get("risk_basis", "unspecified"),
         "distance_m": round(float(cell.get("_distance_m") or 0), 1),
         "forecast_cell_id": cell.get("forecast_cell_id", ""),
         "mesh_cell_id": cell.get("mesh_cell_id", ""),

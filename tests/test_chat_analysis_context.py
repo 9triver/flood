@@ -18,7 +18,6 @@ from oag.loop.tool_executor import ToolExecutor
 from oag.ontology.loader import load_domain
 from oag.runtime.events import TextEvent
 from server.agent_runs import AgentRun
-from server.chat.agent_factory import configure_domain_tool_schemas
 from server.chat.analysis_context import capture_analysis_context, analysis_scope, normalize_analysis_tool, SLICE_TOOLS
 from server.chat.service import FloodChatService
 from server.chat.side_effects import AgentSideEffects
@@ -38,7 +37,6 @@ class ChatAnalysisContextTests(unittest.TestCase):
         self.copy_version('v001')
         self.selected = self.selection(2)
         self.harness = Harness(self.ontology, self.repository, self.registry, None, 'test')
-        configure_domain_tool_schemas(self.harness)
         self.harness.hooks.register('pre_tool_call', normalize_analysis_tool)
 
     def copy_version(self, version):
@@ -87,6 +85,51 @@ class ChatAnalysisContextTests(unittest.TestCase):
             self.assertIsNone(envelope['analysis_time_at'])
             self.assertTrue(envelope['has_inundation'])
             self.assertTrue(self.call({'view': 'envelope', 'time_h': 1})['blocked'])
+
+    def test_map_current_uses_the_same_frozen_frame_and_forecast(self):
+        analysis = capture_analysis_context(self.selected)
+        self.selected['hydrodynamic_timeline']['current_hydrodynamic_time_h'] = 1
+        with analysis_scope(analysis):
+            for view, expected in [('current', 2), ('simulation_current', 0)]:
+                filters = {'view': view}
+                args = {'objects': [{'object_type': 'InundationForecastCell', 'filters': filters}]}
+                self.assertEqual(normalize_analysis_tool({'tool_name': 'ui_show_objects', 'args': args}).action, 'allow')
+                self.assertEqual(args['objects'][0]['filters'], {'forecast_id': 'v001', 'view': 'time_slice', 'time_h': expected})
+
+    def test_map_timeline_defaults_and_automatic_events_remain_distinct(self):
+        with analysis_scope(capture_analysis_context(self.selected)):
+            args = {'objects': [{'object_type': 'InundationForecastCell'}]}
+            self.assertEqual(normalize_analysis_tool({'tool_name': 'ui_show_objects', 'args': args}).action, 'allow')
+            self.assertNotIn('filters', args['objects'][0])
+            automatic = {'objects': [{'object_type': 'HydrodynamicGridCell', 'filters': {'forecast_id': 'latest', 'view': 'timeline'}}]}
+            normalize_analysis_tool({'tool_name': 'ui_show_objects', 'args': automatic, 'session_id': 'event-1'})
+            self.assertEqual(automatic['objects'][0]['filters']['forecast_id'], 'latest')
+
+    def test_map_can_browse_forecasts_created_after_the_question(self):
+        analyses = [capture_analysis_context(self.selected)]
+        self.manager.begin_session()
+        analyses.append(capture_analysis_context({}))
+        for analysis in analyses:
+            with analysis_scope(analysis):
+                for filters in ({'forecast_id': 'latest', 'view': 'timeline'},
+                                {'forecast_id': 'v002', 'view': 'time_slice', 'time_h': 1},
+                                {'forecast_id': 'v002', 'view': 'envelope'}):
+                    args = {'objects': [{'object_type': 'InundationForecastCell', 'filters': dict(filters)}]}
+                    self.assertEqual(normalize_analysis_tool({'tool_name': 'ui_show_objects', 'args': args}).action, 'allow')
+                    self.assertEqual(args['objects'][0]['filters'], filters)
+
+    def test_map_forecast_validation_does_not_affect_ordinary_objects_or_partially_rewrite_batch(self):
+        with analysis_scope(capture_analysis_context(self.selected)):
+            args = {'objects': [{'object_type': 'Road', 'object_ids': ['1']},
+                                {'object_type': 'InundationForecastCell', 'filters': {'view': 'current'}},
+                                {'object_type': 'InundationForecastCell', 'filters': {'forecast_id': 'v002', 'view': 'current'}}]}
+            before = json.dumps(args)
+            self.assertEqual(normalize_analysis_tool({'tool_name': 'ui_show_objects', 'args': args}).action, 'block')
+            self.assertEqual(json.dumps(args), before)
+        self.manager.begin_session()
+        with analysis_scope(capture_analysis_context({})):
+            args = {'objects': [{'object_type': 'Road'}, {'object_type': 'HydrodynamicGridCell'}]}
+            self.assertEqual(normalize_analysis_tool({'tool_name': 'ui_show_objects', 'args': args}).action, 'allow')
 
     def test_all_slice_tools_and_full_sequence_tools_share_version(self):
         with analysis_scope(capture_analysis_context(self.selected)):

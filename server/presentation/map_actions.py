@@ -8,7 +8,7 @@ from typing import Any, Collection
 
 from oag.ontology.schema import Ontology
 
-from domains.flood.runtime.object_sets import read_object_set
+from domains.flood.runtime.object_sets import read_object_set, save_object_set
 from domains.flood.runtime.common import MAPPABLE_OBJECTS, id_field, apply_filters
 from server.presentation.hydrodynamic import (
     build_hydrodynamic_action_plan,
@@ -53,8 +53,8 @@ class MapActionBuilder:
                     raise ValueError("each objects item must be an object")
                 item = dict(item)
                 if item.get("object_set_id"):
-                    if "object_ids" in item or item.get("filters"):
-                        raise ValueError("object_set_id cannot be combined with object_ids or filters; refine the set first")
+                    if "object_ids" in item:
+                        raise ValueError("object_set_id cannot be combined with object_ids")
                     selected = read_object_set(item["object_set_id"], item.get("object_type"))
                     item["object_type"] = selected["object_type"]
                     item["object_ids"] = selected["object_ids"]
@@ -97,11 +97,23 @@ class MapActionBuilder:
                     if not ids:
                         if replace_ids is not None:
                             actions.append({"type": "hide_objects", "object_type": object_type, "object_ids": replace_ids})
-                        cards.append({"title": label, "value": "0", "detail": "对象集合为空，未请求地图变更"})
+                        detail = "对象集合为空，已请求移除被替换集合" if replace_ids is not None else "对象集合为空，未请求地图变更"
+                        cards.append({"title": label, "value": "0", "detail": detail})
                         continue
                     field = id_field(object_type)
                     rows = apply_filters(self.resolver.query(object_type, {f"{field}__in": ids}), filters)
                     matched = {str(row.get(field)) for row in rows}
+                    if item.get("object_set_id") and filters:
+                        source_set_id = item["object_set_id"]
+                        ids = [value for value in ids if value in matched]
+                        try:
+                            subset = save_object_set(object_type, ids, parent_set_id=source_set_id,
+                                                     basis={"filters": filters})
+                            item["object_set_id"] = subset["object_set_id"]
+                        except (OSError, ValueError):
+                            # Visible selection IDs still describe the exact
+                            # displayed subset; do not label it as the parent.
+                            item["object_set_id"] = None
                     missing = [value for value in ids if value not in matched]
                     if missing:
                         raise ValueError(f"objects not found or excluded by filters: {object_type} {missing}")
@@ -109,7 +121,10 @@ class MapActionBuilder:
                 else:
                     count = self.resolver.count(object_type, filters)
                 if not count:
-                    cards.append({"title": label, "value": "0", "detail": "没有匹配对象，未请求地图变更"})
+                    if replace_ids is not None:
+                        actions.append({"type": "hide_objects", "object_type": object_type, "object_ids": replace_ids})
+                    detail = "没有匹配对象，已请求移除被替换集合" if replace_ids is not None else "没有匹配对象，未请求地图变更"
+                    cards.append({"title": label, "value": "0", "detail": detail})
                     continue
                 selection_id = f"selection_{uuid.uuid4().hex}"
                 action = {"type": "load_object", "object_type": object_type,

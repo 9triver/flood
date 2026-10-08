@@ -3,6 +3,7 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
 const project = path.resolve(__dirname, '../..');
 const live = process.argv.includes('--live');
 const artifactsRoot = path.join(project, 'local/validation');
@@ -69,6 +70,11 @@ for(const signal of ['SIGINT','SIGTERM'])process.once(signal,()=>{
     console.log(`completed ${id}`);return step;
   }
   const visible = type=>page.evaluate(type=>[...visibleObjectIds(type)].sort(),type);
+  async function selectHour(hour){
+    await page.locator('#hydroTimeSlider').fill(String(await page.evaluate(hour=>state.hydrodynamicTimeline.hours.indexOf(hour),hour)));
+    await page.locator('#hydroTimeSlider').dispatchEvent('change');
+    await page.waitForFunction(hour=>currentHydrodynamicTimelineContext().current_hydrodynamic_time_h===hour,hour);
+  }
   const unrelatedSite='shelter_232';
   await page.evaluate(id=>loadObject('EvacuationSite',{}, {objectIds:[id],fit:false,label:'其他已显示安置点'}),unrelatedSite);
   const nearby=await ask('nearby');
@@ -94,14 +100,14 @@ for(const signal of ['SIGINT','SIGTERM'])process.once(signal,()=>{
   await page.locator('#directiveDraftToast').waitFor({state:'visible'});
   let issued=await (await page.request.get(url+'/api/directives')).json();
   assert.equal(issued.directives.length,0,'Draft was published without a user action');
-  const basis=await page.evaluate(()=>state.directiveDraft.basis);
-  assert.equal(basis.evacuation_route_id,route.route.evacuation_route_id);
+  const draft=await page.evaluate(()=>state.directiveDraft);
+  assert.equal(draft.basis,undefined);
   await page.fill('#directiveTitle','端到端验证：平竹村转移准备');
   await page.click('#directiveIssueBtn');
   await page.waitForFunction(()=>state.directives.length===1);
   issued=await (await page.request.get(url+'/api/directives')).json();
   const immutable=JSON.stringify(issued.directives[0]);
-  assert.equal(issued.directives[0].basis.evacuation_route_id,route.route.evacuation_route_id);
+  assert.equal(issued.directives[0].basis,undefined);
   assert.equal(issued.directives[0].title,'端到端验证：平竹村转移准备');
   await page.screenshot({path:path.join(artifacts,'issued.png')});
 
@@ -118,6 +124,13 @@ for(const signal of ['SIGINT','SIGTERM'])process.once(signal,()=>{
   const impact=result(await ask('forecast_scope'),'analyze_inundation_impacts');
   assert.deepEqual(impact.analysis_scope.matched_object_ids.EvacuationSite.sort(),filteredIds);
   assert.equal(impact.time_h,6);
+  const originParams=new URLSearchParams({forecast_id:'v001',target_type:'EvacuationUnit',object_ids:JSON.stringify(['43']),time_h:'6'});
+  const originImpact=await (await page.request.get(url+'/api/impact-analysis?'+originParams)).json();
+  assert.equal(originImpact.total_impacts,1);
+  assert.equal(originImpact.impacts[0].velocity_source,'depth_estimate');
+  const evidenceHtml=await page.evaluate(item=>impactPopupHtml(item),originImpact.impacts[0]);
+  assert(evidenceHtml.includes('估算流速'));
+  assert.equal(await page.evaluate(()=>formatImpactNumber(null,2)),'--');
   const uiImpact=await page.evaluate(()=>({ids:state.impactAnalysis?.objectIds,hour:currentHydrodynamicTimelineContext().current_hydrodynamic_time_h}));
   assert.deepEqual(uiImpact.ids.sort(),filteredIds);assert.equal(uiImpact.hour,6);
   const deadline=result(await ask('deadline'),'analyze_latest_evacuation_time');
@@ -130,23 +143,82 @@ for(const signal of ['SIGINT','SIGTERM'])process.once(signal,()=>{
 
   // The same route becomes blocked in the updated forecast; issued records stay immutable.
   assert((await page.request.post(url+'/__test__/forecast',{data:{wet_now:true}})).ok());
-  const review=result(await ask('review_issued'),'review_route');
+  await page.waitForFunction(()=>currentHydrodynamicTimelineContext().forecast_version==='v002');
+  await selectHour(1);
+  const issuedReviewStep=await ask('review_issued');
+  assert(issuedReviewStep.events.some(e=>e.type==='tool_call'&&e.name==='query'&&e.args?.object_type==='EmergencyDirective'),
+    'Agent must query issued records instead of inferring issuance from earlier chat');
+  const review=result(issuedReviewStep,'review_route');
   assert.equal(review.passable,false);assert.equal(review.evacuation_route_id,route.route.evacuation_route_id);
+  // A new draft can still be opened when a separate route review failed.
+  assert((await ask('draft_blocked')).events.some(e=>e.type==='directive_draft'),
+    'A blocked route must not prevent drafting the requested response');
+  await page.locator('#directiveDraftToast').waitFor({state:'visible'});
+  assert.equal((await (await page.request.get(url+'/api/directives')).json()).directives.length,1);
+  await page.click('#directiveCancelBtn');
   await page.evaluate(()=>setTelemetryPanelOpen(true));
   await page.locator('[data-view-directive]').first().click();
+  assert.equal(await page.locator('#directiveContent').evaluate(element=>element.readOnly),true);
   await page.click('#directiveCopyBtn');
+  await page.fill('#directiveTitle','端到端验证：路线受阻后的处置');
+  await page.fill('#directiveContent','请现场核查受阻路线并准备替代转移方案。');
+  assert.equal(await page.evaluate(()=>state.directiveDraft.basis),undefined);
   await page.click('#directiveIssueBtn');
-  await page.locator('#directiveToastError').waitFor({state:'visible'});
-  assert((await page.locator('#directiveToastError').textContent()).includes('依据'));
+  await page.waitForFunction(()=>state.directives.length===2);
   issued=await (await page.request.get(url+'/api/directives')).json();
-  assert.equal(issued.directives.length,1);assert.equal(JSON.stringify(issued.directives[0]),immutable);
-  await page.screenshot({path:path.join(artifacts,'stale-draft.png')});
+  assert.equal(issued.directives.length,2);assert.equal(JSON.stringify(issued.directives[1]),immutable);
+  assert.equal(issued.directives[0].title,'端到端验证：路线受阻后的处置');
+  assert.equal(issued.directives[0].forecast_version,'v002');
+  assert.equal(issued.directives[0].simulation_time,'2026-07-03T09:00:00+08:00');
+  assert.equal(issued.directives[0].basis,undefined);
+  await page.screenshot({path:path.join(artifacts,'copied-draft.png')});
+
+  // A real reservoir snapshot supports an independent t0 trial. CNN output is deterministic.
+  const dispatchSeed=await page.request.post(url+'/__test__/dispatch-forecast',{data:{}});assert(dispatchSeed.ok());
+  const dispatchMetadata=await dispatchSeed.json();
+  await page.waitForFunction(()=>currentHydrodynamicTimelineContext().forecast_version==='v003');
+  await selectHour(0.5);
+  const early=result(await ask('current_roads'),'analyze_inundation_impacts');
+  assert.equal(early.forecast_id,'v003');assert.equal(early.time_h,0.5);assert.equal(early.total_impacts,0);
+  await selectHour(12);
+  const later=result(await ask('current_roads'),'analyze_inundation_impacts');
+  assert.equal(later.forecast_id,'v003');assert.equal(later.time_h,12);assert(later.total_impacts>0);
+  function formalState(){
+    const root=path.join(runtime,'workspaces',workspace_id);
+    const files={};
+    for(const sub of ['forecasts','boundary_flows']){
+      const directory=path.join(root,sub);
+      for(const entry of fs.readdirSync(directory,{recursive:true,withFileTypes:true}))if(entry.isFile()){
+        const file=path.join(entry.parentPath||entry.path,entry.name);
+        files[path.relative(root,file)]=createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+      }
+    }
+    return files;
+  }
+  const beforeTrial=formalState();
+  const trialStep=await ask('dispatch_trial');
+  const plan=result(trialStep,'get_longtan_dispatch_plan');
+  const trial=result(trialStep,'simulate_longtan_dispatch');
+  assert.equal(plan.t0,dispatchMetadata.valid_from);
+  assert.equal(trial.status,'completed');assert.equal(trial.applied,false);
+  assert.equal(trial.t0,dispatchMetadata.valid_from);assert.equal(trial.time_h,12);
+  assert.equal(trial.baseline_forecast_id,'v003');assert.equal(trial.horizon_hours,24);
+  assert.equal(trial.candidate_settings.mode,'OUTFLOW');assert.equal(trial.candidate_settings.target_outflow_m3s,2);
+  assert.equal(trial.reservoir_safety.candidate.passed,true);
+  for(const view of ['selected_time','window_envelope']){
+    assert(trial.comparison[view].baseline.affected_count>0);
+    assert.equal(trial.comparison[view].candidate.affected_count,0);
+  }
+  assert.deepEqual(formalState(),beforeTrial,'Trial changed a formal prediction or boundary input');
+  assert.equal(await page.evaluate(()=>currentHydrodynamicTimelineContext().current_hydrodynamic_time_h),12);
+  report.dispatch_trial=trial;
+  await page.screenshot({path:path.join(artifacts,'dispatch-trial.png')});
 
   const reset=await page.request.post(url+'/api/autonomy/reset',{data:{speed_multiplier:1}});assert(reset.ok());
   const resetData=await reset.json();
   await page.waitForFunction(id=>state.workspaceId===id,resetData.workspace_id);
   assert.equal((await visible('EvacuationRoute')).length,0);
-  const stale=await page.request.post(url+'/api/directives',{data:{workspace_id,basis,title:'old',content:'old',recipients:'old'}});
+  const stale=await page.request.post(url+'/api/directives',{data:{workspace_id,title:'old',content:'old',recipients:'old'}});
   assert.equal(stale.status(),400);
   assert.equal((await (await page.request.get(url+'/api/directives')).json()).directives.length,0);
   assert.deepEqual(errors,[]);

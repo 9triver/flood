@@ -139,11 +139,9 @@ class DispatchTrialTest(unittest.TestCase):
     def test_chat_tool_runs_the_trial_from_the_selected_forecast(self):
         from oag.harness import Harness
         from oag.ontology.loader import load_domain
-        from server.chat.agent_factory import configure_domain_tool_schemas
         from server.chat.analysis_context import analysis_scope, capture_analysis_context, normalize_analysis_tool
         ontology, repo, registry = load_domain(Path(__file__).resolve().parents[1] / "domains/flood")
         harness = Harness(ontology, repo, registry, None, "test")
-        configure_domain_tool_schemas(harness)
         harness.hooks.register("pre_tool_call", normalize_analysis_tool)
         selection = {"workspace_id": self.wid, "hydrodynamic_timeline": {
             "active": True, "mode": "time_slice", "forecast_version": "v001",

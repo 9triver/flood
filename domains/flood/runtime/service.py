@@ -34,20 +34,25 @@ class FloodRuntimeService:
         if "error" not in result:
             matching_ids = result.pop("_matched_object_ids")
             basis = {key: result[key] for key in ("reference", "radius_m", "min_distance_m", "filters", "excluded_object_ids")}
-            matching = save_object_set(target_type, matching_ids, basis=basis)
-            page = save_object_set(target_type, result["object_ids"], basis={**basis, "offset": offset, "limit": limit}, parent_set_id=matching["object_set_id"])
-            result["matching_set"] = set_summary(matching)
-            result["page_set"] = set_summary(page)
+            try:
+                matching = save_object_set(target_type, matching_ids, basis=basis)
+                page = save_object_set(target_type, result["object_ids"], basis={**basis, "offset": offset, "limit": limit}, parent_set_id=matching["object_set_id"])
+                result["matching_set"] = set_summary(matching)
+                result["page_set"] = set_summary(page)
+            except (OSError, ValueError):
+                result.update(matching_set=None, page_set=None, matching_object_ids=matching_ids,
+                              set_storage_warning="对象集合未能保存；本页使用 object_ids，全范围使用 matching_object_ids，查询数量与距离仍有效。")
         return result
 
     def refine_object_set(self, object_set_id: str, filters: dict | None = None,
                           exclude_object_ids: list[str] | None = None) -> dict:
         return refine_object_set(self.resolver, object_set_id, filters, exclude_object_ids)
 
-    def compare_evacuation_sites(self, evacuation_unit_id: str, object_set_id: str,
+    def compare_evacuation_sites(self, evacuation_unit_id: str, object_set_id: str = "",
                                  required_capacity: int | None = None, view: str = "current",
-                                 time_h: float | None = None, forecast_id: str = "latest") -> dict:
-        return compare_evacuation_sites(self.resolver, evacuation_unit_id, object_set_id, required_capacity, view, time_h, forecast_id)
+                                 time_h: float | None = None, forecast_id: str = "latest",
+                                 object_ids: list[str] | None = None) -> dict:
+        return compare_evacuation_sites(self.resolver, evacuation_unit_id, object_set_id, required_capacity, view, time_h, forecast_id, object_ids)
 
     def review_route(self, evacuation_route_id: str, view: str = "current", time_h: float | None = None, forecast_id: str = "latest") -> dict:
         return review_route(self.resolver, evacuation_route_id, view, time_h, forecast_id)
@@ -94,7 +99,7 @@ class FloodRuntimeService:
         context = resolve_forecast_context(forecast_id, view="envelope")
         if not context["available"]:
             return unavailable_forecast(context)
-        return assess_flood_emergency(self.resolver, refresh, forecast_id)
+        return assess_flood_emergency(self.resolver, refresh, context["forecast_version"])
 
     def analyze_inundation_impacts(
         self,
@@ -160,7 +165,7 @@ class FloodRuntimeService:
             evacuation_unit_id,
             evacuation_unit_name,
             evacuation_route_id,
-            forecast_id,
+            context["forecast_version"],
             blocked_depth_m,
             clearance_duration_min,
             safety_buffer_min,

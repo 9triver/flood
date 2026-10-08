@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .workspace import workspace_dir
+from .forecast_storage import forecast_cycle_path
 
 
 _ROUTE_WRITE_LOCK = threading.Lock()
@@ -43,6 +44,8 @@ def save_planned_route(route: dict[str, Any]) -> None:
         temp_path.write_text(f"{body}\n", encoding="utf-8")
         temp_path.replace(target)
         clear_route_geojson_cache()
+        # A one-off emergency assessment includes the currently planned routes.
+        forecast_cycle_path().unlink(missing_ok=True)
 
 
 def clear_route_geojson_cache() -> None:

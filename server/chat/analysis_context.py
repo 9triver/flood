@@ -116,9 +116,34 @@ def normalize_analysis_tool(context: dict) -> HookResult:
     """Runs before tool caching; contextvars also propagate to parallel tool workers."""
     analysis = _ANALYSIS.get()
     name = context.get("tool_name")
-    if analysis is None or name not in FORECAST_TOOLS or str(context.get("session_id", "")).startswith("event-"):
+    if analysis is None or name not in FORECAST_TOOLS | {"ui_show_objects"} or str(context.get("session_id", "")).startswith("event-"):
         return HookResult()
     args = context["args"]
+    if name == "ui_show_objects":
+        updates = []
+        for item in args.get("objects", []):
+            filters = dict(item.get("filters") or {})
+            if item.get("object_type") != "InundationForecastCell" and not (
+                item.get("object_type") == "HydrodynamicGridCell" and filters.get("forecast_id")
+            ):
+                continue
+            view = filters.get("view", "time_slice" if "time_h" in filters else "timeline")
+            # Only relative "current" requests inherit the question's frame.
+            # Browsing a forecast must also work after this turn creates one.
+            if view not in {"current", "simulation_current"}:
+                continue
+            normalized = dict(filters)
+            result = _normalize_forecast_tool("get_flood_status", normalized, analysis)
+            if result.action != "allow":
+                return result
+            updates.append((item, normalized))
+        for item, filters in updates:
+            item["filters"] = filters
+        return HookResult()
+    return _normalize_forecast_tool(name, args, analysis)
+
+
+def _normalize_forecast_tool(name: str, args: dict, analysis: ChatAnalysisContext) -> HookResult:
     if analysis.error:
         return HookResult(action="block", reason=analysis.error)
     if active_workspace_id() != analysis.workspace_id:

@@ -8,6 +8,7 @@ import math
 import sqlite3
 import threading
 from collections import OrderedDict
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -95,7 +96,7 @@ def forecast_cells_from_hydrodynamic_mesh(
     if not MESH_DB_PATH.exists() or not depths:
         return []
     cells = []
-    with sqlite3.connect(MESH_DB_PATH) as conn:
+    with closing(sqlite3.connect(MESH_DB_PATH)) as conn:
         conn.row_factory = sqlite3.Row
         for row in mesh_rows_for_depths(conn, depths):
             mesh_cell_id = int(row["cell_id"])
@@ -117,18 +118,25 @@ def forecast_cells_from_hydrodynamic_mesh(
                 "model_name": "FLOOD_CNN_V2",
                 "mesh_cell_id": str(mesh_cell_id),
                 "mesh_source_id": "cnn_v2_gt",
-                "lead_time_h": round(float(time_h), 3) if time_h is not None else 3.0,
+                "time_h": round(float(time_h), 3) if time_h is not None else None,
+                "lead_time_h": round(float(time_h), 3) if time_h is not None else None,
+                "view": "time_slice" if time_h is not None else "envelope",
                 "centroid_lon": round(centroid[0], 7),
                 "centroid_lat": round(centroid[1], 7),
-                "distance_to_river_m": 0,
-                "river_along_ratio": 0,
-                "ground_elevation_m": 0,
-                "water_level_m": round(depth_m, 3),
+                "distance_to_river_m": None,
+                "river_along_ratio": None,
+                "ground_elevation_m": None,
+                "water_level_m": None,
                 "depth_m": round(depth_m, 3),
+                "depth_source": "cnn_prediction",
                 "velocity_mps": velocity,
-                "arrival_time_h": round(float(time_h), 3) if time_h is not None else 0,
-                "recession_time_h": 0,
+                "velocity_source": "depth_estimate",
+                # A selected slice is not the first arrival, and depth is not
+                # an absolute water level. Do not manufacture missing outputs.
+                "arrival_time_h": None,
+                "recession_time_h": None,
                 "risk_level": risk_level(depth_m, velocity),
+                "risk_basis": "depth_and_estimated_velocity",
                 "area_m2": round(triangle_area_m2(coordinates[:3]), 3),
                 "geometry_type": "Polygon",
                 "geometry_crs": "EPSG:4326",

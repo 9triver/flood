@@ -1,221 +1,21 @@
+# 水路联动领域契约；对象与工具名称为稳定接口。
 name: flood
+
 description: "水库下游洪水、道路桥梁、重要设施与避洪转移联动分析领域。面向珊瑚河数据，回答洪水事件中哪些道路、桥梁、设施、转移路线和安置对象受影响，以及应采取哪些封控、撤离、绕行和简报建议。"
+
+excluded_tools: [mutate, apply_rule, apply_rule_batch, dispatch_workers]
+
 tool_preferences:
   generic_search: fallback_only
 
-interaction_policies:
-  user_chat:
-    description: "珊瑚河 GIS 用户对话策略"
-    include_in_system_prompt: true
-    instructions:
-      - "Catchment 表达水库上游降雨汇集和产流范围，通过 reservoir_id 关联 Reservoir。面积与地图几何可查询该对象；集水区范围不代表洪水淹没范围。龙潭集水区与珊瑚河流域原始边界存在差异，不能推断严格空间包含。"
-      - "道路对象分为 RoadRoute（按编号聚合的道路）与 Road（独立路段）。用户要求所有道路地图时展示 Road，以包含未归属的路段；要求 G65 等整条编号道路时查询 RoadRoute.ref 并展示 RoadRoute，其范围仅为项目已收录路段。数量回答必须区分编号道路与路段，并说明覆盖范围；未编号路段不能从地图或统计说明中被忽略。"
-      - "道路归属通过 RoadRouteSegment 表达多对多关系。不能按名称相同、距离近或 osm_ref 推断归属，osm_ref 是源要素ID。道路影响使用 road_route_impacts 或 target_type=RoadRoute，表述为已收录 N 段中 M 段受影响，不得推断整条道路不可通行；共线路段在各道路中分别汇总，不能把道路数和路段数相加。"
-      - "你服务于以珊瑚河流域 GIS 为中心的前端；当前系统只展示实时预测结果，不提供设计洪水方案切换。"
-      - "用户明确要求显示、打开、绘制、加载、叠加、缩放、聚焦或清空地图对象时，必须调用对应 ui_* 工具执行前端动作，不要只用文字说明。"
-      - "用户只要求清除、隐藏淹没范围、预测淹没结果或水动力结果时，调用 ui_hide_forecast；这只移除淹没结果，不改变地图视野。"
-      - "附近点位先确定参考对象，再调用 find_nearby_objects；默认半径3000米、每页10个。数量使用 total_matched，全部结果按 next_offset 翻页直到 has_more=false，不得以当前页代替全部。‘更远一些’使用 min_distance_m 或 exclude_object_ids，不能只扩大半径又返回同一批最近点；未明确距离可澄清。"
-      - "查询和统计必须保留地域、类别、距离和受淹条件。地域先通过 Town/County 查询 ID；周边数量使用附近查询总匹配数，受淹数量使用 analyze_inundation_impacts 的指定范围汇总；不能替换为全库计数。对象查询的 ID 列表可传给展示及影响分析，空列表不得退化为全部。"
-      - "隐藏这些对象时优先使用前端 visible_selections 中的 selection_id 调用 ui_hide_objects；缺少可确定的集合时询问用户，不得重置地图。只有用户明确要求重置整个地图才调用 ui_reset_map。"
-      - "地图工具返回 pending 仅表示已请求动作，不能说已经执行成功；浏览器 map_action_receipts 是执行回执，visible_selections/visible_layers 是实际可见状态。普通高亮不表示对象受淹。面向用户只简洁说明已请求显示或隐藏，不输出 selection_id、pending 等内部字段，也不要解释回执机制；距离只能引用查询结果，不得自行估算。"
-      - "基于预测淹没范围判断设施、道路、桥梁、转移路线或安置点是否受影响时，必须调用 analyze_inundation_impacts，不得自行猜测对象级受淹结论。"
-      - "用户根据多时刻淹水预测询问最晚转移时间、转移截止时间或安全转移窗口时，必须调用 analyze_latest_evacuation_time；不得把 EvacuationUnit.flood_arrival_window 当作预测分析结论，也不要自行逐格查询 InundationForecastCell 推算。"
-      - "已有水动力时间轴时直接分析已有预测；只有用户明确要求运行、重算或更新预测时才调用 run_flood_forecast。"
-      - "用户要求调整水库调度模式、下泄流量或目标水位以比较淹没影响时，先 get_longtan_dispatch_plan，再 simulate_longtan_dispatch。试算从所选预测的起点 t0 水库状态开始，地图选中帧是要比较的 t1，不是调度起点。只反馈试算结果，不应用方案、不覆盖正式预测。按工具返回分别说明水库24小时校核、t1影响和整个24小时最大影响；资料不完整或模型失败不能解释成无淹没。目标参数不明确时询问，不能自行设为零。max_release_m3s 会替换能力和安全泄量，只有用户明确要求时才调整并说明假设。"
-      - "用户对话中“现在/当前/总结当前情况”默认指本轮分析时刻：提问时地图时间轴选中的预测帧，无选中帧时才使用演进时钟。状态、影响、路线和安置点分析共用该时刻与预测版本；默认 view=current 由对话层解析。用户明确指定时间时使用 view=time_slice 与 time_h；明确问演进当前时刻用 view=simulation_current；明确问整个预测期或最不利情形才用 view=envelope。"
-      - "预测结果中的 time_h、arrival_time_h 以及名称以 _time_h 结尾的预测时间均是相对 valid_from 的小时偏移，不是钟表时间。面向用户说明何时发生时，优先使用工具返回的 analysis_time_at、valid_at、first_unsafe_at、latest_departure_at 等实际时刻，并可把预测 +Nh 作为辅助信息；不得把 generated_at 当作预测基准时刻。"
-      - "查询现在有没有淹没使用 get_flood_status(view=current)，按本轮分析时刻查询，不自动计算或操作地图；明确查询未来总体风险才使用 view=envelope。未开始演进时按演示无洪水初始状态回答；演进开始后状态未知则不能解释为没有洪水，也不能以历史预测替代。"
-      - "运行预测、展示已有结果、查询状态是不同操作。仅明确请求运行、重算或更新预测时调用 run_flood_forecast；仅明确请求地图展示时调用 ui_show_objects。"
-      - "用户对话的当前时刻路线与影响分析默认使用本轮冻结的分析时间切片；明确要求最不利情形或整个预测期时才使用 view=envelope。未来最大淹没包络不能表述为起点或道路现在已经受淹。"
-      - "assess_flood_emergency 只对已有有效预测做一次应急研判，不运行模型、不启动持续任务。用户要求启动或暂停持续演进时指引使用态势工作台相应按钮，不得声称单次研判已开启自动运行。"
-      - "不要把 severity_index 或综合指标映射为 5/10/20/50/100 年一遇设计方案；防洪响应预案必须通过已实现工具或人工审批。"
-      - "plan_route 始终按避洪语义规划，不让用户选择普通或避洪模式。演进未开始时按无洪水初始状态规划；演进开始后自动使用有效预测，无淹没网格时正常规划，有淹没时避让。演进开始后预测缺失、失效或失败表示未知，不能按无洪水处理或绕过校验。"
-      - "连续对话要保留参考对象、候选集合、时间范围和用户确认的路线。筛选这些对象使用已有 object_set_id，不重新查询全库。比较安置点使用 compare_evacuation_sites，复核既有路线用 review_route。指令草稿涉及路线时必须传 evacuation_route_id，后续预测变化先复核再生成新的草稿。"
-      - "路线规划成功后使用结果中的 evacuation_route_id 展示本次生成的 EvacuationRoute；一次展示多个对象时放入同一次 ui_show_objects 调用。"
-      - "用户要求把当前或刚才的建议作为应急指令初稿、新建应急指令或准备发出指令时，调用 ui_open_emergency_directive_editor；根据对话上下文生成简洁标题、明确接收对象、优先级和可编辑正文。该工具只打开草稿编辑器，必须由用户在前端修改并确认后才会发出。"
-    intents:
-      reservoir_dispatch:
-        keywords: ["调度", "下泄", "泄洪", "试算", "目标水位"]
-        context_keywords: ["调度", "下泄", "泄洪", "试算", "目标水位"]
-        tools: [get_longtan_dispatch_plan, simulate_longtan_dispatch]
-      count:
-        keywords: ["几个", "多少个", "几条", "多少条", "数量", "总数"]
-        tools: [count]
-        task_hint: "本问题是领域对象库的直接数量查询。请直接调用 {calls}；不要先查询无关对象或对象几何，也不要添加用户未明确给出的过滤条件。得到 count 结果后立即回答。"
-      map:
-        keywords: ["地图", "显示", "打开", "画", "绘制", "加载", "叠加", "聚焦", "定位", "缩放", "清空", "隐藏", "不显示"]
-        tools: [find_nearby_objects, ui_show_objects, ui_show_event_marker, ui_hide_objects, ui_hide_forecast, ui_reset_map, ui_focus_object]
-      impact:
-        keywords: ["受影响", "受淹", "淹水影响", "淹没影响", "涉水", "能否通行"]
-        context_keywords: ["受影响", "受淹", "淹水影响", "淹没影响", "涉水"]
-        tools: [analyze_inundation_impacts, ui_show_objects, ui_show_event_marker, ui_hide_objects, ui_hide_forecast, ui_reset_map, ui_focus_object]
-      latest_evacuation_time:
-        keywords: ["最晚转移时间", "最迟转移时间", "转移截止时间", "最晚撤离时间", "最迟撤离时间", "安全转移窗口", "转移时间窗口"]
-        context_keywords: ["24小时淹水", "多时刻淹水", "淹水预测", "洪水到达时间", "转移时间"]
-        tools: [analyze_latest_evacuation_time]
-      route:
-        keywords: ["路线", "路径", "导航", "绕行", "怎么走", "安置点", "重新规划", "规划一条", "→", "->"]
-        context_keywords: ["路线", "路径", "导航", "绕行", "安置点", "重新规划"]
-        tools: [plan_route, ui_show_objects, ui_show_event_marker, ui_hide_objects, ui_hide_forecast, ui_reset_map, ui_focus_object]
-      flood_status:
-        keywords: ["有没有淹没", "有淹没区", "有淹水区", "有积水", "淹没情况"]
-        tools: [get_flood_status]
-      forecast:
-        keywords: ["运行预测", "重新预测", "重算", "重新计算", "更新预测", "启动预测", "未来淹没"]
-        tools: [run_flood_forecast, ui_show_objects, ui_show_event_marker, ui_hide_objects, ui_hide_forecast, ui_reset_map, ui_focus_object]
-      emergency_cycle:
-        keywords: ["单次研判", "应急研判", "处置建议"]
-        tools: [assess_flood_emergency, ui_show_objects, ui_show_event_marker, ui_hide_objects, ui_hide_forecast, ui_reset_map, ui_focus_object]
-      directive:
-        keywords: ["生成应急指令", "形成应急指令", "指令初稿", "新建指令", "发出指令", "作为初稿"]
-        context_keywords: ["建议", "应急指令", "指令初稿"]
-        tools: [ui_open_emergency_directive_editor]
-
-presentation_tools:
-  ui_show_objects:
-    summary: "在 GIS 地图中显示领域对象"
-    description: "在前端 GIS 地图中显示一个或多个领域对象。对象类型必须来自 ontology，不使用前端图层名。"
-    usage_prompt: >-
-      用户明确要求显示、打开、绘制、加载、叠加或查看地图对象时调用。
-      对象名称映射来自 ontology：{object_aliases}。
-      object_ids 一旦提供就只显示这些对象，空数组不改变地图；默认 mode=add 追加显示。
-      仅用户明确要求替换同类型全部显示时使用 mode=replace，不得为普通追加展示使用替换。
-      返回 selections 中的 selection_id 用于后续隐藏这批对象。只保留筛选结果时用 replace_object_set_id 替换原集合；追加显示不移除原有对象。查询返回的 object_set_id 可直接用于显示完整集合，不需要让模型抄写所有 ID。
-      水动力 filters 只支持 forecast_id、time_h 和 view；默认 timeline 打开预测时间轴，从首个可用预测帧开始；view=current 仅查询当前演进时刻的切片（可能不存在），view=envelope 显示最大包络，time_slice 必须指定 time_h。
-      单纯显示模型网格不清除预测淹没结果。
-      根据影响分析结果展示受影响对象时，从 impacts 中按 object_type 汇总 object_id，
-      设置 object_ids、highlight=true。
-      展示多个类型时，将全部对象放入同一次调用的 objects 数组。
-    side_effect_scope: frontend_map
-    mutates_domain: false
-    object_scope: mappable
-    requires_confirmation: false
-    worker_allowed: false
-
-  ui_hide_objects:
-    summary: "隐藏指定地图对象"
-    description: "按 selection_id 或对象类型、ID、过滤条件隐藏对象，不改变其他对象和地图视野。"
-    usage_prompt: "隐藏这些、刚才那些对象时优先引用当前 visible_selections 的 selection_id。不能确定所指集合时询问用户。空 ID 列表不执行隐藏。"
-    side_effect_scope: frontend_map
-    mutates_domain: false
-    object_scope: mappable
-    requires_confirmation: false
-    worker_allowed: false
-
-  ui_hide_forecast:
-    summary: "隐藏预测淹没结果"
-    description: "隐藏预测淹没结果及其影响分析展示，保留其他对象和视野。"
-    usage_prompt: "只在用户要求隐藏或清除淹没结果时调用。"
-    side_effect_scope: frontend_map
-    mutates_domain: false
-    object_scope: none
-    requires_confirmation: false
-    worker_allowed: false
-
-  ui_reset_map:
-    summary: "重置整个地图"
-    description: "清除所有非基础图层、淹没结果、警戒、影响分析和事件标记，并重置视野。"
-    usage_prompt: "仅用户明确要求重置整个地图时调用。禁止用于隐藏某个对象、某类对象或这些对象。"
-    side_effect_scope: frontend_map
-    mutates_domain: false
-    object_scope: none
-    requires_confirmation: false
-    worker_allowed: false
-
-  ui_set_inundation_alert:
-    summary: "设置珊瑚河流域预测淹没警戒"
-    description: "根据24小时洪水预测是否存在淹没，开启或清除珊瑚河流域边界的红色警戒样式。"
-    usage_prompt: >-
-      只用于表达当前24小时预测是否存在淹没，不表示整个流域都会被淹，
-      也不用于判断具体道路、设施或转移对象是否受影响。
-      active=true 显示红色流域警戒边界，active=false 清除警戒并恢复默认边界。
-    side_effect_scope: frontend_map
-    mutates_domain: false
-    object_scope: none
-    requires_confirmation: false
-    worker_allowed: false
-
-  ui_focus_object:
-    summary: "定位并高亮 GIS 对象"
-    description: "缩放、打开弹窗并高亮前端地图中的一个领域对象，不修改领域数据。"
-    usage_prompt: "用户要求定位、聚焦或缩放到某个对象时调用。"
-    side_effect_scope: frontend_map
-    mutates_domain: false
-    object_scope: mappable
-    requires_confirmation: false
-    worker_allowed: false
-
-  ui_show_event_marker:
-    summary: "在 GIS 地图中显示事件标记"
-    description: "在前端 GIS 地图中显示一个具有明确单点位置的领域事件 marker，不修改领域数据。"
-    usage_prompt: >-
-      只有事件对象包含明确 longitude/latitude 时才调用；没有明确单点位置的事件不创建 marker。
-    side_effect_scope: frontend_map
-    mutates_domain: false
-    object_scope: mappable
-    requires_confirmation: false
-    worker_allowed: false
-
-  ui_open_emergency_directive_editor:
-    summary: "打开应急指令草稿编辑器"
-    description: "根据智能体当前建议生成应急指令初稿，并在态势工作台打开编辑器供用户修改、确认和发出；本工具本身不发出指令。"
-    usage_prompt: >-
-      用户明确要求把当前或刚才的建议作为初稿、新建应急指令或准备发出指令时调用。
-      title、content 和 recipients 必须根据本轮对话及已核实事实生成；priority 默认 urgent。
-      正文应直接可执行，避免加入未经工具核实的距离、通行状态或资源承诺。
-      调用后不要声称指令已经发出，必须说明草稿已在编辑器中打开，等待用户修改和确认。
-    side_effect_scope: frontend_editor
-    mutates_domain: false
-    object_scope: none
-    requires_confirmation: false
-    worker_allowed: false
-
-event_policies:
-  FloodForecastRequired:
-    display_name: "洪水预测请求事件"
-    role: "珊瑚河洪水应急智能体"
-    description: "领域策略已根据当前时刻至 +24h 的边界流量预测窗口生成洪水预测请求。"
-    allowed_tools: [inspect, query, count, run_flood_forecast]
-    forbidden_functions: [assess_flood_emergency]
-    instructions:
-      - "领域策略已经完成阈值判断；当事件 forecast_trigger.should_run_forecast=true 时，必须由你调用一次 run_flood_forecast，forecast_id 使用 latest。不要只用文字说明将要预测。"
-      - "事件 payload 包含当前预测时刻 observation、与触发判断完全相同的 25 点 forecast_input，以及 forecast_trigger；run_flood_forecast 会读取事件对应的稳定输入快照，CNN 计算与结果保存由该工具完成。"
-      - "本洪水预测请求事件只负责判断并运行洪水预测，不在当前事件阶段执行对象级影响分析或防洪响应预案；预测完成后系统会另行发布预测淹没结果生成事件，由后续事件判断是否存在淹没、设置流域警戒并展示预测淹没范围。对象级影响分析在后续事件中也不会自动执行，只有用户明确提出后才执行。结论中必须写清‘当前洪水预测请求事件未执行对象级影响分析；后续预测淹没结果生成事件也不自动执行，需用户明确提出后分析’，不得声称后续事件将自动执行影响分析。"
-    conclusion_fields: ["24小时预测窗口", "触发原因", "是否调用了预测模型"]
-
-  InundationGenerated:
-    display_name: "预测淹没结果生成事件"
-    role: "珊瑚河洪水应急智能体"
-    description: "水动力模型已经生成24小时预测结果，本事件负责判断预测期内是否存在淹没并表达流域警戒态势。"
-    allowed_tools: [ui_set_inundation_alert, ui_show_objects]
-    forbidden_functions: [assess_flood_emergency]
-    instructions:
-      - "展示新预测时调用 ui_show_objects，filters 使用 forecast_id=latest、view=timeline，打开0.5至24小时的预测时间轴；不要请求缺失的当前+0h切片，也不要改成最大包络代替时间轴。"
-      - "只根据事件 payload 中 CNN 预测汇总判断未来24小时是否存在淹没：forecast_cell_count>0 表示存在至少一个水深不低于0.04米的预测淹没单元，否则表示无淹没。"
-      - "必须调用一次 ui_set_inundation_alert：存在淹没时传 active=true，无淹没时传 active=false，以确保旧警戒状态也能被清除。"
-      - "本事件不执行对象级影响分析，不判断具体道路、设施、桥梁、转移路线、转移对象或安置点是否受影响；这些分析只在用户明确提出后执行。"
-      - "防洪响应预案在本事件中保持切断。"
-    automatic_map:
-      mode: when_relevant
-      tool: ui_show_objects
-      objects:
-        - object_type: HydrodynamicGridCell
-          filters: {forecast_id: latest, view: timeline}
-          label: "预测淹没结果"
-          fit: false
-          refresh: true
-      allowed_action_types: [show_hydrodynamic_mesh, apply_hydrodynamic_result, set_watershed_inundation_alert]
-      other_objects: on_user_request
-      include_result_cards: false
-    conclusion_fields: ["预测运行", "24小时内是否存在淹没", "淹没面积", "最大水深", "流域警戒边界状态", "是否已请求淹没范围地图展示"]
-
+# 业务对象：静态台账、运行结果与已发指令。
 objects:
   River:
     kind: entity
     display_name: "珊瑚河"
     aliases:
       - {terms: ["珊瑚河", "主河道", "河道中心线"]}
-    data_source: external_api
+    data_source: local_file
     mutability: read_only
     source:
       type: resolver
@@ -235,7 +35,7 @@ objects:
     display_name: "珊瑚河流域"
     aliases:
       - {terms: ["流域", "小流域", "流域范围"]}
-    data_source: external_api
+    data_source: local_file
     mutability: read_only
     source:
       type: resolver
@@ -256,7 +56,7 @@ objects:
     display_name: "水库集水区"
     aliases:
       - {terms: ["集水区", "汇水区", "水库上游集水区", "龙潭水库上游集水区"]}
-    data_source: external_api
+    data_source: local_file
     mutability: read_only
     source:
       type: resolver
@@ -284,7 +84,7 @@ objects:
     display_name: "水动力边界"
     aliases:
       - {terms: ["水动力边界", "模型边界", "断面"]}
-    data_source: external_api
+    data_source: local_file
     mutability: read_only
     source:
       type: resolver
@@ -311,7 +111,7 @@ objects:
     display_name: "县级行政区"
     aliases:
       - {terms: ["县级边界", "行政边界", "县"]}
-    data_source: external_api
+    data_source: local_file
     mutability: read_only
     source:
       type: resolver
@@ -331,7 +131,7 @@ objects:
     display_name: "乡镇"
     aliases:
       - {terms: ["乡镇", "乡镇边界", "镇界"]}
-    data_source: external_api
+    data_source: local_file
     mutability: read_only
     source:
       type: resolver
@@ -357,14 +157,14 @@ objects:
     display_name: "水库"
     aliases:
       - {terms: ["水库"]}
-    data_source: external_api
+    data_source: local_file
     mutability: read_only
     source:
       type: resolver
       resolver: flood_repository
       id_field: reservoir_id
     summary: "水库工程"
-    description: "水库对象承接下游洪水来源、调度过程和工程台账信息。"
+    description: "水库工程台账及安全阈值。动态水位和调度过程由运行时生成；本对象不提供 reservoir_level_m，预测起点的调度状态通过 get_longtan_dispatch_plan 查询。"
     properties:
       reservoir_id: {type: str, required: true, description: "水库编号"}
       name: {type: str, description: "水库名称"}
@@ -377,11 +177,11 @@ objects:
       check_flood_standard_year: {type: float, description: "校核洪水标准，年一遇"}
       max_discharge_m3s: {type: float, description: "最大泄量"}
       safety_status: {type: str, description: "安全状态或安全类别"}
-      normal_pool_level_m: {type: float, default: 245.30, description: "正常蓄水位，米；低于该值显示绿色，达到后显示黄色"}
-      design_flood_level_m: {type: float, default: 247.92, description: "设计洪水位，米；达到后显示橙色"}
-      check_flood_level_m: {type: float, default: 248.91, description: "校核洪水位，米；超过后显示红色严重警告"}
-      design_flood_warning_level_m: {type: float, default: 247.62, description: "接近设计洪水位的提示阈值，米；按设计洪水位提前0.30米"}
-      check_flood_warning_level_m: {type: float, default: 248.61, description: "接近校核洪水位的提示阈值，米；按校核洪水位提前0.30米"}
+      normal_pool_level_m: {type: float, default: &normal_pool_level_m 245.30, description: "正常蓄水位，米；低于该值显示绿色，达到后显示黄色"}
+      design_flood_level_m: {type: float, default: &design_flood_level_m 247.92, description: "设计洪水位，米；达到后显示橙色"}
+      check_flood_level_m: {type: float, default: &check_flood_level_m 248.91, description: "校核洪水位，米；超过后显示红色严重警告"}
+      design_flood_warning_level_m: {type: float, default: &design_flood_warning_level_m 247.62, description: "接近设计洪水位的提示阈值，米；按设计洪水位提前0.30米"}
+      check_flood_warning_level_m: {type: float, default: &check_flood_warning_level_m 248.61, description: "接近校核洪水位的提示阈值，米；按校核洪水位提前0.30米"}
       longitude: {type: float, description: "经度"}
       latitude: {type: float, description: "纬度"}
 
@@ -391,7 +191,7 @@ objects:
     display_name: "水闸"
     aliases:
       - {terms: ["水闸", "分洪闸", "闸门"]}
-    data_source: external_api
+    data_source: local_file
     mutability: read_only
     source:
       type: resolver
@@ -420,7 +220,7 @@ objects:
     display_name: "其他水利工程"
     aliases:
       - {terms: ["水利设施", "水利工程", "水利工程设施"]}
-    data_source: external_api
+    data_source: local_file
     mutability: read_only
     source:
       type: resolver
@@ -455,7 +255,7 @@ objects:
     display_name: "路段"
     aliases:
       - {terms: ["路段"]}
-    data_source: external_api
+    data_source: local_file
     mutability: read_only
     source:
       type: resolver
@@ -483,7 +283,7 @@ objects:
     display_name: "编号道路"
     aliases:
       - {terms: ["道路", "公路"]}
-    data_source: external_api
+    data_source: derived
     mutability: read_only
     source:
       type: resolver
@@ -511,7 +311,7 @@ objects:
     kind: entity
     countable: false
     display_name: "道路与路段关联"
-    data_source: external_api
+    data_source: derived
     mutability: read_only
     source:
       type: resolver
@@ -532,7 +332,7 @@ objects:
     display_name: "桥梁"
     aliases:
       - {terms: ["桥梁", "桥"]}
-    data_source: external_api
+    data_source: local_file
     mutability: read_only
     source:
       type: resolver
@@ -564,7 +364,7 @@ objects:
       - {terms: ["学校"], filters: {facility_type: school}}
       - {terms: ["医院"], filters: {facility_type: hospital}}
       - {terms: ["政府机构"], filters: {facility_type: government}}
-    data_source: external_api
+    data_source: local_file
     mutability: read_only
     source:
       type: resolver
@@ -597,7 +397,7 @@ objects:
       - {terms: ["集中安置点"], filters: {site_type: shelter}}
       - {terms: ["集合点"], filters: {site_type: assembly}}
       - {terms: ["物资点"], filters: {site_type: warehouse}}
-    data_source: external_api
+    data_source: local_file
     mutability: read_only
     source:
       type: resolver
@@ -625,7 +425,7 @@ objects:
     display_name: "转移单元"
     aliases:
       - {terms: ["转移对象", "转移安排", "转移单元", "需转移村庄"]}
-    data_source: external_api
+    data_source: local_file
     mutability: read_only
     source:
       type: resolver
@@ -651,14 +451,14 @@ objects:
     display_name: "转移路线"
     aliases:
       - {terms: ["路线", "路径", "转移路线", "绕行路线"]}
-    data_source: external_api
+    data_source: mixed
     mutability: read_only
     source:
       type: resolver
       resolver: flood_repository
       id_field: evacuation_route_id
     summary: "连接转移单元与安置地点的路线"
-    description: "EvacuationRoute 表达从 EvacuationUnit 到 EvacuationSite 的预定或动态规划路线，通过 route_type 区分转移、救援、绕行和保障路线。"
+    description: "预定或动态规划路线，支持领域对象或明确坐标作为起终点；坐标终点可没有 destination_site_id。通过 route_type 区分导航、转移、救援、绕行和保障。对象查询只读，动态路线由 plan_route 保存。"
     properties:
       evacuation_route_id: {type: str, required: true, description: "转移路线稳定ID"}
       name: {type: str, description: "规范显示名"}
@@ -694,7 +494,7 @@ objects:
     display_name: "洪水预测"
     aliases:
       - {terms: ["预测运行", "洪水预测"]}
-    data_source: external_api
+    data_source: model_generated
     mutability: read_only
     source:
       type: resolver
@@ -732,7 +532,7 @@ objects:
     display_name: "应急指令"
     aliases:
       - {terms: ["应急指令", "已发指令", "指令记录"]}
-    data_source: external_api
+    data_source: human_confirmed
     mutability: append_only
     source:
       type: resolver
@@ -741,7 +541,6 @@ objects:
     summary: "当前演进中经用户确认发出的应急指令"
     description: "EmergencyDirective 只表示已经由用户在态势工作台确认发出的指令；智能体生成但尚未确认的前端初稿不作为领域对象保存。"
     properties:
-      basis: {type: json, description: "指令草稿采用的工作空间、演进时刻、预测、路线和候选集合依据"}
       directive_id: {type: str, required: true, description: "指令编号"}
       workspace_id: {type: str, description: "所属当前演进工作空间ID"}
       title: {type: str, description: "指令标题"}
@@ -750,37 +549,42 @@ objects:
       priority: {type: str, description: "优先级: normal/urgent/critical"}
       status: {type: str, description: "指令状态，当前为 issued"}
       simulation_time: {type: str, description: "发出时的演进模拟时间"}
-      forecast_version: {type: str, description: "发出指令时所依据的预测版本"}
+      forecast_version: {type: str, description: "发出时运行状态记录的预测版本；不证明正文采用或校验了该版本"}
       issued_at: {type: str, description: "用户确认发出时间"}
 
   InundationForecastCell:
     kind: entity
     display_name: "淹没预测单元"
-    data_source: external_api
+    data_source: derived
     mutability: read_only
     source:
       type: resolver
       resolver: flood_repository
       id_field: forecast_cell_id
     summary: "指定洪水预测下的淹没网格结果"
-    description: "InundationForecastCell 由静态水动力网格和所属工作空间内指定时刻的模型水深结果按需派生，承载预测水深、流速、到达时间和退水时间，不单独持久化网格几何副本。"
+    description: "由静态网格与指定预测切片或最大包络按需派生。CNN 提供水深；流速由水深估算并标明来源。未计算的到水/退水时刻、地面高程、水位和河道距离返回 null，不可作为预测证据。"
     properties:
       forecast_cell_id: {type: str, required: true, description: "预测计算单元ID"}
       forecast_id: {type: str, description: "所属预测运行ID"}
       model_name: {type: str, description: "输出该单元的模型名称"}
       mesh_cell_id: {type: str, description: "基础计算网格单元ID"}
       mesh_source_id: {type: str, description: "基础网格来源"}
-      lead_time_h: {type: float, description: "预见期，小时"}
+      time_h: {type: float, description: "相对 valid_from 的切片小时偏移；最大包络为 null"}
+      view: {type: str, description: "结果范围：time_slice 或 envelope"}
+      lead_time_h: {type: float, description: "兼容字段，与 time_h 相同；不是到水时间，包络为 null"}
       centroid_lon: {type: float, description: "单元中心经度"}
       centroid_lat: {type: float, description: "单元中心纬度"}
-      distance_to_river_m: {type: float, description: "到河道中心线距离，米"}
-      ground_elevation_m: {type: float, description: "地面高程，米"}
-      water_level_m: {type: float, description: "预测水位，米"}
+      distance_to_river_m: {type: float, description: "到河道中心线距离，米；当前未计算，返回 null"}
+      ground_elevation_m: {type: float, description: "地面高程，米；当前未接入，返回 null"}
+      water_level_m: {type: float, description: "绝对水位，米；当前缺少地面高程，返回 null，不能用水深替代"}
       depth_m: {type: float, description: "预测水深，米"}
-      velocity_mps: {type: float, description: "预测流速，米每秒"}
-      arrival_time_h: {type: float, description: "洪水到达时间，小时"}
-      recession_time_h: {type: float, description: "退水时间，小时"}
-      risk_level: {type: str, description: "由水深和流速派生的风险等级"}
+      depth_source: {type: str, description: "水深来源，当前为 cnn_prediction"}
+      velocity_mps: {type: float, description: "按水深公式估算的流速，米每秒；不是 CNN 输出或实测值"}
+      velocity_source: {type: str, description: "流速来源，当前为 depth_estimate"}
+      arrival_time_h: {type: float, description: "首次到水相对 valid_from 的小时偏移；当前未计算，返回 null"}
+      recession_time_h: {type: float, description: "退水相对 valid_from 的小时偏移；当前未计算，返回 null"}
+      risk_level: {type: str, description: "按预测水深与估算流速派生的风险等级"}
+      risk_basis: {type: str, description: "风险分级依据，当前为 depth_and_estimated_velocity"}
       area_m2: {type: float, description: "单元面积，平方米"}
 
   HydrodynamicGridCell:
@@ -788,7 +592,7 @@ objects:
     display_name: "水动力网格单元"
     aliases:
       - {terms: ["水动力网格", "模型网格", "GT.txt 网格", "预测淹没结果"]}
-    data_source: external_api
+    data_source: local_file
     mutability: read_only
     source:
       type: resolver
@@ -839,7 +643,7 @@ objects:
     display_name: "危险区"
     aliases:
       - {terms: ["危险区", "风险点", "风险区"]}
-    data_source: external_api
+    data_source: local_file
     mutability: read_only
     source:
       type: resolver
@@ -865,6 +669,7 @@ objects:
       data_quality: {type: str, description: "证据质量，当前为 table_record"}
       recommended_action: {type: str, description: "建议动作摘要"}
 
+# 对象关联：允许未归属路段与坐标终点。
 links:
   road_route_segments:
     source: RoadRoute
@@ -880,7 +685,7 @@ links:
     join: {source_key: road_id, target_key: road_id}
     description: "路段所属编号道路的全部关联，允许共线"
     link_type: relates
-    cardinality: 1..n
+    cardinality: 0..n
 
   road_membership_segment:
     source: RoadRouteSegment
@@ -974,18 +779,20 @@ links:
     source: EvacuationUnit
     target: EvacuationRoute
     join: {source_key: evacuation_unit_id, target_key: origin_unit_id}
-    description: "转移单元可使用的一条或多条预定、备选或动态规划路线"
+    description: "转移单元关联的预定、备选或动态规划路线；尚未收录或规划时可为空"
     link_type: enables
-    cardinality: 1..n
+    cardinality: 0..n
 
   evacuation_route_destination:
     source: EvacuationRoute
     target: EvacuationSite
     join: {source_key: destination_site_id, target_key: evacuation_site_id}
-    description: "转移路线通向的安置地点"
+    description: "路线通向的安置地点；明确坐标终点可无该关联"
     link_type: enables
-    cardinality: n..1
+    cardinality: 0..1
 
+# 运行时水库监测规则：由 reservoir_monitoring 注入动态 reservoir_level_m。
+# Agent 不通过静态 Reservoir 台账直接应用规则；阈值引用对象默认值，避免两处改写。
 rules:
   reservoir_level_status:
     description: "根据龙潭水库水位判定地图和图表使用的确定性颜色等级"
@@ -996,19 +803,19 @@ rules:
     conditions:
       - field: reservoir_level_m
         operator: gt
-        value: 248.91
+        value: *check_flood_level_m
         result: {key: critical, label: "超校核洪水位", color: "#c62828"}
       - field: reservoir_level_m
         operator: gte
-        value: 247.92
+        value: *design_flood_level_m
         result: {key: danger, label: "设计洪水位以上", color: "#e66a19"}
       - field: reservoir_level_m
         operator: gte
-        value: 245.30
+        value: *normal_pool_level_m
         result: {key: warning, label: "正常蓄水位以上", color: "#c99700"}
       - field: reservoir_level_m
         operator: lt
-        value: 245.30
+        value: *normal_pool_level_m
         result: {key: normal, label: "正常", color: "#238b57"}
 
   reservoir_level_alert:
@@ -1020,7 +827,7 @@ rules:
     conditions:
       - field: reservoir_level_m
         operator: gt
-        value: 248.91
+        value: *check_flood_level_m
         result:
           severity: critical
           text: "警告：水位超校核洪水位！大坝安全面临严峻考验"
@@ -1028,7 +835,7 @@ rules:
           current_text_template: "警告：水位已于{triggered_at}超校核洪水位！大坝安全面临严峻考验"
       - field: reservoir_level_m
         operator: gte
-        value: 248.61
+        value: *check_flood_warning_level_m
         result:
           severity: danger
           text: "入库流量持续加大，水位逼近校核洪水位"
@@ -1036,14 +843,56 @@ rules:
           current_text_template: "入库流量持续加大，水位已于{triggered_at}逼近校核洪水位"
       - field: reservoir_level_m
         operator: gte
-        value: 247.62
+        value: *design_flood_warning_level_m
         result:
           severity: warning
           text: "为保障大坝安全，按泄洪设施下泄能力下泄"
           future_text_template: "预计水位将在{triggered_at}接近设计洪水位。为保障大坝安全，按泄洪设施下泄能力下泄"
           current_text_template: "水位已于{triggered_at}接近设计洪水位。为保障大坝安全，按泄洪设施下泄能力下泄"
 
+# 领域工具：输入、用途与执行策略。
 functions:
+  # required: false 表示可省略；省略时使用 Python 默认值，空数组仍表示空范围。
+  # tool_policy 声明执行与缓存语义，json_schema 声明枚举、数组元素及嵌套参数。
+  # 状态与范围查询
+  get_flood_status:
+    summary: "只读查询当前或预测时段的淹没状态"
+    description: "检查当前工作空间、演进时间、预测输入版本和有效期，返回是否存在对应预测淹没。不会生成预测、切换地图或修改演进状态。演进未开始且查询当前状态时 has_inundation=false，依据演示初始约定；开始后缺少有效预测时 has_inundation=null，不表示无淹水。"
+    usage_prompt: >-
+      查询对应时刻或整个预测期有没有淹没时调用，不计算预测或改变地图。
+      has_inundation=null 表示无法判断，按 reason/next_step 说明原因与下一步；
+      演进未开始的无洪水结论只适用于初始当前状态，不能用于未来预测。
+    function_type: lookup
+    involves_objects: [FloodForecast, InundationForecastCell]
+    params:
+      forecast_id: {type: str, description: "预测版本；对话中 latest 绑定本轮分析版本", default: "latest"}
+      view: {type: str, description: "对话中 current 为本轮分析时刻 / time_slice 指定时刻 / simulation_current 演进时刻 / envelope 预测最大包络", default: "current", json_schema: {enum: [current, time_slice, simulation_current, envelope]}}
+      time_h: {type: float, description: "view=time_slice 时的预测偏移小时数", required: false}
+
+  find_nearby_objects:
+    summary: "查询参考对象附近的点位"
+    description: "按对象代表位置的 WGS84 直线距离筛选并排序附近对象；返回范围、距离、数量和可直接展示的 ID。不是名称匹配，也不是道路通行距离。"
+    usage_prompt: >-
+      先用 query 确定参考对象 ID，再查询附近点位及直线距离；不是道路通行距离。
+      默认半径3000米、每页10个；用户指定时采用其范围，计数直接用 total_matched。
+      page_set 是本页，matching_set 是全部匹配。展示全部或分析整个范围可直接传 matching_set，
+      无需翻页抄写 ID；只有需要逐项读取明细时才用 next_offset 翻页至 has_more=false。
+      “更远”使用 min_distance_m 或 exclude_object_ids，避免再次返回同一批最近对象。
+      filters 可筛选类别、地域及名称。集合保存失败时，本页用 object_ids，全范围用 matching_object_ids。
+    function_type: lookup
+    involves_objects: [EvacuationUnit, EvacuationSite, Station, Facility, Bridge, Sluice, HydraulicStructure, Reservoir]
+    max_result_chars: 32000
+    params:
+      reference_object_type: {type: str, description: "参考对象类型，如 EvacuationUnit"}
+      reference_object_id: {type: str, description: "已查询确认的参考对象 ID"}
+      target_type: {type: str, description: "目标类型，如 EvacuationSite", default: "EvacuationSite"}
+      radius_m: {type: float, description: "查询半径，米，必须大于0", default: 3000}
+      limit: {type: int, description: "每页数量，1至100；统计总数使用 total_matched", default: 10}
+      min_distance_m: {type: float, description: "最小距离，米，与 radius_m 组成距离区间", default: 0}
+      offset: {type: int, description: "跳过的匹配数量，后续页使用返回的 next_offset", default: 0}
+      exclude_object_ids: {type: list, description: "排除之前已展示的对象 ID，避免更远查询重复返回", default: [], json_schema: {items: {type: string}}}
+      filters: {type: dict, description: "目标类型的名称、区域或类别过滤条件；如安置点 site_type=shelter、学校 facility_type=school", default: {}}
+
   refine_object_set:
     summary: "在已有候选集合中继续筛选"
     description: "以当前工作空间的对象集合为输入，按属性条件和排除列表生成新的集合，保留父集合及范围依据；不会扩展为全库。"
@@ -1053,188 +902,368 @@ functions:
     params:
       object_set_id: {type: str, description: "已有对象集合 ID"}
       filters: {type: dict, description: "属性条件，与原集合取交集；支持数值比较", default: {}}
-      exclude_object_ids: {type: list, description: "排除的对象 ID", default: []}
+      exclude_object_ids: {type: list, description: "排除的对象 ID", default: [], json_schema: {items: {type: string}}}
 
-  compare_evacuation_sites:
-    summary: "比较候选安置点的容量、距离和预测影响"
-    description: "按指定候选集合比较，不扩展范围。检查容量和安置点预测受淹情况，再按直线距离排序；不预留容量，不代表已验证路线可达。"
-    usage_prompt: "用户要求选合适安置点或比较方案时调用。默认所需容量取转移单元人口；只有用户明确人数时覆盖。拿到 recommended_site_id 后还要调用 plan_route 验证路线；明确要求最晚出发时间时使用本次路线 ID 调用 analyze_latest_evacuation_time。"
-    function_type: lookup
-    involves_objects: [EvacuationUnit, EvacuationSite, FloodForecast]
+  # 影响分析与应急研判
+  analyze_inundation_impacts:
+    summary: "根据预测淹没范围分析受影响对象"
+    description: "按所选预测与对象范围分析影响，返回清单、风险与数量。普通点按湿网格邻近距离匹配，道路与路线按完整线形求交，桥梁检查桥头影响区；邻近积水与直接相交分别报告。"
+    usage_prompt: >-
+      对指定对象范围执行确定性空间影响分析。target_type 用单个类型，范围可用 object_set_id 或 object_ids，
+      并可叠加 filters 取交集；空 ID 列表不评估对象。analysis_scope 与 total_impacts 均针对实际匹配范围。
+      分析某村周边点位先用 find_nearby_objects 取得范围，不能用全类结果代替。
+      Road/EvacuationRoute 按完整线形与达标湿网格多边形求交；impacts 计相交对象，
+      nearby_impacts 仅为 max_distance_m 内的邻近积水，不能计入受淹数量。
+      depth_m 来自相交网格，overlap_length_m 为相交长度，intersecting_mesh_cell_ids 保留证据。
+      structure_overlap_unverified 表示桥隧路面高程未知；partial 与 linear_analysis 未评估项不表示无影响。
+      RoadRoute 按路段分析再聚合；all/Road 的 road_route_impacts 为额外汇总，不计入 total_impacts。
+      affected_segment_count 统计相交路段，nearby_segment_count 另列邻近路段，segment_impacts 保留成员证据。
+      桥梁默认检查80米桥头影响区，depth_m/nearby_max_depth_m 为邻近洪泛区水深，不是桥面水深。
+      inspection_required 表示需核查，likely_impassable 表示两侧桥头受淹；缺少高程时不声称桥梁本体已淹。
+      velocity_source=depth_estimate 表示流速估算，risk_basis 说明分级依据，不将估算称为模型流速。
+      用户要求展示时按 affected_object_ids 显示并高亮；预测图层传同一 forecast_id/view/time_h，
+      不默认切回最新版本或时间轴首帧。邻近风险仅在明确要求时按 nearby_object_ids 展示。
+      默认 min_depth_m=0.15、max_distance_m=10、bridge_influence_radius_m=80；桥梁半径仅在明确敏感性分析时调整。
+    function_type: computation
+    involves_objects: [FloodForecast, InundationForecastCell, RoadRoute, Road, Bridge, Facility, EvacuationRoute, EvacuationUnit, EvacuationSite, Station]
     params:
-      forecast_id: {type: str, description: "预测版本；用户对话中 latest 解析为本轮锁定版本", default: "latest"}
-      evacuation_unit_id: {type: str, description: "起点转移单元 ID"}
-      object_set_id: {type: str, description: "候选安置点集合 ID"}
-      required_capacity: {type: int, description: "明确要求转移的人数，默认起点人口", default: ""}
-      view: {type: str, description: "对话中 current 为本轮分析时刻 / time_slice 指定时刻 / simulation_current 演进时刻 / envelope 最大包络", default: "current"}
-      time_h: {type: float, description: "指定预测时刻偏移，小时", default: ""}
-
-  review_route:
-    summary: "按最新洪水状态复核已有路线"
-    description: "使用当前有效预测复核既有线形，不调用路由引擎，不修改或替换原路线。返回 passable、依据及预测版本；未知状态不能当作可通行。"
-    usage_prompt: "用户问刚才那条路线现在还可用吗、指令依据是否变化时使用。指令可通过 query EmergencyDirective 的 basis.evacuation_route_id 找到对应路线；不重新规划，也不自动发送新指令。"
-    function_type: lookup
-    involves_objects: [EvacuationRoute, FloodForecast, EmergencyDirective]
-    params:
-      forecast_id: {type: str, description: "预测版本；用户对话中 latest 解析为本轮锁定版本", default: "latest"}
-      evacuation_route_id: {type: str, description: "需要复核的既有路线 ID"}
-      view: {type: str, description: "对话中 current 为本轮分析时刻 / time_slice 指定时刻 / simulation_current 演进时刻 / envelope 最大包络", default: "current"}
-      time_h: {type: float, description: "指定预测时刻偏移，小时", default: ""}
-
-  get_flood_status:
-    summary: "只读查询当前或预测时段的淹没状态"
-    description: "检查当前工作空间、演进时间、预测输入版本和有效期，返回是否存在对应预测淹没。不会生成预测、切换地图或修改演进状态。演进未开始且查询当前状态时 has_inundation=false，依据演示初始约定；开始后缺少有效预测时 has_inundation=null，不表示无淹水。"
-    usage_prompt: "用户问现在有没有淹没或淹水时首先调用，对话中默认 view=current 为本轮分析时刻（提问时选中的地图帧，无选中帧才使用演进时钟）；明确问演进当前时刻使用 view=simulation_current。明确询问未来总体风险时 view=envelope；指定预测偏移时 view=time_slice 并传 time_h。未开始演进时，当前状态按无洪水初始约定回答，不能声称已运行预测；若问未来则需要先演进并生成预测。开始后输入更新或没有对应切片时说明无法判断并按 next_step 提示下一步。面向用户不输出 workspace_id、simulation_time、not_started 等内部字段。不得自动运行模型或显示地图，也不得把包络说成现在已淹。"
-    function_type: lookup
-    involves_objects: [FloodForecast, InundationForecastCell]
-    params:
-      forecast_id: {type: str, description: "预测版本；用户对话中 latest 解析为本轮锁定版本", default: "latest"}
-      view: {type: str, description: "对话中 current 为本轮分析时刻 / time_slice 指定时刻 / simulation_current 演进时刻 / envelope 预测最大包络", default: "current"}
-      time_h: {type: float, description: "view=time_slice 时的预测偏移小时数", default: ""}
-
-  find_nearby_objects:
-    summary: "查询参考对象附近的点位"
-    description: "按对象代表位置的 WGS84 直线距离筛选并排序附近对象；返回范围、距离、数量和可直接展示的 ID。不是名称匹配，也不是道路通行距离。"
-    usage_prompt: "先通过带名称过滤的 query 找到参考对象 ID。附近默认半径3000米、每页10个；用户明确指定时按用户参数查询。计数使用 total_matched。要求全部时逐页使用 next_offset 直到 has_more=false，再汇总 ID 展示。更远使用 min_distance_m 或排除已返回的 exclude_object_ids，不是只扩大 radius_m。回答必须说明实际距离区间及分页情况。可用 filters 按 site_type、facility_type、station_type、town_id、county_id、name、source_name 筛选，例如学校用 facility_type=school。page_set 是本页集合，matching_set 是完整匹配集合；默认附近展示用 page_set，明确全部范围时用 matching_set。后续筛选用 refine_object_set，展示和分析可传 object_set_id。空集合不得改为全量展示。"
-    function_type: lookup
-    involves_objects: [EvacuationUnit, EvacuationSite, Station, Facility, Bridge, Sluice, HydraulicStructure, Reservoir]
-    params:
-      reference_object_type: {type: str, description: "参考对象类型，如 EvacuationUnit"}
-      reference_object_id: {type: str, description: "已查询确认的参考对象 ID"}
-      target_type: {type: str, description: "目标类型，如 EvacuationSite", default: "EvacuationSite"}
-      radius_m: {type: float, description: "查询半径，米，必须大于0", default: 3000}
-      limit: {type: int, description: "每页数量，1至100；统计总数使用 total_matched", default: 10}
-      min_distance_m: {type: float, description: "最小距离，米，与 radius_m 组成距离区间", default: 0}
-      offset: {type: int, description: "跳过的匹配数量，后续页使用返回的 next_offset", default: 0}
-      exclude_object_ids: {type: list, description: "排除之前已展示的对象 ID，避免更远查询重复返回", default: []}
-      filters: {type: dict, description: "目标类型的名称、区域或类别过滤条件；如安置点 site_type=shelter、学校 facility_type=school", default: {}}
-
-  get_longtan_dispatch_plan:
-    summary: "查询本轮预测起点的水库调度方案"
-    description: "读取所选预测的不可变输入，返回 t0 水库状态、当时采用的调度模式和参数。只读，不重新计算或修改演进。"
-    usage_prompt: "用户要求调整调度进行试算时先调用。forecast_id 默认绑定本轮地图预测版本。返回的是该预测 t0 的方案，不能把地图上未来 t1 的状态当成试算初态。"
-    function_type: lookup
-    involves_objects: [Reservoir, FloodForecast]
-    params:
-      forecast_id: {type: str, description: "基准预测版本；latest 绑定本轮所选版本", default: "latest"}
-
-  simulate_longtan_dispatch:
-    summary: "从预测起点试算调度调整并比较24小时淹没影响"
-    description: "固定所选预测的 t0 水库状态、来水和四边界条件，调整未来水库下泄并运行独立CNN预测，返回水库安全校核、指定 t1 和24小时包络影响对比。生成候选报告，不切换当前调度、不覆盖正式预测、不重置演进。"
-    usage_prompt: "仅用户明确要求调整调度、试算减小下泄或改变目标水位并分析影响时调用。settings 支持 RULE/OUTFLOW/LEVEL；人工模式需明确目标。time_h 是相对原预测 t0 的目标时刻 t1，省略使用本轮地图选中帧。初始水位和库容固定，不能指定。指定道路先查询 RoadRoute 或 Road 的 ID，传 target_type 和 object_ids；未指定则分析全部已收录路段。结果已调用统一影响分析，无需再用正式预测的 analyze_inundation_impacts 代替候选结果。先说明 reservoir_safety，再对比 selected_time 和 window_envelope；不能把邻近积水或桥隧高程未知说成路面已淹。失败或 partial 不代表安全。应明确这是试算，未应用方案。"
-    function_type: lookup
-    timeout_seconds: 360
-    concurrency_safe: false
-    involves_objects: [Reservoir, FloodForecast, RoadRoute, Road, Bridge, InundationForecastCell]
-    params:
-      settings: {type: dict, description: "相对 t0 原方案的调整：mode、target_outflow_m3s、target_level_m、normal_release_m3s、outlet_capacity_m3s、max_release_m3s；能力参数仅按用户明确要求修改"}
-      forecast_id: {type: str, description: "基准预测版本；latest 绑定本轮所选版本", default: "latest"}
-      time_h: {type: float, description: "要比较的 t1 相对原预测 t0 的小时偏移，默认本轮地图选中帧", default: ""}
-      target_type: {type: str, description: "影响比较类型，默认 Road；支持 RoadRoute、Bridge 等现有影响对象类型", default: "Road"}
-      object_ids: {type: list, description: "只比较这些已查询的对象 ID；省略分析整个类型，空数组表示空范围", default: ""}
-
-  run_flood_forecast:
-    summary: "按当前演进输入运行洪水预测"
-    description: "读取领域策略生成的最新版本化四边界流量输入快照，调用 CNN_V2 水动力模型生成水动力网格 max_depth 预测结果和 FloodForecast 汇总。普通边界观测不会直接改变该快照；该函数也不把 severity 或综合指标映射为 5/10/20/50/100 年一遇设计方案。"
-    timeout_seconds: 360
-    concurrency_safe: false
-    usage_prompt: "只有用户明确要求运行、重算或更新预测，或当前自动事件策略要求计算时调用。查询现在有没有淹没时调用 get_flood_status；请求展示已有预测时只调用展示工具。运行前必须有当前演进时刻及对应预测输入；没有时不得用历史预测替代。结果只表示计算结果，不自动展示或开启警戒。"
-    function_type: lookup
-    involves_objects: [FloodForecast, InundationForecastCell, HydrodynamicGridCell, River, Reservoir]
-    params:
-      forecast_id: {type: str, description: "预测运行ID；latest 表示最新预测", default: "latest"}
-      force: {type: bool, description: "是否强制重新运行简化模型", default: false}
+      object_set_id: {type: str, description: "评估指定查询集合；不能与 object_ids 同时传入", default: ""}
+      object_ids: {type: list, description: "只评估这些对象 ID；省略则按类型和 filters；空数组不评估任何对象", required: false, json_schema: {items: {type: string}}}
+      filters: {type: dict, description: "目标对象属性条件，如 town_id 或 site_type；与 ID 列表取交集", default: {}}
+      view: {type: str, description: "对话中 current 为本轮分析时刻；time_slice 配合 time_h 指定切片；simulation_current 指演进时刻；envelope 指整个预测期最大包络", default: "current", json_schema: {enum: [current, time_slice, simulation_current, envelope]}}
+      forecast_id: {type: str, description: "预测版本；对话中 latest 绑定本轮分析版本", default: "latest"}
+      target_type: {type: str, description: "分析目标类型: RoadRoute/Road/Bridge/Facility/EvacuationRoute/EvacuationUnit/EvacuationSite/Station/all", default: "all"}
+      min_depth_m: {type: float, description: "纳入影响判定的最低预测水深，单位 m", default: 0.15}
+      max_distance_m: {type: float, description: "普通点到湿网格中心的匹配距离；道路线形到湿网格多边形的邻近核查距离（不会扩大受淹判定），单位 m；不用于桥梁", default: 10}
+      time_h: {type: float, description: "可选预测时刻，单位小时；对话中不传默认本轮分析时刻，view=envelope 使用最大包络", required: false}
+      bridge_influence_radius_m: {type: float, description: "桥梁到预测湿网格多边形的桥头影响区半径，单位 m", default: 80}
 
   assess_flood_emergency:
     summary: "对已有预测进行单次应急研判"
     description: "读取当前有效预测的最大包络，生成预警级别、重点转移对象和处置建议。只执行一次，不运行 CNN、不启动持续演进、不发布指令。"
-    usage_prompt: "用户请求一次应急研判或处置建议时调用。缺少预测时明确说明不可研判，不自动运行模型；需要持续演进时提示使用态势工作台开始/暂停按钮。结果表示未来预测窗口的风险，不是当前已受淹。只有明确要求地图展示时再调用 ui_*。"
-    function_type: lookup
+    usage_prompt: >-
+      请求整个预测窗口的一次应急研判或处置建议时调用。使用最大包络，不表示选中帧已受淹。
+      查询当前水情或当前受影响对象应分别用 get_flood_status、analyze_inundation_impacts。
+      返回完整影响清单和重点建议；status=partial 时说明清单不完整，不能判定未列出的对象安全。
+      缺少预测时说明不可研判，不自动运行 CNN；refresh 只更新研判汇总。
+    function_type: computation
+    tool_policy: {idempotent: false}
     involves_objects: [FloodForecast, InundationForecastCell, Road, EvacuationRoute, EvacuationUnit, EvacuationSite]
     params:
-      forecast_id: {type: str, description: "预测版本；用户对话中 latest 解析为本轮锁定版本", default: "latest"}
+      forecast_id: {type: str, description: "预测版本；对话中 latest 绑定本轮分析版本", default: "latest"}
       refresh: {type: bool, description: "重新计算研判汇总；不重新运行洪水预测", default: false}
 
-  analyze_inundation_impacts:
-    summary: "根据预测淹没范围分析受影响对象"
-    description: "读取最新或指定 InundationForecastCell 预测淹没网格，可按指定 time_h 分析某个预测时刻，对话中默认使用本轮分析时刻切片，显式 view=envelope 才使用最大水深包络；普通点执行空间邻近分析，道路与转移路线按完整线形与全部达标湿网格多边形求交，桥梁针对河槽无网格的特点执行独立的桥头影响区分析，返回受影响对象清单、风险等级和按类型汇总。"
+  # 预测计算与调度试算
+  run_flood_forecast:
+    summary: "按当前演进输入运行洪水预测"
+    description: "读取领域策略生成的稳定四边界流量快照，运行 CNN_V2，保存多时刻水深、最大包络与 FloodForecast 摘要，并更新正式预测版本。"
+    timeout_seconds: 360
+    concurrency_safe: false
     usage_prompt: >-
-      target_type=RoadRoute 按独立路段分析后聚合，并保留 segment_impacts；all 和 Road 的 road_route_impacts 为额外道路汇总，不计入 total_impacts。无预测时不能解释为无风险。
-      Road/EvacuationRoute 的 impacts 仅计完整线形与达标湿网格相交的对象；nearby_impacts 仅表示距湿网格边界 max_distance_m 内邻近积水，需核查，不能计为受淹。nearby_object_ids 仅用于用户明确要求的邻近风险展示。
-      道路 depth_m 来自相交网格，overlap_length_m 为相交线形长度；intersecting_mesh_cell_ids 保留证据。邻近网格更深时不得将其水深当成道路水深。
-      structure_overlap_unverified 表示桥上或隧道路段线形相交但路面高程未知，不得声称路面已淹。status=partial 和 linear_analysis 中的未评估项表示资料不完整，不能作为无影响结论。
-      RoadRoute.affected_segment_count 仅统计相交路段，nearby_segment_count 是另列的邻近路段；应分别说明。
-      本函数是对象级受淹判定的确定性空间分析入口，forecast_id 默认 latest，target_type 默认 all；只能根据返回结果说明哪些对象受影响，不得自行猜测。最大包络结果只表示预测时段内可能受淹，不是当前已经受淹。
-      用户对话中的“现在/当前”默认 view=current，使用本轮冻结的地图选中帧；没有选中帧时使用演进时钟。用户指定其他时刻时传 view=time_slice 和 time_h；明确问演进当前时刻用 view=simulation_current；询问整个预测期或最大影响时传 view=envelope 且不传 time_h。
-      time_h 是相对 valid_from 的偏移量，回答用户时应以结果的 analysis_time_at 实际时刻为主，并把预测 +Nh 作为辅助信息。对话中未传 time_h 默认使用本轮分析时刻，只有 view=envelope 才使用最大包络。
-      已有水动力时间轴时直接分析已有预测，除非用户明确要求重算，否则不要先调用 run_flood_forecast。
-      桥梁默认检查80米桥头影响区内的完整湿网格多边形。桥梁结果中的 depth_m 和 nearby_max_depth_m 是邻近洪泛区最大水深，不是桥面水深；directly_inundated=false 表示模型未直接覆盖桥面。
-      passability_status=inspection_required 表示周边或单侧桥头受淹、需要现场核查；likely_impassable 表示两侧桥头受淹。缺少桥面高程时，不得声称桥梁本体已经淹没。
-      只有用户明确请求在地图展示影响对象时，才把 affected_object_ids 中各对象类型对应的对象项与 HydrodynamicGridCell 放入同一次 ui_show_objects 调用，并设置 object_ids 和 highlight=true；自动事件的展示范围由 event_policies 决定。
-      指定对象范围用单个 target_type 加 object_ids 或 filters；两者同时提供取交集。object_ids=[] 是空集合。返回 analysis_scope 表明实际匹配的对象集合，total_impacts 只统计该集合受影响对象。分析某村周边点位先用附近查询取得 ID，再传入；不能用全类结果当该村结果。
-      需要缩窄范围时 target_type 可传 RoadRoute、Road、Bridge、Facility、EvacuationRoute、EvacuationUnit、EvacuationSite、Station 或 all；min_depth_m 默认0.15，普通对象 max_distance_m 默认10，桥梁 bridge_influence_radius_m 默认80。除非用户明确要求敏感性分析，否则保持默认桥梁影响半径。
-    function_type: lookup
-    involves_objects: [FloodForecast, InundationForecastCell, RoadRoute, Road, Bridge, Facility, EvacuationRoute, EvacuationUnit, EvacuationSite, Station]
+      明确请求运行、重算或更新预测，或自动事件策略要求计算时调用。
+      输入为当前演进的稳定四边界快照；缺失时不能以历史预测替代。
+      本工具生成预测结果，地图展示另行调用 ui_show_objects，不开启持续演进或自动发布指令。
+      forecast_id 仅接受 latest/forecast_latest 输入别名，返回新结果的明确版本；不用于重算任意历史版本。
+    function_type: computation
+    tool_policy: {read_only: false, requires_confirmation: false, worker_allowed: false, idempotent: false, invalidates_cache: true}
+    involves_objects: [FloodForecast, InundationForecastCell, HydrodynamicGridCell, River, Reservoir]
     params:
-      object_set_id: {type: str, description: "评估指定查询集合；不能与 object_ids 同时传入", default: ""}
-      object_ids: {type: list, description: "只评估这些对象 ID；省略则按类型和 filters；空数组不评估任何对象", default: ""}
-      filters: {type: dict, description: "目标对象属性条件，如 town_id 或 site_type；与 ID 列表取交集", default: {}}
-      view: {type: str, description: "对话中 current 为本轮分析时刻；time_slice 配合 time_h 指定切片；simulation_current 指演进时刻；envelope 指整个预测期最大包络", default: "current"}
-      forecast_id: {type: str, description: "预测运行ID；latest 表示最新预测", default: "latest"}
-      target_type: {type: str, description: "分析目标类型: RoadRoute/Road/Bridge/Facility/EvacuationRoute/EvacuationUnit/EvacuationSite/Station/all", default: "all"}
-      min_depth_m: {type: float, description: "纳入影响判定的最低预测水深，单位 m", default: 0.15}
-      max_distance_m: {type: float, description: "普通点到湿网格中心的匹配距离；道路线形到湿网格多边形的邻近核查距离（不会扩大受淹判定），单位 m；不用于桥梁", default: 10}
-      time_h: {type: float, description: "可选预测时刻，单位小时；对话中不传默认本轮分析时刻，view=envelope 使用最大包络", default: ""}
-      bridge_influence_radius_m: {type: float, description: "桥梁到预测湿网格多边形的桥头影响区半径，单位 m", default: 80}
+      forecast_id: {type: str, description: "当前预测输入别名，仅支持 latest/forecast_latest", default: "latest", json_schema: {enum: [latest, forecast_latest]}}
+      force: {type: bool, description: "是否强制重新运行 CNN 洪水预测", default: false}
+
+  get_longtan_dispatch_plan:
+    summary: "查询本轮预测起点的水库调度方案"
+    description: "读取所选预测的不可变输入，返回 t0 水库状态、当时采用的调度模式和参数。只读，不重新计算或修改演进。"
+    usage_prompt: >-
+      调度试算前读取原方案和允许调整的字段。返回所选预测 t0 的方案、初态及安全阈值；
+      地图未来 t1 的水库状态不能作为试算初态。
+    function_type: lookup
+    involves_objects: [Reservoir, FloodForecast]
+    params:
+      forecast_id: {type: str, description: "预测版本；对话中 latest 绑定本轮分析版本", default: "latest"}
+
+  simulate_longtan_dispatch:
+    summary: "从预测起点试算调度调整并比较24小时淹没影响"
+    description: "固定所选预测的 t0 水库状态、来水和四边界条件，调整未来水库下泄并运行独立CNN预测，返回水库安全校核、指定 t1 和24小时包络影响对比。生成候选报告，不切换当前调度、不覆盖正式预测、不重置演进。"
+    usage_prompt: >-
+      明确请求调整调度并比较影响时调用。settings 支持 RULE/OUTFLOW/LEVEL；人工模式须明确目标，不能补零。
+      time_h 是比较目标 t1，省略采用本轮地图帧；初始水位和库容固定，不能指定。
+      能力参数仅按明确请求修改，max_release_m3s 同时替换能力与安全泄量，须说明此假设。
+      指定道路先查 RoadRoute/Road ID，未指定对象则比较全部已收录路段。
+      返回已包含候选方案的统一影响分析，不再用正式预测的分析结果代替。
+      依次说明 reservoir_safety、selected_time、window_envelope；邻近积水及桥隧高程未知不能表述为路面已淹。
+      失败或 partial 不代表安全；结果为独立试算，未应用方案。
+    function_type: computation
+    tool_policy: {read_only: false, requires_confirmation: false, worker_allowed: false, idempotent: false, invalidates_cache: false}
+    timeout_seconds: 360
+    concurrency_safe: false
+    involves_objects: [Reservoir, FloodForecast, RoadRoute, Road, Bridge, InundationForecastCell]
+    max_result_chars: 40000
+    params:
+      settings:
+        type: dict
+        description: "相对 t0 原方案的调整；能力参数仅按明确要求修改"
+        json_schema:
+          additionalProperties: false
+          properties:
+            mode: {type: string, enum: [RULE, OUTFLOW, LEVEL]}
+            target_outflow_m3s: {type: [number, 'null'], minimum: 0}
+            target_level_m: {type: [number, 'null'], minimum: 0}
+            normal_release_m3s: {type: number, minimum: 0}
+            outlet_capacity_m3s: {type: number, minimum: 0}
+            max_release_m3s: {type: [number, 'null'], minimum: 0}
+      forecast_id: {type: str, description: "预测版本；对话中 latest 绑定本轮分析版本", default: "latest"}
+      time_h: {type: float, description: "要比较的 t1 相对原预测 t0 的小时偏移，默认本轮地图选中帧", required: false}
+      target_type: {type: str, description: "影响比较类型，默认 Road；支持 RoadRoute、Bridge 等现有影响对象类型", default: "Road"}
+      object_ids: {type: list, description: "只比较这些已查询的对象 ID；省略分析整个类型，空数组表示空范围", required: false, json_schema: {items: {type: string}}}
+
+  # 转移方案分析
+  compare_evacuation_sites:
+    summary: "筛选并推荐安置点"
+    description: "为指定转移单元，在指定候选集合或 ID 列表内筛选容量满足转移人数、位置有效且在所选洪水状态下未判定受淹的安置点，再按直线距离排序，推荐最近的合格地点。返回各候选点及不合格原因、合格集合和 recommended_site_id；没有合格地点时不推荐。沿用有效预测或演进前无洪水初始状态，不扩展候选范围，不预留容量，不验证路线可达性。"
+    usage_prompt: >-
+      为指定转移单元综合筛选并推荐安置点时调用；候选范围用 object_set_id 或 object_ids 二选一。
+      仅比较容量用 query，已有集合内按属性筛选用 refine_object_set；附近地点与距离用 find_nearby_objects。
+      所需容量默认取单元人口，用户明确人数时才覆盖。推荐按容量、位置及所选洪水状态筛选，再按直线距离排序。
+      recommended_site_id 不代表路线可达或床位已预留；用户要求路线或完整转移方案时再 plan_route。
+      集合保存失败可用 eligible_object_ids 继续；没有合格地点时不推荐。
+    function_type: lookup
+    involves_objects: [EvacuationUnit, EvacuationSite, FloodForecast]
+    params:
+      forecast_id: {type: str, description: "预测版本；对话中 latest 绑定本轮分析版本", default: "latest"}
+      evacuation_unit_id: {type: str, description: "起点转移单元 ID"}
+      object_set_id: {type: str, description: "候选安置点集合 ID；与 object_ids 二选一", default: ""}
+      object_ids: {type: list, description: "指定候选安置点 ID 列表；与 object_set_id 二选一，空列表表示没有候选点", required: false, json_schema: {items: {type: string}}}
+      required_capacity: {type: int, description: "明确要求转移的人数，默认起点人口", required: false}
+      view: {type: str, description: "对话中 current 为本轮分析时刻 / time_slice 指定时刻 / simulation_current 演进时刻 / envelope 最大包络", default: "current", json_schema: {enum: [current, time_slice, simulation_current, envelope]}}
+      time_h: {type: float, description: "指定预测时刻偏移，小时", required: false}
+
+  plan_route:
+    summary: "根据所选洪水状态规划避洪路线"
+    description: "调用高德生成驾车或步行候选路线并按当前洪水状态避让。未开始演进时按无洪水初始状态规划；开始后必须有适用预测，预测无淹没时正常规划，存在淹没时排除涉水候选。"
+    usage_prompt: >-
+      请求路线、导航或怎么走时调用，始终按避洪语义规划，不额外询问是否避洪。
+      演进前按初始无洪水约定；演进后须有适用预测，由工具检查候选路线，缺失或失效时停止。
+      优先用起点对象 ID 与 destination_site_id，缺少对象才用坐标；未指定终点可查单元已有路线的默认终点。
+      profile 默认 car，明确步行用 foot，禁行阈值分别为0.3米和0.15米。
+      说明本次采用的洪水状态与预测时刻。失败后不自动放宽约束；明确改变交通方式、终点或时刻时可按新条件规划。
+      成功后用 route.evacuation_route_id 展示该路线；查看既有路线只查询/展示，复核通行状态用 review_route。
+    function_type: computation
+    concurrency_safe: false
+    tool_policy: {read_only: false, requires_confirmation: false, worker_allowed: false, idempotent: false, invalidates_cache: true}
+    involves_objects: [EvacuationRoute, EvacuationUnit, EvacuationSite, FloodForecast, InundationForecastCell]
+    params:
+      view: {type: str, description: "对话中 current 为本轮分析时刻；time_slice 配合 time_h 指定切片；simulation_current 指演进时刻；envelope 指整个预测期最大包络", default: "current", json_schema: {enum: [current, time_slice, simulation_current, envelope]}}
+      start_object_type: {type: str, description: "起点领域对象类型，通常为 EvacuationUnit/EvacuationSite/Facility", default: "EvacuationUnit"}
+      start_object_id: {type: str, description: "起点领域对象ID", default: ""}
+      destination_site_id: {type: str, description: "目标安置地点 EvacuationSite ID；EvacuationUnit 已有路线关联终点时可省略", default: ""}
+      start_lon: {type: float, description: "无起点对象时使用的起点经度", required: false}
+      start_lat: {type: float, description: "无起点对象时使用的起点纬度", required: false}
+      destination_lon: {type: float, description: "无安置点对象时使用的终点经度", required: false}
+      destination_lat: {type: float, description: "无安置点对象时使用的终点纬度", required: false}
+      forecast_id: {type: str, description: "预测版本；对话中 latest 绑定本轮分析版本", default: "latest"}
+      time_h: {type: float, description: "可选预测时刻，小时；对话中不传默认本轮分析时刻，view=envelope 使用最大包络", required: false}
+      blocked_depth_m: {type: float, description: "禁行水深阈值，米；不传时 car 使用0.3、foot 使用0.15", required: false}
+      profile: {type: str, description: "高德路由模式: car/foot", default: "car", json_schema: {enum: [car, foot]}}
+      max_endpoint_distance_m: {type: float, description: "高德路线起终点与领域对象坐标允许的最大距离，米", default: 800}
+      max_detour_ratio: {type: float, description: "允许的最大路线绕行倍率", default: 10}
+
+  review_route:
+    summary: "按所选洪水状态复核已有路线"
+    description: "使用当前有效预测复核既有线形，不调用路由引擎，不修改或替换原路线。返回 passable、依据及预测版本；未知状态不能当作可通行。"
+    usage_prompt: "用户问刚才那条路线现在还可用吗、指令中路线状况是否变化时使用。从对话中已确认的路线 ID 或根据指令正文查询确定路线；无法唯一确定时询问用户，不编造 ID。不重新规划，也不自动发送新指令。"
+    function_type: lookup
+    involves_objects: [EvacuationRoute, FloodForecast, EmergencyDirective]
+    params:
+      forecast_id: {type: str, description: "预测版本；对话中 latest 绑定本轮分析版本", default: "latest"}
+      evacuation_route_id: {type: str, description: "需要复核的既有路线 ID"}
+      view: {type: str, description: "对话中 current 为本轮分析时刻 / time_slice 指定时刻 / simulation_current 演进时刻 / envelope 最大包络", default: "current", json_schema: {enum: [current, time_slice, simulation_current, envelope]}}
+      time_h: {type: float, description: "指定预测时刻偏移，小时", required: false}
 
   analyze_latest_evacuation_time:
     summary: "根据24小时淹水序列分析最晚安全转移时间"
     description: "读取当前演进工作空间的0至24小时水深时间序列，沿指定转移安排的起点、预定路线和安置点逐时检查禁行水深，返回首次不可通行时刻、最后一个确认安全时间切片，以及扣除路线通行或核定清空耗时后的理论最晚出发时刻。"
     usage_prompt: >-
-      用户询问某个村、转移单元的最晚转移时间、转移截止时间或安全转移窗口时必须调用。
-      已知 evacuation_unit_id 时优先传 evacuation_unit_id，否则可直接传 evacuation_unit_name；已有本轮规划或用户确认的路线时传该 evacuation_route_id；否则按 origin_unit_id 使用预定路线，不要把新目的地与旧预定路线混用。
-      blocked_depth_m 未指定时沿用本次路线的禁行阈值；未记录阈值时步行0.15米、其他0.3米。已有经核定的全体人员集结、分批运输和路线清空总耗时时传 clearance_duration_min，否则函数只按路线已有通行时间或1米/秒步行速度估算单程通行时间。
-      只能根据返回的 deadline 回答：deadline_status=safe_through_horizon 表示24小时内没有由预测形成的截止时间，不得把24小时末端说成最晚转移时间；route_becomes_unsafe 时应同时说明首次不可通行时刻和最后确认安全时刻。
-      回答时间时优先使用 first_unsafe_at、last_confirmed_safe_at、latest_safe_completion_at 和 latest_departure_at 等实际时刻，*_time_h 只作为相对 valid_from 的预测偏移量补充说明。
-      EvacuationUnit.flood_arrival_window 只作为既有预案字段展示，不是本函数的预测判定依据；不要再逐格 query InundationForecastCell 自行推算。
-    function_type: lookup
+      询问最晚转移时间、截止时间或安全窗口时调用，使用同一预测版本完整24小时水深序列。
+      单元 ID/名称至少提供一项。已有确认路线时传 evacuation_route_id，须对应该单元；
+      省略时选择该单元关联路线中的最新记录，不能把新目的地与旧路线混用。
+      blocked_depth_m 沿用路线阈值，缺失时步行0.15米、其他0.3米。
+      有核定清空耗时时传 clearance_duration_min，否则仅按路线通行时间或1米/秒估算，不包含人员集结与分批运输。
+      safe_through_horizon 表示预测期内未形成截止时间，不能把24小时末端作为最晚出发时间。
+      route_becomes_unsafe 时同时说明首次不可通行与最后确认安全时刻；partial/incomplete_coverage 只能报告已覆盖部分风险。
+      按 deadline 返回的实际时刻回答；EvacuationUnit.flood_arrival_window 是预案字段，不能替代本计算。
+    function_type: computation
     involves_objects: [EvacuationUnit, EvacuationRoute, EvacuationSite, FloodForecast, InundationForecastCell]
     params:
       evacuation_unit_id: {type: str, description: "转移单元ID；与 evacuation_unit_name 至少提供一项", default: ""}
       evacuation_unit_name: {type: str, description: "转移单元或其原始村名，如新民村；已知 evacuation_unit_id 时可不传", default: ""}
       evacuation_route_id: {type: str, description: "可选转移路线ID；不传时按 origin_unit_id 查找该转移单元的路线", default: ""}
-      forecast_id: {type: str, description: "预测运行ID；latest 表示当前工作空间最新预测", default: "latest"}
-      blocked_depth_m: {type: float, description: "路线禁行水深阈值，米；默认沿用所选路线", default: ""}
-      clearance_duration_min: {type: float, description: "可选的核定转移准备、通行和路线清空总耗时，分钟", default: ""}
+      forecast_id: {type: str, description: "预测版本；对话中 latest 绑定本轮分析版本", default: "latest"}
+      blocked_depth_m: {type: float, description: "路线禁行水深阈值，米；默认沿用所选路线", required: false}
+      clearance_duration_min: {type: float, description: "可选的核定转移准备、通行和路线清空总耗时，分钟", required: false}
       safety_buffer_min: {type: float, description: "额外安全提前量，分钟", default: 0}
 
-  plan_route:
-    summary: "根据当前演示洪水状态规划避洪路线"
-    description: "调用高德生成驾车或步行候选路线并按当前洪水状态避让。未开始演进时按无洪水初始状态规划；开始后必须有适用预测，预测无淹没时正常规划，存在淹没时排除涉水候选。"
+# 前端动作：地图展示与指令草稿；不承担隐式业务复核。
+presentation_tools:
+  ui_show_objects:
+    summary: "在 GIS 地图中显示领域对象"
+    description: "在前端 GIS 地图中显示一个或多个领域对象。对象类型必须来自 ontology，不使用前端图层名。"
     usage_prompt: >-
-      用户请求路线、导航、怎么走时都调用本工具，不需要用户额外声明避洪或选择模式。
-      演进未开始时当前状态是无洪水初始状态，工具可以直接规划，不要求先开始演进或生成预测。
-      演进开始后由工具自动使用当前有效预测；缺失、过期或失败时停止，不得当成没有洪水。
-      优先使用起点对象 ID 和 destination_site_id，缺少对象才使用坐标。未明确终点时可通过转移单元已有路线查默认终点。
-      对话中默认按本轮冻结的分析时刻；用户指定预测时刻才传 time_h，明确问演进当前时刻用 view=simulation_current，明确要求最不利情况才传 view=envelope。未演进时不能声称已校验未来预测。
-      默认 profile=car；明确步行使用 foot。禁行阈值 car 默认0.3米、foot 默认0.15米。
-      依据结果说明是初始无洪水状态，还是有效预测下的避洪路线；不要称为未做避洪检查的普通导航。
-      失败后不得自动放宽约束重试；用户明确改变交通方式、终点或时刻时可按新条件规划，但不能关闭避洪校验。
-      成功后按返回 route.evacuation_route_id 展示本次 EvacuationRoute。
-    function_type: lookup
-    involves_objects: [EvacuationRoute, EvacuationUnit, EvacuationSite, FloodForecast, InundationForecastCell]
-    params:
-      view: {type: str, description: "对话中 current 为本轮分析时刻；time_slice 配合 time_h 指定切片；simulation_current 指演进时刻；envelope 指整个预测期最大包络", default: "current"}
-      start_object_type: {type: str, description: "起点领域对象类型，通常为 EvacuationUnit/EvacuationSite/Facility", default: "EvacuationUnit"}
-      start_object_id: {type: str, description: "起点领域对象ID", default: ""}
-      destination_site_id: {type: str, description: "目标安置地点 EvacuationSite ID；EvacuationUnit 已有路线关联终点时可省略", default: ""}
-      start_lon: {type: float, description: "无起点对象时使用的起点经度", default: ""}
-      start_lat: {type: float, description: "无起点对象时使用的起点纬度", default: ""}
-      destination_lon: {type: float, description: "无安置点对象时使用的终点经度", default: ""}
-      destination_lat: {type: float, description: "无安置点对象时使用的终点纬度", default: ""}
-      forecast_id: {type: str, description: "洪水预测ID", default: "latest"}
-      time_h: {type: float, description: "可选预测时刻，小时；对话中不传默认本轮分析时刻，view=envelope 使用最大包络", default: ""}
-      blocked_depth_m: {type: float, description: "禁行水深阈值，米；不传时 car 使用0.3、foot 使用0.15", default: ""}
-      profile: {type: str, description: "高德路由模式: car/foot", default: "car"}
-      max_endpoint_distance_m: {type: float, description: "高德路线起终点与领域对象坐标允许的最大距离，米", default: 800}
-      max_detour_ratio: {type: float, description: "允许的最大路线绕行倍率", default: 10}
+      展示一个或多个对象时调用，对象名称映射来自 ontology：{object_aliases}。
+      object_ids 限定精确范围；object_set_id 可叠加 filters 取交集，返回对应子集引用，保存失败则保留精确 ID。
+      默认 mode=add 追加。仅明确替换同类型全部显示时用 mode=replace；只保留候选子集时用 replace_object_set_id。
+      空范围通常不改地图；明确替换某集合为空时只移除该集合。返回 selection_id 供后续隐藏。
+      水动力 filters 仅支持 forecast_id/time_h/view。默认 timeline 浏览预测，从首个可用帧开始；
+      current 与 simulation_current 使用本轮冻结的分析帧或演进时刻，time_slice 指定 time_h，envelope 为包络。
+      timeline/time_slice/envelope 可显示明确版本，latest 可打开本轮新运行的预测。
+      展示分析结论应传分析结果的明确版本与切片/包络，避免切回首帧。仅显示模型网格不会清除预测。
+      展示受影响对象按 affected_object_ids 设置 object_ids、highlight=true；多个类型放在同一次 objects 调用中。
+    side_effect_scope: frontend_map
+    mutates_domain: false
+    object_scope: mappable
+    requires_confirmation: false
+    worker_allowed: false
+
+  ui_hide_objects:
+    summary: "隐藏指定地图对象"
+    description: "按 selection_id 或对象类型、ID、过滤条件隐藏对象，不改变其他对象和地图视野。"
+    usage_prompt: "隐藏这些、刚才那些对象时优先引用当前 visible_selections 的 selection_id。不能确定所指集合时询问用户。空 ID 列表不执行隐藏。"
+    side_effect_scope: frontend_map
+    mutates_domain: false
+    object_scope: mappable
+    requires_confirmation: false
+    worker_allowed: false
+
+  ui_hide_forecast:
+    summary: "隐藏预测淹没结果"
+    description: "隐藏预测淹没结果及其影响分析展示，保留其他对象和视野。"
+    usage_prompt: "只在用户要求隐藏或清除淹没结果时调用。"
+    side_effect_scope: frontend_map
+    mutates_domain: false
+    object_scope: none
+    requires_confirmation: false
+    worker_allowed: false
+
+  ui_reset_map:
+    summary: "重置整个地图"
+    description: "清除所有非基础图层、淹没结果、警戒、影响分析和事件标记，并重置视野。"
+    usage_prompt: "仅用户明确要求重置整个地图时调用。禁止用于隐藏某个对象、某类对象或这些对象。"
+    side_effect_scope: frontend_map
+    mutates_domain: false
+    object_scope: none
+    requires_confirmation: false
+    worker_allowed: false
+
+  ui_set_inundation_alert:
+    summary: "设置珊瑚河流域预测淹没警戒"
+    description: "根据24小时洪水预测是否存在淹没，开启或清除珊瑚河流域边界的红色警戒样式。"
+    usage_prompt: >-
+      只用于表达当前24小时预测是否存在淹没，不表示整个流域都会被淹，
+      也不用于判断具体道路、设施或转移对象是否受影响。
+      active=true 显示红色流域警戒边界，active=false 清除警戒并恢复默认边界。
+    side_effect_scope: frontend_map
+    mutates_domain: false
+    object_scope: none
+    requires_confirmation: false
+    worker_allowed: false
+
+  ui_focus_object:
+    summary: "定位并高亮 GIS 对象"
+    description: "缩放、打开弹窗并高亮前端地图中的一个领域对象，不修改领域数据。"
+    usage_prompt: "用户要求定位、聚焦或缩放到某个对象时调用。"
+    side_effect_scope: frontend_map
+    mutates_domain: false
+    object_scope: mappable
+    requires_confirmation: false
+    worker_allowed: false
+
+  ui_show_event_marker:
+    summary: "在 GIS 地图中显示事件标记"
+    description: "在前端 GIS 地图中显示一个具有明确单点位置的领域事件 marker，不修改领域数据。"
+    usage_prompt: >-
+      只有事件对象包含明确 longitude/latitude 时才调用；没有明确单点位置的事件不创建 marker。
+    side_effect_scope: frontend_map
+    mutates_domain: false
+    object_scope: mappable
+    requires_confirmation: false
+    worker_allowed: false
+
+  ui_open_emergency_directive_editor:
+    summary: "打开应急指令草稿编辑器"
+    description: "根据智能体当前建议生成应急指令初稿，并在态势工作台打开编辑器供用户修改、确认和发出；本工具本身不发出指令。"
+    usage_prompt: >-
+      用户明确要求把当前或刚才的建议作为初稿、新建应急指令或准备发出指令时调用。
+      title、content 和 recipients 必须根据本轮对话及已核实事实生成；priority 默认 urgent。
+      正文应直接可执行，避免加入未经工具核实的距离、通行状态或资源承诺。
+      路线受阻不妨碍起草暂停使用、现场核查或替代方案准备指令；保留已知风险，不把受阻路线写成可通行。
+      调用后不要声称指令已经发出，必须说明草稿已在编辑器中打开，等待用户修改和确认。
+    side_effect_scope: frontend_editor
+    mutates_domain: false
+    object_scope: none
+    requires_confirmation: false
+    worker_allowed: false
+
+# 用户对话：跨工具共同约定。
+interaction_policies:
+  user_chat:
+    description: "珊瑚河 GIS 用户对话策略"
+    include_in_system_prompt: true
+    instructions:
+      # 跨工具约定；具体操作条件、默认值与结果解释放在对应工具中。
+      - "现在/当前/总结当前情况使用本轮分析时刻：提问时地图选中的预测帧，无选中帧才使用演进时钟。状态、影响、路线、安置点分析共用冻结版本；这些工具的 forecast_id=latest 绑定本轮版本。view=current 使用该帧，time_slice 配合 time_h 指定帧，simulation_current 明确使用演进时刻，envelope 分析整个预测期最大包络。包络不能表述为当前已淹。"
+      - "time_h 及其他预测小时偏移均相对 valid_from。回复优先使用 analysis_time_at、valid_at、first_unsafe_at、latest_departure_at 等实际时刻，可补充预测 +Nh；generated_at 是生成时间。缺失值、partial 或覆盖不足表示未知，不得解释为安全或无洪水；未开始演进时仅按工具返回的演示初始状态回答。"
+      - "查询、计算、地图展示和指令草稿分别执行。已有预测可直接分析；只有明确请求运行、重算或更新预测时才调用 run_flood_forecast。地图操作调用相应 ui_*；路线规划请求默认包含展示生成的路线，其他分析仅在用户要求展示时更新地图。"
+      - "查询和统计保留地域、类别、距离、时间和受淹条件。地域先查 Town/County ID；附近数量用 total_matched，受淹数量用 analyze_inundation_impacts 的范围汇总，不替换为全库 count。连续对话沿用参考对象、候选集合和确认路线；object_ids 省略与空数组不同，空集合不得扩大为全量。"
+      - "对象级预测影响调用 analyze_inundation_impacts；最晚转移时间或安全窗口调用 analyze_latest_evacuation_time。按工具返回解释结果；估算值必须说明来源，预案字段和缺失值不能作为预测证据。"
+      - "地图动作结果 pending 只表示已请求，map_action_receipts 为执行回执，visible_selections/visible_layers 为实际可见状态。回复简洁说明已请求显示或隐藏，不输出内部 ID 或回执机制。普通高亮不代表受淹；隐藏这些对象优先引用 selection_id，范围不明确时澄清；整体重置须有明确请求。"
+      - "Road 是独立路段，RoadRoute 是按可靠编号聚合的已收录路段，RoadRouteSegment 表达多对多归属。所有道路地图展示 Road，指定编号道路查询 RoadRoute.ref。数量区分道路与路段，包含未编号路段；影响表述为已收录 N 段中 M 段受影响，共线路段不跨道路重复累加为唯一总数，不推断整条道路不可通行。"
+      - "Catchment 表达水库上游降雨汇集范围，不是淹没范围；龙潭集水区与原始流域边界有差异，不能推断严格空间包含。当前系统不提供设计洪水方案切换，综合指标不能转换为年一遇标准。"
+      - "调度调整先 get_longtan_dispatch_plan，再 simulate_longtan_dispatch；从所选预测 t0 初态试算，地图帧为比较目标 t1。按结果先解释水库安全再比较道路影响；当前仅支持候选试算，不能声称已切换正式方案。"
+      - "指令草稿使用 ui_open_emergency_directive_editor，内容基于对话与已核实事实；草稿编辑器只接收文字和优先级，不隐式复核或否决路线。实际发出由用户在前端确认；涉及已发指令或发出状态，先 query EmergencyDirective 核实记录，不能仅凭聊天中曾打开草稿就断言未发出。持续演进的开始/暂停使用态势工作台按钮，单次研判不启动持续任务。"
+    # 目前仅 count 被 server/chat/policy.py 读取。状态与调度提示在该模块识别，
+    # 其余请求由模型结合工具说明处理；此处不声明未实现的关键词路由。
+    intents:
+      count:
+        keywords: ["几个", "多少个", "几条", "多少条", "数量", "总数"]
+        tools: [count]
+        task_hint: "本问题是领域对象库的直接数量查询。请直接调用 {calls}；不要先查询无关对象或对象几何，也不要添加用户未明确给出的过滤条件。得到 count 结果后立即回答。"
+
+# 自动事件：受各自工具白名单约束，与用户对话分开。
+event_policies:
+  FloodForecastRequired:
+    display_name: "洪水预测请求事件"
+    role: "珊瑚河洪水应急智能体"
+    description: "领域策略已根据当前时刻至 +24h 的边界流量预测窗口生成洪水预测请求。"
+    allowed_tools: [inspect, query, count, run_flood_forecast]
+    forbidden_functions: [assess_flood_emergency]
+    instructions:
+      - "领域策略已经完成阈值判断；当事件 forecast_trigger.should_run_forecast=true 时，必须由你调用一次 run_flood_forecast，forecast_id 使用 latest。不要只用文字说明将要预测。"
+      - "事件 payload 包含当前预测时刻 observation、与触发判断完全相同的 25 点 forecast_input，以及 forecast_trigger；run_flood_forecast 会读取事件对应的稳定输入快照，CNN 计算与结果保存由该工具完成。"
+      - "本事件仅运行预测；完成后发布预测淹没结果生成事件，由其设置警戒并展示结果。说明本事件不执行对象级影响分析，后续预测淹没结果生成事件也不自动执行，需用户明确提出后分析；不自动形成或发布响应指令。"
+    conclusion_fields: ["24小时预测窗口", "触发原因", "是否调用了预测模型"]
+
+  InundationGenerated:
+    display_name: "预测淹没结果生成事件"
+    role: "珊瑚河洪水应急智能体"
+    description: "水动力模型已经生成24小时预测结果，本事件负责判断预测期内是否存在淹没并表达流域警戒态势。"
+    allowed_tools: [ui_set_inundation_alert, ui_show_objects]
+    forbidden_functions: [assess_flood_emergency]
+    instructions:
+      - "展示新预测时调用 ui_show_objects，filters 使用 forecast_id=latest、view=timeline，打开0.5至24小时的预测时间轴；不要请求缺失的当前+0h切片，也不要改成最大包络代替时间轴。"
+      - "只根据事件 payload 中 CNN 预测汇总判断未来24小时是否存在淹没：forecast_cell_count>0 表示存在至少一个水深不低于0.04米的预测淹没单元，否则表示无淹没。"
+      - "必须调用一次 ui_set_inundation_alert：存在淹没时传 active=true，无淹没时传 active=false，以确保旧警戒状态也能被清除。"
+      - "本事件不执行对象级影响分析，不判断具体道路、设施、桥梁、转移路线、转移对象或安置点是否受影响；这些分析只在用户明确提出后执行。"
+      - "本事件不生成响应方案或发布指令。"
+    automatic_map:
+      mode: when_relevant
+      tool: ui_show_objects
+      objects:
+        - object_type: HydrodynamicGridCell
+          filters: {forecast_id: latest, view: timeline}
+          label: "预测淹没结果"
+          fit: false
+          refresh: true
+      allowed_action_types: [show_hydrodynamic_mesh, apply_hydrodynamic_result, set_watershed_inundation_alert]
+      other_objects: on_user_request
+      include_result_cards: false
+    conclusion_fields: ["预测运行", "24小时内是否存在淹没", "淹没面积", "最大水深", "流域警戒边界状态", "是否已请求淹没范围地图展示"]

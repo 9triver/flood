@@ -2847,7 +2847,6 @@ function renderDirectiveHistory() {
 
 function openDirectiveDraft(draft) {
   state.directiveDraft = {
-    basis: draft.basis || null,
     title: String(draft.title || ""),
     content: String(draft.content || ""),
     recipients: String(draft.recipients || ""),
@@ -2870,7 +2869,6 @@ function openIssuedDirective(directiveId) {
   const directive = state.directives.find((item) => item.directive_id === directiveId);
   if (!directive) return;
   state.directiveDraft = {
-    basis: directive.basis || null,
     directiveId: String(directive.directive_id || ""),
     title: String(directive.title || ""),
     content: String(directive.content || ""),
@@ -2985,13 +2983,6 @@ function renderDirectiveContext(status = {}) {
     );
     return;
   }
-  const basis = state.directiveDraft?.basis?.snapshot;
-  if (basis) {
-    workspaceElement.textContent = "草稿依据";
-    document.getElementById("directiveContextTime").textContent = formatMockTime(basis.simulation_time);
-    document.getElementById("directiveContextForecast").textContent = formatForecastVersion(basis.forecast_version);
-    return;
-  }
   workspaceElement.textContent = "当前演进";
   workspaceElement.removeAttribute("title");
   document.getElementById("directiveContextTime").textContent = formatMockTime(status.observed_at);
@@ -3030,7 +3021,6 @@ async function issueDirective() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         workspace_id: state.directiveDraft.workspaceId,
-        basis: state.directiveDraft.basis,
         title: state.directiveDraft.title,
         content: state.directiveDraft.content,
         recipients: state.directiveDraft.recipients,
@@ -3058,7 +3048,6 @@ function copyDirectiveToDraft(directiveId) {
   const directive = state.directives.find((item) => item.directive_id === directiveId);
   if (!directive) return;
   openDirectiveDraft({
-    basis: directive.basis,
     title: directive.title,
     content: directive.content,
     recipients: directive.recipients,
@@ -6867,7 +6856,7 @@ function impactRouteForTab(route, tab) {
   const deepest = members.reduce((a, b) => Number(a.depth_m) >= Number(b.depth_m) ? a : b);
   return {
     ...route,
-    ...Object.fromEntries(["depth_m", "velocity_mps", "longitude", "latitude", "mesh_cell_id", "forecast_cell_id", "risk_level"].map((key) => [key, deepest[key]])),
+    ...Object.fromEntries(["depth_m", "velocity_mps", "depth_source", "velocity_source", "risk_basis", "longitude", "latitude", "mesh_cell_id", "forecast_cell_id", "risk_level"].map((key) => [key, deepest[key]])),
     impact_status: "nearby_flood",
     depth_basis: "nearby_forecast_cells",
     passability_status: "inspection_required",
@@ -7221,7 +7210,7 @@ function impactPopupHtml(impact) {
     <div class="popup-meta">${escapeHtml(impactTypeLabel(impact.object_type))} ${escapeHtml(impact.object_id)}</div>
     <div class="popup-depth">${formatImpactNumber(impact.depth_m, 2)} <span>m ${escapeHtml(depthLabel)}</span></div>
     ${linearImpactEvidenceHtml(impact)}
-    <div class="popup-meta">${escapeHtml(passability || impactRiskLabel(impact.risk_level))} · 流速 ${formatImpactNumber(impact.velocity_mps, 2)} m/s · 距网格 ${formatImpactNumber(impact.distance_m, 1)} m</div>
+    <div class="popup-meta">${escapeHtml(passability || impactRiskLabel(impact.risk_level))} · ${impactVelocityText(impact)} · 距网格 ${formatImpactNumber(impact.distance_m, 1)} m</div>
   `;
 }
 
@@ -7232,7 +7221,7 @@ function impactDetailHtml(impact, props) {
     <div class="impact-selected-summary">
       <strong>${escapeHtml(passability || impactRiskLabel(impact.risk_level))}</strong>
       <span>${escapeHtml(depthLabel)} ${formatImpactNumber(impact.depth_m, 2)} m</span>
-      <span>流速 ${formatImpactNumber(impact.velocity_mps, 2)} m/s</span>
+      <span>${impactVelocityText(impact)}</span>
     </div>
     ${linearImpactEvidenceHtml(impact)}
     ${impact.object_type === "RoadRoute" ? `<div class="muted">已收录 ${impact.recorded_segment_count} 段中 ${impact.affected_segment_count} 段受影响（与湿网格相交），另有 ${impact.nearby_segment_count || 0} 段仅邻近积水；不代表整条道路不可通行。</div>
@@ -7243,8 +7232,15 @@ function impactDetailHtml(impact, props) {
 }
 
 function formatImpactNumber(value, digits) {
+  if (value == null || value === "") return "--";
   const number = Number(value);
   return Number.isFinite(number) ? number.toFixed(digits) : "--";
+}
+
+function impactVelocityText(impact) {
+  if (impact.velocity_mps == null) return "流速未提供";
+  const label = impact.velocity_source === "depth_estimate" ? "估算流速" : "流速（来源未注明）";
+  return `${label} ${formatImpactNumber(impact.velocity_mps, 2)} m/s`;
 }
 
 function parseEvent(event) {
@@ -7277,7 +7273,7 @@ function readableTool(name, args) {
     get_flood_status: "查询淹没状态",
     plan_route: "规划路线",
     refine_object_set: "筛选候选集合",
-    compare_evacuation_sites: "比较安置方案",
+    compare_evacuation_sites: "筛选并推荐安置点",
     review_route: "复核既有路线",
     ui_focus_object: "地图定位",
     ui_open_emergency_directive_editor: "生成应急指令初稿",

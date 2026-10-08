@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -43,7 +44,7 @@ class FakeResolver:
             "latitude": 24.00000,
         }
         self.forecast_run = {
-            "forecast_id": "forecast_latest",
+            "forecast_id": "v001",
             "forecast_time": "2025-01-01T00:00:00+08:00",
             "valid_from": "2025-01-01T00:00:00+08:00",
             "valid_to": "2025-01-02T00:00:00+08:00",
@@ -76,6 +77,7 @@ class FakeResolver:
             "EvacuationSite": [self.place],
             "FloodForecast": [self.forecast_run],
         }.get(object_type, [])
+        rows = [row for row in rows if all(row.get(key) == value for key, value in (filters or {}).items())]
         return [dict(row) for row in rows[:limit]] if limit else [dict(row) for row in rows]
 
 
@@ -84,7 +86,7 @@ class EvacuationTimingTests(unittest.TestCase):
         self.tempdir = tempfile.TemporaryDirectory()
         self.root = Path(self.tempdir.name)
         self.mesh_path = self.root / "mesh.sqlite"
-        with sqlite3.connect(self.mesh_path) as conn:
+        with closing(sqlite3.connect(self.mesh_path)) as conn, conn:
             conn.execute(
                 "create table cells ("
                 "cell_id integer primary key, min_lon real, min_lat real, "
@@ -94,10 +96,10 @@ class EvacuationTimingTests(unittest.TestCase):
             conn.execute(
                 "insert into cells values (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    110.99995, 23.99995, 111.00015, 24.00005,
-                    111.00000, 23.99995,
-                    111.00010, 24.00005,
-                    111.00010, 23.99995,
+                    110.99980, 23.99980, 111.00030, 24.00030,
+                    110.99980, 23.99980,
+                    111.00005, 24.00030,
+                    111.00030, 23.99980,
                 ),
             )
         self.series_path = self.root / "depth_series.npy"
@@ -189,6 +191,70 @@ class EvacuationTimingTests(unittest.TestCase):
 
         self.assertEqual("incomplete_forecast_horizon", result["status"])
         self.assertEqual(2.0, result["available_horizon_h"])
+
+    def test_explicit_prediction_uses_its_own_metadata_and_series(self):
+        original_query = self.resolver.query
+        newer = {**self.resolver.forecast_run, "forecast_id": "v002", "valid_from": "2025-01-01T06:00:00+08:00"}
+        def query(kind, filters=None, **kwargs):
+            if kind == "FloodForecast" and not filters:
+                return [newer]
+            return original_query(kind, filters, **kwargs)
+        self.resolver.query = query
+        result = self.analyze([0, 0.2, 0.35, 0.5], forecast_id="v001")
+        self.assertEqual(result["forecast_id"], "v001")
+        self.assertEqual(result["deadline"]["first_unsafe_at"], "2025-01-01T01:30:00+08:00")
+        self.assertEqual(self.analyze([0, 0, 0, 0], forecast_id="missing")["status"], "forecast_unavailable")
+
+    def test_latest_is_resolved_before_series_reads(self):
+        original = evacuation_timing.forecast_series_path
+        with patch.object(evacuation_timing, "forecast_series_path", wraps=original) as read:
+            # The real helper is replaced only for the path; record the version.
+            read.side_effect = lambda ident: self.series_path
+            np.save(self.series_path, np.array([[0], [0.2], [0.4], [0.5]]))
+            with patch.object(evacuation_timing, "forecast_time_steps", return_value=self.time_steps), patch.object(evacuation_timing, "MESH_DB_PATH", self.mesh_path):
+                result = evacuation_timing.analyze_latest_evacuation_time(self.resolver, evacuation_unit_id="40")
+        self.assertEqual(read.call_args.args, ("v001",))
+        self.assertEqual(result["forecast_id"], "v001")
+
+    def test_large_triangle_intersection_is_detected_far_from_centroid(self):
+        with closing(sqlite3.connect(self.mesh_path)) as conn, conn:
+            conn.execute("update cells set min_lon=110.99, max_lon=111.01, min_lat=23.99, max_lat=24.025, "
+                         "lon1=110.99, lat1=23.99, lon2=111.01, lat2=23.99, lon3=111.0, lat3=24.025")
+        result = self.analyze([0, 0, 0.4, 0.5])
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["deadline"]["first_unsafe_time_h"], 1.5)
+        self.assertEqual(result["parameters"]["spatial_method"], "full_geometry_polygon_intersection")
+
+    def test_wrong_origin_route_is_rejected(self):
+        self.resolver.route["origin_unit_id"] = "other-village"
+        result = self.analyze([0, 0, 0, 0], evacuation_route_id="40")
+        self.assertEqual(result["status"], "route_origin_mismatch")
+
+    def test_invalid_route_geometry_cannot_form_a_window(self):
+        for geometry in ('[]', {'type': 'LineString', 'coordinates': [[111, 24], [111, 24]]},
+                         {'type': 'Polygon', 'coordinates': [[[111, 24], [111.001, 24], [111, 24.001], [111, 24]]]}):
+            with self.subTest(geometry=geometry):
+                self.resolver.route['geometry'] = geometry
+                self.assertEqual(self.analyze([0, 0, 0, 0])['status'], 'invalid_route_geometry')
+
+    def test_missing_destination_coverage_preserves_risk_but_not_safe_deadline(self):
+        self.resolver.place["longitude"] = 112
+        result = self.analyze([0, 0, 0.4, 0.5])
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["deadline_status"], "incomplete_coverage")
+        self.assertEqual(result["deadline"]["first_unsafe_time_h"], 1.5)
+        self.assertIsNone(result["deadline"]["latest_departure_at"])
+        self.assertIsNone(result["evidence"]["depth_timeline"][0]["component_depths_m"]["destination"])
+
+    def test_uncovered_route_length_cannot_be_called_safe(self):
+        self.resolver.route["geometry"] = {"type": "LineString", "coordinates": [[111, 24], [112, 24], [111.0001, 24]]}
+        result = self.analyze([0, 0, 0, 0])
+        self.assertEqual(result["status"], "partial")
+        self.assertGreater(result["coverage"]["route"]["uncovered_length_m"], 0)
+        self.assertIsNone(result["deadline"]["last_confirmed_safe_at"])
+
+    def test_invalid_matched_depth_does_not_become_safe(self):
+        self.assertEqual(self.analyze([0, float('nan'), 0, 0])["status"], "invalid_forecast_series")
 
 
 if __name__ == "__main__":

@@ -16,6 +16,8 @@ from oag.runtime.hooks import HookResult
 from server.presentation.map_tools import register_map_tools
 from server.presentation.directive_tools import register_directive_tools
 from server.chat.analysis_context import normalize_analysis_tool
+from domains.flood.runtime.object_sets import read_object_set
+from domains.flood.runtime.common import id_field, filter_values
 
 
 DEFAULT_AGENT_MAX_TURNS = 10
@@ -97,57 +99,34 @@ def validate_query_filters(ontology: Ontology, object_type: str, filters: Any) -
     return None
 
 
-def configure_domain_tool_schemas(harness: Harness) -> None:
-    for name, array_fields in (("find_nearby_objects", ["exclude_object_ids"]), ("analyze_inundation_impacts", ["object_ids"]), ("refine_object_set", ["exclude_object_ids"]), ("simulate_longtan_dispatch", ["object_ids"])):
-        tool = harness.tools.get(name)
-        if tool:
-            for field in array_fields:
-                tool.parameters["properties"][field]["items"] = {"type": "string"}
-    nearby = harness.tools.get("find_nearby_objects")
-    if nearby:
-        nearby.max_result_chars = 32000
-    for name in ("plan_route", "analyze_inundation_impacts", "get_flood_status", "compare_evacuation_sites", "review_route"):
-        tool = harness.tools.get(name)
-        if tool:
-            tool.parameters["properties"]["view"]["enum"] = ["current", "time_slice", "envelope", "simulation_current"]
-            tool.parameters["properties"]["view"]["description"] = (
-                "对话中 current 默认使用本轮分析时刻（提问时地图选中帧，无时间轴则演进时刻）；"
-                "time_slice 配合 time_h 指定时刻；simulation_current 明确使用演进时刻；"
-                "envelope 为整个预测期最大包络。"
-            )
-    route = harness.tools.get("plan_route")
-    if route:
-        route.parameters["properties"]["profile"]["enum"] = ["car", "foot"]
-    trial = harness.tools.get("simulate_longtan_dispatch")
-    if trial:
-        trial.max_result_chars = 40000
-        trial.policy.worker_allowed = False
-        trial.policy.idempotent = False
-        trial.parameters["properties"]["settings"].update({
-            "type": "object", "additionalProperties": False,
-            "properties": {
-                "mode": {"type": "string", "enum": ["RULE", "OUTFLOW", "LEVEL"]},
-                **{key: {"type": ["number", "null"], "minimum": 0} for key in (
-                    "target_outflow_m3s", "target_level_m", "max_release_m3s",
-                )},
-                **{key: {"type": "number", "minimum": 0} for key in (
-                    "normal_release_m3s", "outlet_capacity_m3s",
-                )},
-            },
-        })
-
-
 def configure_agent_query_tools(harness: Harness) -> None:
-    for tool_name in ("query", "count", "query_links", "search"):
+    for tool_name in ("query", "count", "query_links", "search", "describe"):
         tool = harness.tools.get(tool_name)
         if not tool:
             continue
         original_handler = tool.handler
+        if tool_name == "describe":
+            tool.parameters["properties"]["object_set_id"] = {
+                "type": "string", "description": "仅统计这个候选集合，可叠加 filters 取交集",
+            }
         def handler(args, original=original_handler, name=tool_name):
-            if name in {"query", "count"}:
+            if name in {"query", "count", "describe"}:
                 error = validate_query_filters(harness.ontology, args.get("object_type", ""), args.get("filters"))
                 if error:
                     return json.dumps({"error": error}, ensure_ascii=False)
+            if name == "describe" and args.get("object_set_id"):
+                try:
+                    selected = read_object_set(args["object_set_id"], args["object_type"])
+                except ValueError as exc:
+                    return json.dumps({"error": str(exc)}, ensure_ascii=False)
+                filters = dict(args.get("filters") or {})
+                key = f"{id_field(args['object_type'])}__in"
+                ids = selected["object_ids"]
+                if key in filters:
+                    requested = set(map(str, filter_values(filters[key])))
+                    ids = [ident for ident in ids if ident in requested]
+                filters[key] = ids
+                args = {**args, "filters": filters}
             return compact_agent_query_result(original(args))
         tool.handler = handler
         tool.usage_prompt = (
@@ -213,7 +192,6 @@ class FloodAgentFactory:
             ),
         )
         configure_agent_query_tools(harness)
-        configure_domain_tool_schemas(harness)
         register_map_tools(harness.tools, resolver, ontology)
         register_directive_tools(harness.tools, ontology)
         harness.hooks.register("pre_tool_call", normalize_analysis_tool)
