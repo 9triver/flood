@@ -529,13 +529,13 @@ class FloodForecastPolicy:
     ) -> dict[str, Any]:
         if len(selected) != FORECAST_WINDOW_POINT_COUNT:
             raise ValueError(
-                f"CNN forecast window requires {FORECAST_WINDOW_POINT_COUNT} hourly rows, "
+                f"Hydrodynamic model forecast window requires {FORECAST_WINDOW_POINT_COUNT} hourly rows, "
                 f"got {len(selected)}"
             )
         window_start = _observed_datetime(selected[0])
         window_end = _observed_datetime(selected[-1])
         if window_end - window_start != timedelta(hours=FORECAST_WINDOW_HOURS):
-            raise ValueError("CNN forecast window must span exactly 24 hours")
+            raise ValueError("Hydrodynamic model forecast window must span exactly 24 hours")
         input_id = f"boundary_flow_{self.episode_id}_v{self.version:03d}"
         boundaries: dict[str, dict[str, Any]] = {}
         for key, label in BOUNDARIES.items():

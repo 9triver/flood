@@ -43,7 +43,7 @@ a60a043aa30a23e4b9fd928904c9336a23f7a8de64a569937fa17644e3511ef8
   漫顶、溃坝计算，也不把坝顶作为库水位的硬截断。
 - 曲线范围外按原算法线性外推，`curve_extrapolated` 包含实际路径与预演路径；
   `design_level_exceeded` 结合当前水位与全能力下泄预演最高水位判断。
-- `reservoir_outlet_flow_m3s` 和 CNN 的 `upstream` 边界均采用实际下泄流量；
+- `reservoir_outlet_flow_m3s` 和水动力模型的 `upstream` 边界均采用实际下泄流量；
   上游来水单独保留为 `reservoir_inflow_m3s`。
 
 ## 独立试算与回归验证

@@ -322,7 +322,7 @@ class EventRuntime:
                 raise ValueError("演进当前不在暂停状态")
             policy = self._boundary_flow_runner.playback.policy
             if policy.state == policy.PENDING:
-                raise ValueError("CNN 洪水预测尚未完成")
+                raise ValueError("水动力模型预测尚未完成")
             generation = self._generation
             observation_event, policy_events = self._boundary_flow_runner.step()
             if observation_event is None:

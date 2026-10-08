@@ -332,7 +332,7 @@ def simulate_longtan_dispatch(resolver, settings: dict, forecast_id: str = "late
                 for old, new in zip(context["baseline_series"][1:], series)
             ),
         },
-        "basis": "沿用原预测 t0、来水、其他三个边界和CNN时间基准，仅调整 t0 之后的水库下泄；结果为试算。",
+        "basis": "沿用原预测 t0、来水、其他三个边界和水动力模型时间基准，仅调整 t0 之后的水库下泄；结果为试算。",
         "cnn_initialization": "与原预测相同的边界历史特征构造，无显式初始水深场接口。",
         "stage": "cnn",
     }

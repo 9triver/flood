@@ -3516,13 +3516,13 @@ function renderForecastWindowSummary(observation) {
   renderBasinWorkbench(observation);
   const flow = state.boundaryFlowForecast;
   const window = document.getElementById("telemetryForecastWindow");
-  const cnnVersion = state.hydrodynamicTimeline.forecastVersion;
+  const forecastVersion = state.hydrodynamicTimeline.forecastVersion;
   if (window) {
     const timeRange = flow?.window_start && flow?.window_end
       ? `${formatRainfallChartTime(flow.window_start)} → ${formatRainfallChartTime(flow.window_end)}`
       : "等待预测窗口";
-    window.textContent = cnnVersion
-      ? `${timeRange} · CNN ${formatForecastVersion(cnnVersion)}`
+    window.textContent = forecastVersion
+      ? `${timeRange} · 水动力模型 ${formatForecastVersion(forecastVersion)}`
       : timeRange;
   }
 }
@@ -7556,7 +7556,7 @@ function renderBasinWorkbench(observation) {
     const source = key === "tonggu" ? "区间2 × 0.946" : key === "upstream" ? "水库计算泄流" : "分区面雨量产流";
     return [`<span class="basin-dot" style="background:${BOUNDARY_FLOW_COLORS[key]}"></span>${BOUNDARY_FLOW_LABELS[key]}<small>${source}</small>`, `<strong>${basinNumber(current)}</strong>`, basinNumber(peak?.value), peak ? escapeHtml(formatRainfallChartTime(peak.valid_time)) : "--"];
   });
-  document.getElementById("basinFlowTable").innerHTML = basinTable(["CNN 边界 / 来源", "当前流量", "窗口峰值", "峰值时刻"], flowRows);
+  document.getElementById("basinFlowTable").innerHTML = basinTable(["水动力模型边界 / 来源", "当前流量", "窗口峰值", "峰值时刻"], flowRows);
   const decision = observation?.reservoir_dispatch;
   const label = DISPATCH_STATES[decision?.state]?.label || "等待调度数据";
   const reservoirFuture = observation?.reservoir_forecast?.series || [];

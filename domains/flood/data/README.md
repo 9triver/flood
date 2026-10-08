@@ -20,7 +20,7 @@ source package.
 Each successful forecast is archived in its workspace as `forecasts/vNNN`, while
 `forecasts/latest` remains the compatibility path used by the live map. `InundationForecastCell`
 geometries are derived from the shared mesh on demand and are not persisted. Successful
-CNN temporary input/output directories are removed; failed runs keep them for diagnosis.
+Hydrodynamic model temporary input/output directories are removed; failed runs keep them for diagnosis.
 Evolution workspaces are retained by default. Set `FLOOD_WORKSPACE_RETENTION_COUNT` to
 a positive number only when automatic pruning is explicitly wanted.
 

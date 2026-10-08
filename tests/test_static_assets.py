@@ -49,7 +49,7 @@ class StaticAssetTest(unittest.TestCase):
         self.assertIn('state.map?.invalidateSize({ animate: false });', app)
         self.assertNotIn('class="launch-network"', index)
         self.assertIn("智能体集群就绪", index)
-        self.assertIn('/app.js?v=22', index)
+        self.assertIn('/app.js?v=23', index)
         self.assertIn("@media (prefers-reduced-motion: reduce)", styles)
 
     def test_hydrodynamic_timeline_avoids_redundant_work(self):
@@ -121,7 +121,7 @@ class StaticAssetTest(unittest.TestCase):
         index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
         self.assertIn('/styles.css?v=22', index)
-        self.assertIn('/app.js?v=22', index)
+        self.assertIn('/app.js?v=23', index)
         self.assertIn('/vendor/leaflet/leaflet.css?v=1.9.4', index)
         self.assertIn('/vendor/leaflet/leaflet.js?v=1.9.4', index)
         self.assertIn('/vendor/marked/marked.min.js?v=12.0.2', index)

@@ -767,7 +767,7 @@ class EventRuntimePlaybackControlTest(unittest.TestCase):
         runtime._boundary_flow_runner.playback.policy.state = "PENDING"
         source_index = runtime._boundary_flow_runner.playback.source.index
 
-        with self.assertRaisesRegex(ValueError, "CNN 洪水预测尚未完成"):
+        with self.assertRaisesRegex(ValueError, "水动力模型预测尚未完成"):
             runtime.step_playback()
 
         self.assertEqual(

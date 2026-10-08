@@ -262,7 +262,7 @@ def build_information(
                 "case_id": "C2-flood-impact-001",
                 "instruction": "根据预测淹没水深和对象空间关系，判断珊瑚河桥梁、道路和居民点是否受影响，并推导转移处置优先级。",
                 "scenario_facts": {
-                    "forecast_source": "CNN 水动力预测结果提供各预测时刻的淹没深度和范围。",
+                    "forecast_source": "水动力模型预测结果提供各预测时刻的淹没深度和范围。",
                     "impact_objects": "领域对象库包含道路、桥梁、居民点、安置点、水库和水文站等对象及几何位置。",
                     "bridge_condition": "桥梁两侧桥头若被明显淹没，应按通行高风险处理。",
                     "route_condition": "避洪路线规划需要避开超过阻断水深阈值的路段。",
@@ -413,8 +413,8 @@ def build_tool_skill_examples() -> list[dict[str, Any]]:
     return [
         {
             "tool_or_skill_name": "run_flood_forecast",
-            "aliases": ["CNN 水动力预测", "洪水预测"],
-            "purpose": "基于当前边界流量和珊瑚河流域模型运行 CNN 水动力预测，生成可用于淹没展示和影响分析的预测结果。",
+            "aliases": ["水动力模型预测", "洪水预测"],
+            "purpose": "基于当前边界流量和珊瑚河流域模型运行水动力模型预测，生成可用于淹没展示和影响分析的预测结果。",
             "parameter_mode": "structured",
             "input_parameters": [
                 {"name": "forecast_id", "type": "string", "required": False},

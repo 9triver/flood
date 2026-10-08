@@ -101,7 +101,7 @@ objects:
       boundary_group: {type: str, description: "边界分组: upstream/interval1/interval2/tonggu/waterlevel"}
       boundary_type: {type: str, description: "原始边界类型或水动力输入类型"}
       boundary_role: {type: str, description: "业务角色: upstream_inflow/lateral_inflow/tributary_inflow/downstream_water_level"}
-      is_model_input_boundary: {type: bool, description: "是否为 CNN 水动力模型的 4 个流量输入边界之一"}
+      is_model_input_boundary: {type: bool, description: "是否为水动力模型的 4 个流量输入边界之一"}
       section_code: {type: str, description: "断面编号，若来源为断面位置"}
       flow_node: {type: str, description: "水动力模型 FlowNode 编号，若源数据提供"}
 
@@ -509,7 +509,7 @@ objects:
       workspace_id: {type: str, description: "保存本次预测的当前演进工作空间ID"}
       name: {type: str, description: "预测运行名称"}
       status: {type: str, description: "运行状态"}
-      model_name: {type: str, description: "模型名称"}
+      model_name: {type: str, description: "模型实现标识，对用户统一称水动力模型"}
       model_description: {type: str, description: "模型说明"}
       generated_at: {type: str, description: "生成时间"}
       forecast_time: {type: str, description: "本次预测的起报或触发时间"}
@@ -562,11 +562,11 @@ objects:
       resolver: flood_repository
       id_field: forecast_cell_id
     summary: "指定洪水预测下的淹没网格结果"
-    description: "由静态网格与指定预测切片或最大包络按需派生。CNN 提供水深；流速由水深估算并标明来源。未计算的到水/退水时刻、地面高程、水位和河道距离返回 null，不可作为预测证据。"
+    description: "由静态网格与指定预测切片或最大包络按需派生。水动力模型提供水深；流速由水深估算并标明来源。未计算的到水/退水时刻、地面高程、水位和河道距离返回 null，不可作为预测证据。"
     properties:
       forecast_cell_id: {type: str, required: true, description: "预测计算单元ID"}
       forecast_id: {type: str, description: "所属预测运行ID"}
-      model_name: {type: str, description: "输出该单元的模型名称"}
+      model_name: {type: str, description: "输出该单元的模型实现标识，对用户统一称水动力模型"}
       mesh_cell_id: {type: str, description: "基础计算网格单元ID"}
       mesh_source_id: {type: str, description: "基础网格来源"}
       time_h: {type: float, description: "相对 valid_from 的切片小时偏移；最大包络为 null"}
@@ -578,8 +578,8 @@ objects:
       ground_elevation_m: {type: float, description: "地面高程，米；当前未接入，返回 null"}
       water_level_m: {type: float, description: "绝对水位，米；当前缺少地面高程，返回 null，不能用水深替代"}
       depth_m: {type: float, description: "预测水深，米"}
-      depth_source: {type: str, description: "水深来源，当前为 cnn_prediction"}
-      velocity_mps: {type: float, description: "按水深公式估算的流速，米每秒；不是 CNN 输出或实测值"}
+      depth_source: {type: str, description: "水深来源，cnn_prediction 表示水动力模型预测"}
+      velocity_mps: {type: float, description: "按水深公式估算的流速，米每秒；不是水动力模型输出或实测值"}
       velocity_source: {type: str, description: "流速来源，当前为 depth_estimate"}
       arrival_time_h: {type: float, description: "首次到水相对 valid_from 的小时偏移；当前未计算，返回 null"}
       recession_time_h: {type: float, description: "退水相对 valid_from 的小时偏移；当前未计算，返回 null"}
@@ -940,12 +940,12 @@ functions:
 
   assess_flood_emergency:
     summary: "对已有预测进行单次应急研判"
-    description: "读取当前有效预测的最大包络，生成预警级别、重点转移对象和处置建议。只执行一次，不运行 CNN、不启动持续演进、不发布指令。"
+    description: "读取当前有效预测的最大包络，生成预警级别、重点转移对象和处置建议。只执行一次，不运行水动力模型、不启动持续演进、不发布指令。"
     usage_prompt: >-
       请求整个预测窗口的一次应急研判或处置建议时调用。使用最大包络，不表示选中帧已受淹。
       查询当前水情或当前受影响对象应分别用 get_flood_status、analyze_inundation_impacts。
       返回完整影响清单和重点建议；status=partial 时说明清单不完整，不能判定未列出的对象安全。
-      缺少预测时说明不可研判，不自动运行 CNN；refresh 只更新研判汇总。
+      缺少预测时说明不可研判，不自动运行水动力模型；refresh 只更新研判汇总。
     function_type: computation
     tool_policy: {idempotent: false}
     involves_objects: [FloodForecast, InundationForecastCell, Road, EvacuationRoute, EvacuationUnit, EvacuationSite]
@@ -956,7 +956,7 @@ functions:
   # 预测计算与调度试算
   run_flood_forecast:
     summary: "按当前演进输入运行洪水预测"
-    description: "读取领域策略生成的稳定四边界流量快照，运行 CNN_V2，保存多时刻水深、最大包络与 FloodForecast 摘要，并更新正式预测版本。"
+    description: "读取领域策略生成的稳定四边界流量快照，运行水动力模型，保存多时刻水深、最大包络与 FloodForecast 摘要，并更新正式预测版本。"
     timeout_seconds: 360
     concurrency_safe: false
     usage_prompt: >-
@@ -969,7 +969,7 @@ functions:
     involves_objects: [FloodForecast, InundationForecastCell, HydrodynamicGridCell, River, Reservoir]
     params:
       forecast_id: {type: str, description: "当前预测输入别名，仅支持 latest/forecast_latest", default: "latest", json_schema: {enum: [latest, forecast_latest]}}
-      force: {type: bool, description: "是否强制重新运行 CNN 洪水预测", default: false}
+      force: {type: bool, description: "是否强制重新运行水动力模型预测", default: false}
 
   get_longtan_dispatch_plan:
     summary: "查询本轮预测起点的水库调度方案"
@@ -984,7 +984,7 @@ functions:
 
   simulate_longtan_dispatch:
     summary: "从预测起点试算调度调整并比较24小时淹没影响"
-    description: "固定所选预测的 t0 水库状态、来水和四边界条件，调整未来水库下泄并运行独立CNN预测，返回水库安全校核、指定 t1 和24小时包络影响对比。生成候选报告，不切换当前调度、不覆盖正式预测、不重置演进。"
+    description: "固定所选预测的 t0 水库状态、来水和四边界条件，调整未来水库下泄并运行独立的水动力模型预测，返回水库安全校核、指定 t1 和24小时包络影响对比。生成候选报告，不切换当前调度、不覆盖正式预测、不重置演进。"
     usage_prompt: >-
       明确请求调整调度并比较影响时调用。settings 支持 RULE/OUTFLOW/LEVEL；人工模式须明确目标，不能补零。
       time_h 是比较目标 t1，省略采用本轮地图帧；初始水位和库容固定，不能指定。
@@ -1210,6 +1210,7 @@ interaction_policies:
     include_in_system_prompt: true
     instructions:
       # 跨工具约定；具体操作条件、默认值与结果解释放在对应工具中。
+      - "应用中的淹没预测模型统一称为水动力模型，其结果称为水动力模型预测。模型文件名及返回数据中的实现标识不作为业务名称；回复、地图说明和指令草稿沿用上述称谓。"
       - "现在/当前/总结当前情况使用本轮分析时刻：提问时地图选中的预测帧，无选中帧才使用演进时钟。状态、影响、路线、安置点分析共用冻结版本；这些工具的 forecast_id=latest 绑定本轮版本。view=current 使用该帧，time_slice 配合 time_h 指定帧，simulation_current 明确使用演进时刻，envelope 分析整个预测期最大包络。包络不能表述为当前已淹。"
       - "time_h 及其他预测小时偏移均相对 valid_from。回复优先使用 analysis_time_at、valid_at、first_unsafe_at、latest_departure_at 等实际时刻，可补充预测 +Nh；generated_at 是生成时间。缺失值、partial 或覆盖不足表示未知，不得解释为安全或无洪水；未开始演进时仅按工具返回的演示初始状态回答。"
       - "查询、计算、地图展示和指令草稿分别执行。已有预测可直接分析；只有明确请求运行、重算或更新预测时才调用 run_flood_forecast。地图操作调用相应 ui_*；路线规划请求默认包含展示生成的路线，其他分析仅在用户要求展示时更新地图。"
@@ -1238,7 +1239,7 @@ event_policies:
     forbidden_functions: [assess_flood_emergency]
     instructions:
       - "领域策略已经完成阈值判断；当事件 forecast_trigger.should_run_forecast=true 时，必须由你调用一次 run_flood_forecast，forecast_id 使用 latest。不要只用文字说明将要预测。"
-      - "事件 payload 包含当前预测时刻 observation、与触发判断完全相同的 25 点 forecast_input，以及 forecast_trigger；run_flood_forecast 会读取事件对应的稳定输入快照，CNN 计算与结果保存由该工具完成。"
+      - "事件 payload 包含当前预测时刻 observation、与触发判断完全相同的 25 点 forecast_input，以及 forecast_trigger；run_flood_forecast 会读取事件对应的稳定输入快照，水动力模型计算与结果保存由该工具完成。"
       - "本事件仅运行预测；完成后发布预测淹没结果生成事件，由其设置警戒并展示结果。说明本事件不执行对象级影响分析，后续预测淹没结果生成事件也不自动执行，需用户明确提出后分析；不自动形成或发布响应指令。"
     conclusion_fields: ["24小时预测窗口", "触发原因", "是否调用了预测模型"]
 
@@ -1250,7 +1251,7 @@ event_policies:
     forbidden_functions: [assess_flood_emergency]
     instructions:
       - "展示新预测时调用 ui_show_objects，filters 使用 forecast_id=latest、view=timeline，打开0.5至24小时的预测时间轴；不要请求缺失的当前+0h切片，也不要改成最大包络代替时间轴。"
-      - "只根据事件 payload 中 CNN 预测汇总判断未来24小时是否存在淹没：forecast_cell_count>0 表示存在至少一个水深不低于0.04米的预测淹没单元，否则表示无淹没。"
+      - "只根据事件 payload 中水动力模型预测汇总判断未来24小时是否存在淹没：forecast_cell_count>0 表示存在至少一个水深不低于0.04米的预测淹没单元，否则表示无淹没。"
       - "必须调用一次 ui_set_inundation_alert：存在淹没时传 active=true，无淹没时传 active=false，以确保旧警戒状态也能被清除。"
       - "本事件不执行对象级影响分析，不判断具体道路、设施、桥梁、转移路线、转移对象或安置点是否受影响；这些分析只在用户明确提出后执行。"
       - "本事件不生成响应方案或发布指令。"

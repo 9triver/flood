@@ -70,9 +70,9 @@ def run_checks(profile: str) -> tuple[list[str], list[str]]:
     if profile == "full":
         check_import("torch", errors)
         if not MODEL_WEIGHT.exists():
-            errors.append(f"CNN weight is missing: {MODEL_WEIGHT.relative_to(PROJECT_DIR)}")
+            errors.append(f"Hydrodynamic model weight is missing: {MODEL_WEIGHT.relative_to(PROJECT_DIR)}")
         elif is_lfs_pointer(MODEL_WEIGHT):
-            errors.append("CNN weight is still a Git LFS pointer; run `git lfs pull`.")
+            errors.append("Hydrodynamic model weight is still a Git LFS pointer; run `git lfs pull`.")
 
         required_env = ("LLM_API_KEY", "LLM_API_URL", "LLM_MODEL", "AMAP_WEB_SERVICE_KEY")
         for name in required_env:

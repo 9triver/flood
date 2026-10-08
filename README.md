@@ -1,10 +1,10 @@
 # 基于大模型的水路联动应急智能体集群应用
 
-本项目以珊瑚河流域 GIS 为中心，将边界流量演进、CNN 水动力预测、淹没影响分析、避洪路线规划和 OAG 智能体交互组织在同一个运行工作空间中。
+本项目以珊瑚河流域 GIS 为中心，将边界流量演进、水动力模型预测、淹没影响分析、避洪路线规划和 OAG 智能体交互组织在同一个运行工作空间中。
 
 ## 环境准备
 
-需要安装 Git、Git LFS 和 [uv](https://docs.astral.sh/uv/)。首次获取项目时必须同时拉取 `agent` 子模块和 CNN 权重：
+需要安装 Git、Git LFS 和 [uv](https://docs.astral.sh/uv/)。首次获取项目时必须同时拉取 `agent` 子模块和水动力模型权重：
 
 ```bash
 git clone --recurse-submodules git@github.com:9triver/flood.git
@@ -87,7 +87,7 @@ UI 的“影响分析”分为“预测影响”和“邻近积水”页签，�
 
 ## 数据边界
 
-仓库内包含运行所需的领域对象库、mock 边界流量、CNN 网格、配置和 Git LFS 权重。以下内容是本地状态，不进入 Git：
+仓库内包含运行所需的领域对象库、mock 边界流量、水动力模型网格、配置和 Git LFS 权重。以下内容是本地状态，不进入 Git：
 
 - `local/runtime/flood/`：演进 workspace、预测、路线和可重建缓存。
 - `.oag_data/`：Agent 会话与 trace。
