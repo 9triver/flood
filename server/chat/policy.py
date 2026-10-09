@@ -22,6 +22,15 @@ def is_flood_status_question(message: str) -> bool:
 
 def build_agent_task_hint(message: str, ontology: Ontology) -> str:
     text = _question_text(message)
+    if (any(word in text for word in ("降雨", "降水", "雨量"))
+            and any(word in text for word in ("假设", "如果", "假如", "倍", "增加", "减少", "调整", "试算"))):
+        return (
+            "这是降水假设场景请求，调用 simulate_flood_scenario。rainfall_multiplier 按用户假设设置，"
+            "降水倍数不明确时先澄清；from_time_h/to_time_h 为相对 t0 的整点小时，调整左开右闭时段。"
+            "默认只调整原预测 t0 之后24小时的未来降水，沿用原调度模式，不能修改原始 CSV、覆盖正式预测或声称方案已应用。"
+            "time_h 是用户关心的 t1，默认本轮地图选中帧；按返回的 reservoir_safety、selected_time 和 window_envelope"
+            "解释水库安全与道路影响，失败或 partial 不能解释为无淹没。"
+        )
     if any(word in text for word in ("调度", "下泄", "泄洪", "试算")):
         return (
             "调度调整请求使用 get_longtan_dispatch_plan 查询本轮预测 t0 的水库状态与方案，"

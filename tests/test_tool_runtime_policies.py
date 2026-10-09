@@ -18,13 +18,14 @@ class ToolRuntimePolicyTests(unittest.TestCase):
         register_map_tools(self.harness.tools, None, self.harness.ontology)
         register_directive_tools(self.harness.tools, self.harness.ontology)
         names = {item['function']['name'] for item in self.harness.build_tools()}
-        self.assertEqual(len(names), 29)
+        self.assertEqual(len(names), 30)
         self.assertFalse(names & {'mutate', 'apply_rule', 'apply_rule_batch', 'dispatch_workers'})
         self.assertNotIn('使用 apply_rule/apply_rule_batch 工具应用规则', self.harness.build_system_prompt())
 
     def test_explicit_computations_execute_twice_without_confirmation_or_worker_access(self):
         for name, args in [('run_flood_forecast', {'force': True}), ('plan_route', {}),
-                           ('simulate_longtan_dispatch', {'settings': {'mode': 'RULE'}})]:
+                           ('simulate_longtan_dispatch', {'settings': {'mode': 'RULE'}}),
+                           ('simulate_flood_scenario', {'rainfall_multiplier': 2})]:
             with self.subTest(tool=name):
                 calls = []
                 tool = self.harness.tools.get(name)

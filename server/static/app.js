@@ -7262,6 +7262,7 @@ function readableTool(name, args) {
     count: "统计数量",
     inspect: "查看定义",
     run_flood_forecast: "运行洪水预测",
+    simulate_flood_scenario: "模拟降水假设",
     assess_flood_emergency: "单次应急研判",
     analyze_inundation_impacts: "分析淹没影响",
     ui_show_objects: "地图显示",

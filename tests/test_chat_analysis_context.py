@@ -172,6 +172,26 @@ class ChatAnalysisContextTests(unittest.TestCase):
         for policy in self.ontology.event_policies.values():
             self.assertNotIn('simulate_longtan_dispatch', policy.allowed_tools)
 
+    def test_rainfall_scenario_freezes_version_but_allows_explicit_target_time(self):
+        analysis = capture_analysis_context(self.selected)
+        self.selected['hydrodynamic_timeline']['current_hydrodynamic_time_h'] = 1
+        with analysis_scope(analysis):
+            for hour in (None, 1):
+                args = {'rainfall_multiplier': 2, 'time_h': hour}
+                outcome = normalize_analysis_tool({'tool_name': 'simulate_flood_scenario', 'args': args})
+                self.assertEqual(outcome.action, 'allow')
+                self.assertEqual(args['time_h'], 2 if hour is None else 1)
+                self.assertEqual(args['forecast_id'], 'v001')
+            args = {'rainfall_multiplier': 2, 'forecast_id': 'v002'}
+            self.assertEqual(normalize_analysis_tool({'tool_name': 'simulate_flood_scenario', 'args': args}).action, 'block')
+
+    def test_rainfall_assumption_hint_takes_precedence_over_generic_trial_hint(self):
+        from server.chat.policy import build_agent_task_hint
+        for message in ('假设降雨量加倍，分析当前道路情况', '把预设降水量加倍试算一下', '降雨减少一半会怎样'):
+            hint = build_agent_task_hint(message, self.ontology)
+            self.assertIn('simulate_flood_scenario', hint)
+            self.assertNotIn('simulate_longtan_dispatch', hint)
+
     def test_moving_timeline_latest_pointer_and_clock_does_not_move_request(self):
         analysis = capture_analysis_context(self.selected)
         self.selected['hydrodynamic_timeline']['current_hydrodynamic_time_h'] = 1

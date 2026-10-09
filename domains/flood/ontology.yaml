@@ -1017,6 +1017,32 @@ functions:
       target_type: {type: str, description: "影响比较类型，默认 Road；支持 RoadRoute、Bridge 等现有影响对象类型", default: "Road"}
       object_ids: {type: list, description: "只比较这些已查询的对象 ID；省略分析整个类型，空数组表示空范围", required: false, json_schema: {items: {type: string}}}
 
+  simulate_flood_scenario:
+    summary: "模拟降水假设下的洪水影响"
+    description: "固定所选预测的 t0 和正式水库调度方案，将指定未来时段的分区降水按倍数调整，重新执行降雨产流、水库调度、四边界计算和水动力模型预测，并比较 t1 与未来24小时最大包络影响。生成独立假设场景，不修改原始 CSV、不覆盖正式预测、不切换正式调度方案。"
+    usage_prompt: >-
+      用户明确提出降雨增加、减少或其他降水假设并要求查看淹没影响时调用；不能直接把边界流量乘倍。
+      rainfall_multiplier=2 表示从原预测 t0 之后的未来降水开始加倍，t0 已观测降水和水库状态保留；
+      from_time_h/to_time_h 是相对 t0 的整点小时，调整 (from_time_h, to_time_h] 内的小时累计降水，默认 (0,24]；倍数不明确先澄清。
+      所有分区使用同一倍数，沿用原调度模式和参数。time_h 是用户关心的 t1，
+      省略时采用本轮地图选中帧。结果是独立假设场景，按 reservoir_safety、selected_time 和 window_envelope
+      解释，不能表述为实际发生或已应用；失败、partial 或预测覆盖不足不能解释为没有淹没。
+      工具已包含候选影响分析，不能再用正式预测工具查询 scenario_id 或用原预测地图代替场景结果；当前场景通过分析报告展示。
+    function_type: computation
+    tool_policy: {read_only: false, requires_confirmation: false, worker_allowed: false, idempotent: false, invalidates_cache: false}
+    timeout_seconds: 360
+    concurrency_safe: false
+    involves_objects: [FloodForecast, Reservoir, RoadRoute, Road, Bridge, InundationForecastCell]
+    max_result_chars: 40000
+    params:
+      rainfall_multiplier: {type: float, description: "未来分区降水乘数，2 表示加倍，0 表示该时段不下雨；须由用户明确", json_schema: {minimum: 0}}
+      forecast_id: {type: str, description: "预测版本；对话中 latest 绑定本轮分析版本", default: "latest"}
+      from_time_h: {type: float, description: "调整时段起点，左开；相对 t0 的整点小时，t0 本身不改写", default: 0, json_schema: {minimum: 0, maximum: 23, multipleOf: 1}}
+      to_time_h: {type: float, description: "调整时段终点，右闭；相对 t0 的整点小时，须大于起点", default: 24, json_schema: {minimum: 1, maximum: 24, multipleOf: 1}}
+      time_h: {type: float, description: "要比较的 t1 相对原预测 t0 的小时偏移，默认本轮地图选中帧", required: false}
+      target_type: {type: str, description: "影响比较类型，默认 Road；支持 RoadRoute、Bridge 等现有影响对象类型", default: "Road"}
+      object_ids: {type: list, description: "只比较这些已查询的对象 ID；省略分析整个类型，空数组表示空范围", required: false, json_schema: {items: {type: string}}}
+
   # 转移方案分析
   compare_evacuation_sites:
     summary: "筛选并推荐安置点"
@@ -1220,6 +1246,7 @@ interaction_policies:
       - "Road 是独立路段，RoadRoute 是按可靠编号聚合的已收录路段，RoadRouteSegment 表达多对多归属。所有道路地图展示 Road，指定编号道路查询 RoadRoute.ref。数量区分道路与路段，包含未编号路段；影响表述为已收录 N 段中 M 段受影响，共线路段不跨道路重复累加为唯一总数，不推断整条道路不可通行。"
       - "Catchment 表达水库上游降雨汇集范围，不是淹没范围；龙潭集水区与原始流域边界有差异，不能推断严格空间包含。当前系统不提供设计洪水方案切换，综合指标不能转换为年一遇标准。"
       - "调度调整先 get_longtan_dispatch_plan，再 simulate_longtan_dispatch；从所选预测 t0 初态试算，地图帧为比较目标 t1。按结果先解释水库安全再比较道路影响；当前仅支持候选试算，不能声称已切换正式方案。"
+      - "降水倍数假设使用 simulate_flood_scenario；固定本轮预测 t0 状态和原调度模式，调整未来降水并重算产流、调度、四边界和水动力预测。t1 默认地图选中帧，比较该帧与24小时包络。结果为独立假设场景，不是正式预测或实际发生；不修改原始降水、不自动应用，也不以正式预测图层代替场景结果。"
       - "指令草稿使用 ui_open_emergency_directive_editor，内容基于对话与已核实事实；草稿编辑器只接收文字和优先级，不隐式复核或否决路线。实际发出由用户在前端确认；涉及已发指令或发出状态，先 query EmergencyDirective 核实记录，不能仅凭聊天中曾打开草稿就断言未发出。持续演进的开始/暂停使用态势工作台按钮，单次研判不启动持续任务。"
     # 目前仅 count 被 server/chat/policy.py 读取。状态与调度提示在该模块识别，
     # 其余请求由模型结合工具说明处理；此处不声明未实现的关键词路由。

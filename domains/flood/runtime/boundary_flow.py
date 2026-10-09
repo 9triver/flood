@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import os
@@ -18,6 +19,7 @@ from .reservoir_monitoring import (
     reservoir_level_status,
 )
 from .rainfall_runoff import simulate_rainfall_runoff
+from . import rainfall_runoff
 from .reservoir_dispatch import (
     DispatchSettings,
     default_dispatch_settings,
@@ -107,22 +109,10 @@ def load_boundary_flow_rows(
     if not raw_rows:
         return []
     dt_hours = _series_step_hours(raw_rows)
-    runoff_results = {
-        key: simulate_rainfall_runoff(
-            [
-                {"valid_time": row["_observed_at"].isoformat(),
-                 "rainfall_mm": float(row[BASIN_RAINFALL_COLUMNS[key]])}
-                for row in raw_rows
-            ],
-            area_km2=area,
-            runoff_coefficient=RUNOFF_COEFFICIENT,
-            baseflow_m3s=RUNOFF_BASEFLOW_M3S,
-            routing_alpha=RUNOFF_ROUTING_ALPHA,
-            lag_hours=RUNOFF_LAG_HOURS,
-            dt_hours=dt_hours,
-        )["series"]
-        for key, area in RUNOFF_BASIN_AREAS_KM2.items()
-    }
+    runoff_results = calculate_basin_runoff(
+        [{**row, "valid_time": row["_observed_at"].isoformat()} for row in raw_rows],
+        dt_hours=dt_hours,
+    )
     reservoir_inputs = [
         {
             **point,
@@ -170,6 +160,43 @@ def load_boundary_flow_rows(
             "total_flow_m3s": round(sum(item["flow_m3s"] for item in boundaries.values()), 6),
         })
     return rows
+
+
+def calculate_basin_runoff(rows: list[dict], *, dt_hours: float = 1.0) -> dict:
+    """Use the same basin forcing and routing for playback and assumptions."""
+    return {
+        key: simulate_rainfall_runoff(
+            [{"valid_time": row["valid_time"], "rainfall_mm": float(row[BASIN_RAINFALL_COLUMNS[key]])}
+             for row in rows],
+            area_km2=area, runoff_coefficient=RUNOFF_COEFFICIENT,
+            baseflow_m3s=RUNOFF_BASEFLOW_M3S, routing_alpha=RUNOFF_ROUTING_ALPHA,
+            lag_hours=RUNOFF_LAG_HOURS, dt_hours=dt_hours,
+        )["series"]
+        for key, area in RUNOFF_BASIN_AREAS_KM2.items()
+    }
+
+
+def rainfall_model_signature() -> str:
+    digest = hashlib.sha256()
+    for path in (Path(__file__), Path(rainfall_runoff.__file__)):
+        digest.update(path.read_bytes())
+    digest.update(json.dumps([RUNOFF_BASIN_AREAS_KM2, RUNOFF_COEFFICIENT,
+                             RUNOFF_BASEFLOW_M3S, RUNOFF_ROUTING_ALPHA,
+                             RUNOFF_LAG_HOURS, INTERVAL_FLOW_SCALE], sort_keys=True).encode())
+    return digest.hexdigest()
+
+
+def rainfall_context_from_rows(rows: list[dict]) -> dict:
+    # Full history retains routing memory; the tail retains rule look-ahead.
+    return {
+        "model_signature": rainfall_model_signature(),
+        "series": [{
+            "valid_time": row["observed_at"],
+            **{column: row[column] for column in BASIN_RAINFALL_COLUMNS.values()},
+            **{key: row["reservoir_dispatch"].get(key)
+               for key in ("target_outflow_m3s", "target_level_m")},
+        } for row in rows],
+    }
 
 
 def _series_step_hours(rows: list[dict[str, Any]]) -> float:
@@ -625,6 +652,7 @@ class FloodForecastPolicy:
                     for row in future
                 ],
             }
+            snapshot["rainfall_runoff_context"] = rainfall_context_from_rows(self.reference_rows)
         return snapshot
 
     def _write_forecast_input(self, snapshot: dict[str, Any]) -> None:

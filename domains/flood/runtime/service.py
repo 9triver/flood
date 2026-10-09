@@ -18,6 +18,7 @@ from .forecast import assess_flood_emergency, run_flood_forecast
 from .impact_analysis import BRIDGE_INFLUENCE_RADIUS_M, analyze_inundation_impacts
 from .route_planning import plan_route
 from .dispatch_trial import get_longtan_dispatch_plan, simulate_longtan_dispatch
+from .rainfall_scenario import simulate_flood_scenario
 
 
 class FloodRuntimeService:
@@ -85,6 +86,25 @@ class FloodRuntimeService:
             )
         except (OSError, ValueError, KeyError) as error:
             return {"status": "dispatch_trial_unavailable", "error": str(error), "applied": False}
+
+    def simulate_flood_scenario(
+        self, rainfall_multiplier: float, forecast_id: str = "latest",
+        from_time_h: float = 0.0, to_time_h: float = 24.0,
+        time_h: float | None = None, target_type: str = "Road",
+        object_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        context = resolve_forecast_context(
+            forecast_id, time_h, "time_slice" if time_h not in (None, "") else "current",
+        )
+        if not context["available"]:
+            return unavailable_forecast(context)
+        try:
+            return simulate_flood_scenario(
+                self.resolver, rainfall_multiplier, context["forecast_version"],
+                from_time_h, to_time_h, context["time_h"], target_type, object_ids,
+            )
+        except (OSError, ValueError, KeyError) as error:
+            return {"status": "flood_scenario_unavailable", "error": str(error), "applied": False}
 
     def run_flood_forecast(self, forecast_id: str = "latest",
                            force: bool = False) -> dict[str, Any]:
